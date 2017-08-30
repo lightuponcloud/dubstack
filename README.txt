@@ -63,3 +63,10 @@ For building Riak:
 * build-essential
 * libc6-dev-i386
 * libpam0g-dev
+
+
+Screenshots
+===========
+<img src="https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_1.png" />
+
+<img src="https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_2.png" />
