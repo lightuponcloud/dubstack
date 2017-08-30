@@ -69,4 +69,5 @@ For building Riak:
 
 * See also
 [How to install Riak CS](/doc/riak_cs_setup.txt)
+
 [How to update Solr scema](/doc/solr_setup.txt)
