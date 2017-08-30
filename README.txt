@@ -67,6 +67,6 @@ For building Riak:
 
 Screenshots
 ===========
-<img src="https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_1.png" />
+![listing](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_1.png)
 
-<img src="https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_2.png" />
+![file upload](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_2.png)
