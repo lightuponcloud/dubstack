@@ -1,6 +1,8 @@
 Riak CS Middleware
 ==================
 
+[![Screenshot](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/riak_middleware_screenshot.png)](https://github.com/imgrey/riak-middleware)
+
 This is a Cowboy web application that you can put in front of Riak CS instances.
 
 Raison d'etre
@@ -63,10 +65,3 @@ For building Riak:
 * build-essential
 * libc6-dev-i386
 * libpam0g-dev
-
-
-Screenshots
-===========
-![listing](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_1.png)
-
-![file upload](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/scr/riak_middleware_2.png)
