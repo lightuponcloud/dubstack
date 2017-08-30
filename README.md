@@ -65,3 +65,8 @@ For building Riak:
 * build-essential
 * libc6-dev-i386
 * libpam0g-dev
+
+
+* See also
+[How to install Riak CS](/doc/riak_cs_setup.txt)
+[How to update Solr scema](/doc/solr_setup.txt)
