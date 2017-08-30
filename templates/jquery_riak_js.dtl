@@ -1,0 +1,334 @@
+/*
+* jquery.riak
+*
+* Contains utilities for Riak CS web interface
+*
+* DEPENDANCIES:
+*
+* jquery.alerts.js
+* jsi18n for gettext()
+* spark-md5
+*
+*
+*/
+
+(function($){
+
+$.stack = function(options){
+ if ( typeof(options) == "undefined" || options == null ) { options = {}; };
+
+ var RiakAPI = {
+    options: $.extend({
+	    riakURL: '{{ base_url }}',
+	    rootURI: '{{ root_uri }}',
+	    token: '{{ token }}',
+	    bucketName: '{{ bucket_name }}',
+	    errorElementID: '',
+	    rpc_url: '',
+	    form_id: '',
+	    task_timeout: 1000,
+	    attempts: 15,
+            onSuccess: function(data, status){ },
+	    onFailure: function(data){ },
+	    onProgress: function(evt){ },
+	    loadingMsgColor: 'green',
+	    uploaded_bytes: 0,
+	    chunk_size: 2000000,
+    }, options),
+    error_codes: {
+	{% for k,v in error_codes %}{{ k }}: "{{ v }}"{% if not forloop.last %},{% endif %}{% endfor %}
+    },
+    error_happened: function(msg){
+	var message = gettext("Error loading content.");
+	if(msg!=undefined){
+	    message = msg;
+	}
+        $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+message+'</span>');
+    },
+    loading_message_show: function(){
+     $('#'+RiakAPI.options.errorElementID).empty().append('<span style="color:'+RiakAPI.options.loadingMsgColor+';">'+gettext('Loading..')+'</span>');
+    },
+    get_json: function(data, callback, error_callback){
+     $.ajax({
+	url: RiakAPI.options.rpc_url,
+	cache: false,
+	dataType: 'json',
+	data: data,
+	success: function(data, status){
+	    if(data&&(data=='failure'||(data.hasOwnProperty('error')))){
+		if(!error_callback){
+		  RiakAPI.error_happened();
+		} else {
+		  error_callback(data);
+		}
+		return;
+	    } else {
+		$('#failure').hide();
+	    }
+	    if(callback) callback(data, status);
+	}
+     }).fail(function(jqxhr, textStatus, error){
+	var err = textStatus + ', ' + error;
+	if(error!='') RiakAPI.error_happened(err);
+     });
+    },
+    post_json: function(url, form_data, headers, onSuccess, onFailure, onProgress){
+     // ``form_data`` -- instance of ``FormData``
+     $.ajax({
+	url: url,
+	type: 'POST',
+	cache: false,
+	dataType: 'json',
+	data: form_data,
+	processData: false,
+	contentType: false,
+	timeout: 480000,
+	headers: headers,
+	success: function(data, status, jqXHR){
+	    if(data&&(data=='failure'||(data.hasOwnProperty('error')))){
+		onFailure(NaN, NaN, data);
+		return;
+	    }
+	    onSuccess(data, status);
+	},
+        xhr: function(){
+            var req = $.ajaxSettings.xhr();
+            if (req){
+		if (typeof req.upload == "object") {
+		    req.upload.addEventListener("progress", function(evt) {
+			onProgress(evt);
+		    });
+		}
+            }
+	    return req;
+	}
+     }).fail(function(xhr, status, msg){
+      var e=msg;
+      try {
+	e=$.parseJSON(xhr.responseText);
+      } catch(e) {};
+      onFailure(xhr, status, e);
+     });
+    },
+    _get_md5: function(data, success_callback, error_callback){
+	var promise = $.Deferred();
+	var reader = new FileReader();
+	reader.onload = function(e){
+	  var spark = new SparkMD5.ArrayBuffer();
+	  spark.append(e.target.result);
+	  var checksum = spark.end();
+	  if(checksum) promise.resolve(checksum);
+	  else promise.reject();
+	};
+	reader.onerror = error_callback;
+	try{
+	  reader.readAsArrayBuffer(data);
+	}catch(e){
+	  promise.reject();
+	}
+	promise.done(success_callback);
+	promise.fail(error_callback);
+    },
+    array_integers_to_string: function(lst){
+      var result="";
+      if(lst.constructor === Array){
+        $.each($(lst), function(i, v){
+	  result += String.fromCharCode(v);
+        });
+        return result;
+      } else{
+	return lst;
+      }
+    },
+    _chunked_upload: function(upload_id, prefix, file, offset, multipart_id, oname, etags){
+	/* 
+	    upload_id -- DOM object ID
+	    prefix -- object storage path ( directory name )
+	    file -- browser's file object
+	    offset -- position in file to upload from
+	    multipart_id -- unique upload id
+	    oname -- object name, generated and returned by server
+	    etags -- list of md5 sums of file parts. It is passed with the last part to server
+	*/
+	var chunk_size = RiakAPI.options.chunk_size;
+	var blob_slice = window.Blob && (Blob.prototype.slice || Blob.prototype.webkitSlice || Blob.prototype.mozSlice);
+	var blob = blob_slice.call(file, offset, offset+chunk_size, file.type);
+	var blob_size = blob.size;
+	var attempts=$('#'+RiakAPI.options.errorElementID).data('attempts');
+	var part_num=parseInt(offset/chunk_size)+1;
+	if(attempts==undefined) attempts=5;
+	RiakAPI._get_md5(blob, function(checksum){
+	  var form_data = new FormData();
+	  form_data.append('files[]', blob, file.name);
+	  etags.push([part_num, checksum]);
+	  if(offset+chunk_size >= file.size){ // last chunk, add etags to complete upload
+	    form_data.append('etags[]', etags);
+	  }
+	  if(prefix) form_data.append('prefix', prefix);
+	  if(oname) form_data.append('object_name', oname);
+	  var headers = {'content-range': 'bytes '+offset+'-'+(offset + blob_size - 1)+'/'+file.size};
+	  if(multipart_id){ var post_url=RiakAPI.options.rpc_url+multipart_id+'/'+part_num+'/'
+	  } else {var post_url=RiakAPI.options.rpc_url;}
+	  RiakAPI.post_json(post_url, form_data, headers, function(data, status){
+	      if(data.hasOwnProperty('error')){
+		RiakAPI.parse_file_upload_error(upload_id, RiakAPI.array_integers_to_string(data['error']));
+		return;
+	      };
+	      if(file.size-data.end_byte-1==0){
+	        RiakAPI.options.onSuccess(data, status);
+	      } else {
+		var umid = RiakAPI.array_integers_to_string(data.upload_id);
+		var oname = RiakAPI.array_integers_to_string(data.object_name);
+	        RiakAPI._chunked_upload(upload_id, prefix, file, data.end_byte+1, umid, oname, etags);
+	      }
+	    },
+	    function(xhr, status, msg){
+	      if(msg=='fd_error'){
+		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('file read error')+'</span>');
+		return;
+	      } else if(msg.hasOwnProperty('error')){
+		RiakAPI.parse_file_upload_error(upload_id, RiakAPI.array_integers_to_string(msg['error']));
+		return;
+	      } else if((status=='error'||status=='timeout')&&xhr.readyState==0){
+		 attempts-=1;
+		 $('#'+RiakAPI.options.errorElementID).data('attempts', attempts);
+		 if(attempts<0){
+		  $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext("connection timeout")+'</span>');
+		  return;
+		 }
+		 $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('network error, retrying')+'</span>');
+		 setTimeout(function(){
+		    var umid = RiakAPI.array_integers_to_string(data.upload_id);
+		    var oname = RiakAPI.array_integers_to_string(data.object_name);
+		    RiakAPI._chunked_upload(upload_id, prefix, file, offset, umid, oname, etags);
+		}, 3000);
+		return;
+	      } else if(status=='error'){
+		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('error, try later')+'</span>');
+	      }
+	    },
+	    function(evt){ RiakAPI.options.onProgress(evt, offset, file.size);}
+	  );
+	}, function(){RiakAPI.options.onFailure(NaN, NaN, 'fd_error')});
+	return etags;
+    },
+    file_upload: function(file, upload_id, prefix){
+	var form_data = new FormData();
+	var chunk_size = RiakAPI.options.chunk_size;
+	var file_size = file.size;
+	if(file.size >= chunk_size){
+	    RiakAPI._chunked_upload(upload_id, prefix, file, 0, NaN, NaN, []);
+	} else {
+	 RiakAPI._get_md5(file, function(checksum){
+	  form_data.append('files[]', file);
+	  if(prefix) form_data.append('prefix', prefix);
+	  var headers = {'content-range': 'bytes 0-'+(file_size-1)+'/'+file.size};
+	  RiakAPI.post_json(RiakAPI.options.rpc_url, form_data, headers, RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
+	 }, function(){RiakAPI.options.onFailure(NaN, NaN, 'fd_error')});
+	}
+    },
+    parse_file_upload_error: function(upload_id, error_code){
+     var show=function(uid, msg){
+      $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+msg+'</span>');
+     }
+     if(error_code in RiakAPI.error_codes){
+      show(RiakAPI.error_codes[error_code]);
+     } else {
+      show(error_code);
+     }
+    },
+    reset_defaults: function(){
+      RiakAPI.options.form_id='';
+      RiakAPI.options.attempts=15;
+    },
+    stack_rpc: function(args, callback){
+      var params = [];
+      if(args){
+	for(k in args){
+	  params.push({'name': k, 'value': args[k]});
+	}
+      }
+      RiakAPI.loading_message_show();
+      RiakAPI.get_json(params, function(data,status){
+	   RiakAPI.reset_defaults();
+	   if(RiakAPI.options.onSuccess) RiakAPI.options.onSuccess(data);
+      }, function(data){
+	  if(RiakAPI.options.onFailure){
+	    RiakAPI.options.onFailure(data);
+	  } else {
+	    RiakAPI.error_happened(gettext('Infrastructure Controller returned error.'));
+	  }
+      });
+    },
+    get_objects_list: function(prefix){
+      if(prefix){
+       if(prefix.indexOf('/', prefix.length - 1) == -1) prefix = prefix+'/';
+       RiakAPI.stack_rpc({'prefix': prefix});
+      } else {
+       RiakAPI.stack_rpc();
+      }
+    },
+    directory_create: function(hex_prefix, directory_name){
+	var form_data = {};
+	form_data['object_name'] = directory_name;
+	if(hex_prefix) form_data['prefix'] = hex_prefix;
+	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
+	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
+    },
+    update_object: function(bucket_name, prefix, object_name, new_name){
+      RiakAPI.stack_rpc({'bucket_name': bucket_name, 'object_name': object_name, 'prefix': prefix, 'new_file_name': new_name});
+    },
+    delete_object: function(prefix, object_name){
+      RiakAPI.stack_rpc({'object_name': object_name, 'prefix': prefix});
+    },
+    copy_object: function(from_bucket_name, from_prefix, from_object_name, to_bucket_name, to_prefix, to_object_name){
+	var form_data = {};
+	form_data['src_bucket_name'] = from_bucket_name;
+	form_data['src_prefix'] = from_prefix;
+	form_data['src_object_names'] = [from_object_name];
+	form_data['dst_bucket_name'] = to_bucket_name;
+	form_data['dst_prefix'] = to_prefix;
+	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
+	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
+    },
+    get_object_metadata: function(bucket_name, hex_prefix, object_name){
+      RiakAPI.stack_rpc({'object_name': object_name, 'prefix': prefix});
+    },
+    is_compatible_browser: function(){
+     return !!window.FileReader;
+     // For devices which give false positives for the feature detection
+     //return !(new RegExp('(Android (1\\.[0156]|2\\.[01]))|(Windows Phone (OS 7|8\\.0))|(XBLWP)|(ZuneWP)|(WPDesktop)|(w(eb)?OSBrowser)|(webOS)|(Kindle/(1\\.0|2\\.[05]|3\\.0))').test(window.navigator.userAgent)||false);
+    },
+    slice_blob: function(){
+     var slice = window.Blob && (Blob.prototype.slice || Blob.prototype.webkitSlice || Blob.prototype.mozSlice);
+    },
+    get_riak_url: function(){
+	return RiakAPI.options.riakURL;
+    },
+    get_root_uri: function(){
+	return RiakAPI.options.rootURI;
+    },
+    get_token: function(){
+	return RiakAPI.options.token;
+    },
+    get_bucket_name: function(){
+	return RiakAPI.options.bucketName;
+    }
+ };
+ return {
+    get_objects_list: RiakAPI.get_objects_list,
+    directory_create: RiakAPI.directory_create,
+    update_object: RiakAPI.update_object,
+    delete_object: RiakAPI.delete_object,
+    copy_object: RiakAPI.copy_object,
+    file_upload: RiakAPI.file_upload,
+    parse_file_upload_error: RiakAPI.parse_file_upload_error,
+    array_integers_to_string: RiakAPI.array_integers_to_string,
+    get_riak_url: RiakAPI.get_riak_url,
+    get_root_uri: RiakAPI.get_root_uri,
+    get_token: RiakAPI.get_token,
+    get_bucket_name: RiakAPI.get_bucket_name,
+    get_object_metadata: RiakAPI.get_object_metadata
+ };
+};
+})(jQuery);

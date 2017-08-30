@@ -1,0 +1,49 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xml:lang="ru-ru" xmlns="http://www.w3.org/1999/xhtml" lang="ru-ru"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>{{ title }}</title>
+<meta http-equiv="imagetoolbar" content="no"/>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="Shortcut icon" href="{{ static_root }}favicon.ico" type="image/x-icon" />
+<meta name="robots" content="NONE,NOARCHIVE">
+<link rel="stylesheet" href="{{ static_root }}riak_index.css" media="all">
+</head>
+
+<body>
+
+<!-- Begin Wrapper -->
+<div id="wrapper">
+  <!-- Begin Header -->
+    <div id="header">
+        <div id="header_content">
+	  <div class="shell-bar">
+            <div class="page-caption left-align" style="padding-left:4em;margin-top:-5px;"><a href="{{ root_path }}">{{ title }}</a></div>
+	    {% if breadcrumbs %}
+	    / {% for uri, path in breadcrumbs %}<div class="breadcrumb page-caption"><a href="{{ uri }}">{{ path }}</a></div>{% endfor %}
+	    {% endif %}
+	    / <div class="page-caption left-align" style="margin-top:-5px;">{{ current_directory }}</div>
+	  </div>
+        </div>
+  <!-- End Header -->
+
+<ul class="photo-list">
+{% for o in objects_list %}
+<li>
+ {% if o.content_type|equal:"image/jpeg" and o|key:"short_url" %}
+  <a href="http://{{ short_url }}/{{ o.short_url }}"><img src="http://{{ short_url }}/{{ o.short_url }}?size=1" title="{{ o.name }}" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+ {% else %}
+   {% if o.content_type|startswith:"video" and o|key:"preview_url" %}
+      <a href="{{ o.preview_url }}"><img src="{{ media_url }}swift_video.png" title="{{ o.name }}" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+   {% else %}
+     {% if o.content_type|equal:"application/pdf" %}
+       <a href="http://{{ short_url }}/{{ o.short_url }}"><img src="{{ media_url }}swift_pdf.png" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+     {% endif %}
+   {% endif %}
+ {% endif %}
+</li>
+{% endfor %}
+</ul>
+
+    </div></div>
+</body>
+</html>

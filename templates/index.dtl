@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>{{brand_name}} Object Storage</title>
+<meta content="width=device-width, initial-scale=1, user-scalable=no" name="viewport">
+<meta http-equiv="imagetoolbar" content="no"/>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="robots" content="NONE,NOARCHIVE" />
+<meta name="robots" content="index, follow" />
+
+<link REL="SHORTCUT ICON" HREF="{{ static_root }}favicon.gif" />
+<link rel="stylesheet" type="text/css" href="{{ static_root }}admin.css" />
+<link type="text/css" rel="stylesheet" href="{{ static_root }}widgets.css"/>
+<link type="text/css" rel="stylesheet" href="{{ static_root }}jquery.alerts.css"/>
+<link type="text/css" rel="stylesheet" href="{{ static_root }}bootstrap/css/bootstrap.css">
+<link type="text/css" rel="stylesheet" href="{{ static_root }}bootstrap/css/mobile.css">
+<link type="text/css" rel="stylesheet" href="{{ static_root }}jquery.ui.autocomplete.css">
+
+<script src="{{ static_root }}jquery.min.js"></script>
+<script src="{{ static_root }}jquery.form.min.js"></script>
+<script src="{{ static_root }}jquery.alerts.js" type='text/javascript'></script>
+<script type="text/javascript" src="{{ static_root }}i18n.js"></script>
+<script type="text/javascript" src="{{ static_root }}bootstrap/js/bootstrap.min.js"></script>
+<script src="{{ static_root }}filesize.min.js"></script>
+<script src="{{ static_root }}spark-md5.min.js"></script>
+<script src='{{ static_root }}ui.js' type='text/javascript'></script>
+<script type="text/javascript" src="/token/{{token}}/{{ bucket_name }}/riak.js"></script>
+<script type="text/javascript" src="{{ static_root }}file_upload.js"></script>
+</head>
+
+<body class="home files" data-bucket-name="{{ bucket_name }}" data-token="{{ token }}" data-root-uri="{{ root_uri }}" {% if hex_prefix %} data-hex-prefix="{{ hex_prefix }}"{% endif %} data-is-bucket-belongs-to-user="{{ is_bucket_belongs_to_user }}">
+<!-- Begin Wrapper -->
+  <!-- Begin Header -->
+    <header class="clearfix">
+        <div class="header_links">
+            <div class="main-content header_links_container clearfix">
+                <span class="logout"><a href="{{ root_uri }}" id="logout_link">{{ user_name }}</a></span>
+            </div>
+        </div>
+        <div id="header_content">
+	    <div class="main-content logo-wrapper">
+		<div class="header_logo">
+		    <a class="logo desktop" href="{{ root_uri }}" title="{{ brand_name }}">
+			<!--img src="{{ static_root }}xentime.png" /-->
+		    </a>
+		</div>
+	    </div>
+  <!-- Begin Navigation -->
+    <div class="nav-wrapper">
+        <div class="main-content">
+        </div>
+    </div>
+</div>
+  <!-- End Navigation -->
+    </header>
+  <!-- End Header -->
+<section>
+    <div class="main-content">
+        <div id="faux">
+          <div id="container" class="clearfix">
+            <div id="init_content">
+
+<div class="management-block">
+<h3>
+<span class="mob-hidden" id="id-block-header">Object Storage&nbsp;&nbsp;</span><span id="id-status"></span>
+<span class="pushbutton"><button id="id-createdir-button" class="form-short-small-button1" type="button">Create Directory</button></span>
+<span class="separator"></span>
+<span class="pushbutton"><button id="id-upload-button" class="form-short-small-button1 mob-hidden">Upload</button><span class="hidden-btn"><span>Upload</span><input type="file" multiple="" name="files[]"></span></span>
+</h3>
+<div class="management-table clearfix">
+ <div class="articles-details">
+
+<div style="width:550px;">
+<form id="search_form" action="/riak-search/{{ bucket_name }}/{% if hex_prefix %}?prefix={{ hex_prefix }}{% endif %}" method="GET">
+ <input class="query custom-input-420x31" id="obj_search" type="text" name="q" value="">&nbsp;<input type="button" value="Search">
+</form>
+</div>
+
+<div class="loading-message-wrap">
+<br/><br/><br/><center><div class="blue_error"><div><i class="glyphicon glyphicon-info-sign"></i><span id="id-loading-message-text"></span></div></div></center><br/><br/><br/><br/>
+</div>
+<div class="confirm pink_error">
+    <div>
+	<i class="glyphicon glyphicon-info-sign"></i>Are you sure you want to delete <span id="id-dialog-obj-rm-msg"></span>
+	<div>
+	    <span class="pushbutton"><button type="button" class="form-short-small-button1" id="ok-btn">Yes</button></span>
+	    <span class="pushbutton"><button type="button" class="form-short-small-button1" id="cancel-btn"> Cancel</button></span>
+	</div>
+    </div>
+</div>
+<div id="fileupload">
+    <div id="drop">
+	<!--Drag an image file above to upload or..
+	<a href="#">Browse</a-->
+	<input type="file" name="upl" multiple />
+
+<div class="files-tbl clearfix" style="display:none;">
+    <div class="files-tbl_th">
+	<div class="file-name_th"><a href="#" id="id-sort-by-name" data-sorting="asc">Name</a></div>
+	<div class="file-size_th"><a href="#" id="id-sort-by-size" data-sorting="asc">Size</a></div>
+	<div class="file-modified_th"><a href="#" id="id-sort-by-date" data-sorting="asc">Modified</a></div>
+	<div class="file-url_th"><img src="{{ static_root }}preview.png" /></div>
+	<div class="file-preview-url_th"><img src="{{ static_root }}link.png" /></div>
+	<div></div>
+    </div>
+    <div class="clearfix" id="id-objects-list">
+    </div>
+    <div id="context-menu">
+	<div class="menu-head"><span class="txt"></span><a href="#"></a></div>
+	<div class="row open-link"><a href="#"><span id="menu-open"><span>Open</span></span></a></div>
+        <div class="row"><a href="#"><span id="menu-delete"><span>Delete</span></span></a></div>
+        <div class="row"><a href="#"><span id="menu-copy"><span>Copy</span></span></a></div>
+        <div class="row"><a href="#"><span id="menu-move"><span>Move</span></span></a></div>
+    </div>
+</div>
+
+</div>
+</div>
+
+ </div>
+</div>
+</div>
+
+            </div>
+    	  </div>
+        </div>
+    </div>
+<!-- End Wrapper -->
+</section>
+<div id="dialog" title="Basic dialog"></div>
+<div id="shadow"><div id="loader-img" class="loader">Loading...</div></div>
+
+</body>
+</html>
