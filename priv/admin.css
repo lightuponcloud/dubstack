@@ -61,7 +61,7 @@ section{margin-bottom:20px;}
 .header_links_container span#logout_link,.header_links_container span#public_link{padding-right: 0;border-right: none;}
 .header_links_container span a{color:#e2e2e2 !important;}
 .header_links_container span{display:block; float: right; color:#e2e2e2 !important;margin-top: 5px; padding:0 10px; border-right: 1px solid #e2e2e2;}
-#header_content{min-height:89px; background: #95d6ce url('/riak-media/header_xentime.jpg') no-repeat top left;}
+#header_content{min-height:89px; background: #95d6ce url('/riak-media/header_example.jpg') no-repeat top left;}
 .header_logo{float: left; /*margin-top:25px;height: 42px;*/margin: 20px 0;position: relative;z-index: 99999;}
 .header_logo h1, .header_logo h1 a{color:#ffffff;}
 .header-module-label{ font-size: 18px; font-weight: normal; display: inline; color:#fff;}

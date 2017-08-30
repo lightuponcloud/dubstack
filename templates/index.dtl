@@ -41,7 +41,6 @@
 	    <div class="main-content logo-wrapper">
 		<div class="header_logo">
 		    <a class="logo desktop" href="{{ root_uri }}" title="{{ brand_name }}">
-			<!--img src="{{ static_root }}xentime.png" /-->
 		    </a>
 		</div>
 	    </div>

@@ -92,7 +92,7 @@ How to install Riak CS ?
 
     8. Add admin user
 
-    curl -v -H 'Content-Type: application/json' -XPOST --data '{"email":"admin@xentime.com", "name":"admin"}' http://127.0.0.1:8000/riak-cs/user
+    curl -v -H 'Content-Type: application/json' -XPOST --data '{"email":"admin@example.com", "name":"admin"}' http://127.0.0.1:8000/riak-cs/user
 
 
     You should receive the following response:
@@ -123,8 +123,8 @@ How to install Riak CS ?
 
     root soft nofile 65536
     root hard nofile 65536
-    xentime soft nofile 65536
-    xentime hard nofile 65536
+    myuser soft nofile 65536
+    myuser hard nofile 65536
 
     11. Restart Riak, Stanchion and Riak CS.
 
