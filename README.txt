@@ -1,7 +1,7 @@
 Riak CS Middleware
 ==================
 
-[![Screenshot](https://raw.githubusercontent.com/imgrey/riak-middleware/master/doc/riak_middleware_screenshot.png)](https://github.com/imgrey/riak-middleware)
+[![Screenshot](/doc/riak_middleware_screenshot.png)](https://github.com/imgrey/riak-middleware)
 
 This is a Cowboy web application that you can put in front of Riak CS instances.
 
