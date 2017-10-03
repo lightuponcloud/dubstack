@@ -2131,7 +2131,7 @@ div.management-table div:last-child{
     border-top-left-radius: 5px;
     border-top-right-radius: 5px;
     font-size: 1em;
-    padding: 10px;
+    padding: 4px 10px 4px 10px;
     width: 100% !important;
     min-height:22px;
     line-height: 22px;
@@ -2951,10 +2951,15 @@ body.files #id-upload-button{
 body.files #id-upload-button:disabled{
     background: rgba(0, 0, 0, 0) url("/riak-media/upload_gray.png") no-repeat scroll 0 center;
 }
-body.files #id-createdir-button{
-    background: rgba(0, 0, 0, 0) url("/riak-media/create_directory.png") no-repeat scroll 0 center;
+body.files #id-createdir-button, body.files #id-action-log{
     padding-left: 21px;
     width: auto;
+}
+body.files #id-createdir-button{
+    background: rgba(0, 0, 0, 0) url("/riak-media/create_directory.png") no-repeat scroll 0 center;
+}
+body.files #id-action-log{
+    background: rgba(0, 0, 0, 0) url("/riak-media/action_log.png") no-repeat scroll 0 center;
 }
 body.files #id-createdir-button:disabled{
     background: rgba(0, 0, 0, 0) url("/riak-media/create_directory_gray.png") no-repeat scroll 0 center;
@@ -3044,7 +3049,7 @@ div.management-table .files-tbl_th div, div.management-table .file-item div{
 h3 .pushbutton {
     display: inline-block;
     float: right;
-    margin-top: -8px;
+    margin-top: 1px;
     margin-left: 10px;
     margin-right: 0;
 }

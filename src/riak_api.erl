@@ -6,7 +6,7 @@
          list_objects/1, list_objects/2,
          copy_object/4, copy_object/5,
          delete_object/2,
-         head_object/2, head_object/3,
+         get_object/2, head_object/2,
          get_object_metadata/2, get_object_metadata/3,
          put_object/4, put_object/5,
          start_multipart/2, start_multipart/4,
@@ -19,10 +19,12 @@
 	 pick_object_name/3,
 	 s3_request/8,
 	 request_httpc/5,
-	 recursively_list_pseudo_dir/2
+	 recursively_list_pseudo_dir/2,
+	 update_index/3
         ]).
 
 -include("riak.hrl").
+-include("general.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
 -type s3_bucket_acl() :: private
@@ -134,7 +136,7 @@ list_objects(BucketName, Options)
 -spec recursively_list_pseudo_dir(string(), string()) -> list().
 
 recursively_list_pseudo_dir(BucketName, Prefix) ->
-    RiakResponse = riak_api:list_objects(BucketName, [{prefix, Prefix}]),
+    RiakResponse = list_objects(BucketName, [{prefix, Prefix}]),
     Contents = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
     Dirs = [proplists:get_value(prefix, I) || I <- proplists:get_value(common_prefixes, RiakResponse)],
     lists:foldl(fun(X, Acc) -> X ++ Acc end, Contents, [recursively_list_pseudo_dir(BucketName, P) || P <- Dirs]).
@@ -179,11 +181,16 @@ head_bucket(BucketName) when is_list(BucketName) ->
 -spec head_object(string(), string()) -> proplist()|not_found.
 
 head_object(BucketName, Key) ->
-    head_object(BucketName, Key, []).
+    fetch_object(head, BucketName, Key, []).
 
--spec head_object(string(), string(), proplist()) -> proplist()|not_found.
+-spec get_object(string(), string()) -> proplist().
 
-head_object(BucketName, Key, Options) when is_list(BucketName), is_list(Key) ->
+get_object(BucketName, Key) ->
+    fetch_object(get, BucketName, Key, []).
+
+-spec fetch_object(atom(), string(), string(), proplist()) -> proplist()|not_found.
+
+fetch_object(MethodName, BucketName, Key, Options) when is_list(BucketName), is_list(Key) ->
     RequestHeaders = [{"Range", proplists:get_value(range, Options)},
                       {"If-Modified-Since", proplists:get_value(if_modified_since, Options)},
                       {"If-Unmodified-Since", proplists:get_value(if_unmodified_since, Options)},
@@ -197,15 +204,17 @@ head_object(BucketName, Key, Options) when is_list(BucketName), is_list(Key) ->
                       Version   -> ["versionId=", Version]
                   end,
     Config = #riak_api_config{},
-    case s3_request(head, BucketName, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config) of
-	{ok, {_Status, Headers, _Body}} ->
+    case s3_request(MethodName, BucketName, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config) of
+	{ok, {_Status, Headers, Body}} ->
 	    [{last_modified, proplists:get_value("last-modified", Headers)},
-	    {etag, proplists:get_value("etag", Headers)},
-	    {content_length, proplists:get_value("content-length", Headers)},
-	    {content_type, proplists:get_value("content-type", Headers)},
-	    {content_encoding, proplists:get_value("content-encoding", Headers)},
-	    {delete_marker, list_to_existing_atom(proplists:get_value("x-amz-delete-marker", Headers, "false"))},
-	    {version_id, proplists:get_value("x-amz-version-id", Headers, "null")}|extract_metadata(Headers)];
+	     {etag, proplists:get_value("etag", Headers)},
+	     {content_length, proplists:get_value("content-length", Headers)},
+	     {content_type, proplists:get_value("content-type", Headers)},
+	     {content_encoding, proplists:get_value("content-encoding", Headers)},
+	     {delete_marker, list_to_existing_atom(proplists:get_value("x-amz-delete-marker", Headers, "false"))},
+	     {content, Body},
+	     {version_id, proplists:get_value("x-amz-version-id", Headers, "null")}|extract_metadata(Headers)
+	    ];
 	{error, _} -> not_found
     end.
 
@@ -217,14 +226,14 @@ head_object(BucketName, Key, Options) when is_list(BucketName), is_list(Key) ->
 pick_object_name(BucketName, Prefix, FileName)
     when is_list(BucketName), is_binary(FileName),
          is_list(Prefix) orelse Prefix =:= undefined ->
-    % Call slugify or pick a random name
+    %% Call slugify or pick a random name
     ObjectName =
 	case utils:slugify_object_name(FileName) of
 	    [] -> utils:slugify_object_name();
 	    "." -> utils:slugify_object_name();
 	    _ObjectName -> _ObjectName
 	end,
-    % check if object exists in storage
+    %% check if object exists in storage
     PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
     Response = head_object(BucketName, PrefixedObjectName),
     case Response of
@@ -525,7 +534,6 @@ request_httpc(URL, Method, Hdrs, <<>>, Config)
     HdrsStr = [{utils:to_list(K), utils:to_list(V)} || {K, V} <- Hdrs],
 
     Timeout = get_timeout(Config),
-io:fwrite("!!!!!!!!!!!!!!!!!!!! ~p~n", [Timeout]),
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method, {URL, HdrsStr},
 	[{timeout, Timeout}], [{body_format, binary}]));
@@ -586,3 +594,18 @@ maybe_set_proxy(Config) ->
 		    httpc:set_options([{proxy, {{ProxyHost, ProxyPort}, ["localhost"]}}])
 	    end
     end.
+
+-spec update_index(string(), string(), list()) -> any().
+
+update_index(BucketName, Prefix, DirectoryName) ->
+    ObjectList = list_objects(BucketName, [{prefix, Prefix}]),
+    %% Update .riak_index.html
+    Settings = #general_settings{},
+    {ok, Body0} = riak_index_dtl:render([
+	{title, DirectoryName},
+	{breadcrumbs, []},  % TODO
+	{objects_list, ObjectList},
+	{static_root, Settings#general_settings.static_root}
+    ]),
+    Body1 = unicode:characters_to_binary(Body0),
+    riak_api:put_object(BucketName, Prefix, ?RIAK_INDEX_FILENAME, Body1).

@@ -4,9 +4,10 @@
 	 to_integer/1, to_integer/2, to_float/1, to_float/2,
          to_number/1, to_list/1, to_binary/1, to_atom/1, to_boolean/1,
          is_true/1, is_false/1, is_valid_bucket_name/2, is_valid_name/1,
-	 hex/1, unhex/1, validate_utf8/2, is_bucket_belongs_to_user/3,
-	 is_bucket_belongs_to_tenant/2, get_bucket_suffix/1,
-	 is_valid_hex_prefix/1]).
+	 hex/1, unhex/1, unhex_path/1, validate_utf8/2,
+	 is_bucket_belongs_to_user/3, is_bucket_belongs_to_tenant/2,
+	 get_bucket_suffix/1, is_valid_hex_prefix/1, timestamp/0,
+	 is_hidden_object/1, join_list_with_separator/3]).
 
 -include("riak.hrl").
 
@@ -91,11 +92,17 @@ increment_filename(FileName) when is_list(FileName) ->
 
 prefixed_object_name(undefined, ObjectName) -> ObjectName;
 prefixed_object_name([], ObjectName) -> ObjectName;
-prefixed_object_name(Prefix, ObjectName) when is_list(Prefix), is_list(ObjectName) ->
+prefixed_object_name(Prefix, ObjectName0) when is_list(Prefix), is_list(ObjectName0) ->
+    ObjectName1 = case string:sub_string(ObjectName0, 1, 1) =:= "/" of
+	true ->
+	    string:sub_string(ObjectName0, 2, length(ObjectName0));
+	false ->
+	    ObjectName0
+    end,
     case string:sub_string(Prefix, length(Prefix), length(Prefix)) =:= "/" of
 	%% strip '/' at the end, return 'prefix/object_name'
-	true -> string:concat(Prefix, ObjectName);
-	_ -> string:concat(Prefix ++ "/", ObjectName)
+	true -> string:concat(Prefix, ObjectName1);
+	_ -> string:concat(Prefix ++ "/", ObjectName1)
     end.
 
 -spec to_integer(string() | binary() | integer() | float() | undefined) -> integer().
@@ -298,6 +305,14 @@ validate_utf8(<< C, Rest/bits >>, 0) when C =:= 241; C =:= 242; C =:= 243 -> val
 validate_utf8(<< 244, Rest/bits >>, 0) -> validate_utf8(Rest, 8);
 validate_utf8(_, _) -> 1.
 
+%% This function returns 0 on success, 1 on error.
+%% Usage: case even(byte_size(Str)) of true -> validate_hex();..
+validate_hex(<<>>, State) -> State;
+validate_hex(<< C, Rest/bits >>, 0) when C >= $0 andalso C =< $9 -> validate_hex(Rest, 0);
+validate_hex(<< C, Rest/bits >>, 0) when C >= $a andalso C =< $f -> validate_hex(Rest, 0);
+validate_hex(<< C, Rest/bits >>, 0) when C >= $A andalso C =< $F -> validate_hex(Rest, 0);
+validate_hex(_, _) -> 1.
+
 %%
 %% Checks the following
 %% - Bucket has specified tenant ID
@@ -330,11 +345,20 @@ even(X) when X >= 0 -> (X band 1) == 0.
 %%
 %% Checks if provided prefix consists of allowed characters
 %%
-is_valid_hex_prefix(HexPrefix)
-	when erlang:is_binary(HexPrefix) ->
+is_valid_hex_prefix(HexPrefix) when erlang:is_binary(HexPrefix) ->
+    F0 = fun(T) ->
+	    case even(erlang:byte_size(T)) of
+		true ->
+		    case validate_hex(T, 0) of
+			0 -> is_valid_name(unhex(T));
+			1 -> false
+		    end;
+	    _ ->
+		false
+	    end
+	end,
     lists:all(
-	fun(T) -> case even(erlang:byte_size(T)) of true -> is_valid_name(unhex(T)); _ -> false end end,
-	[T || T <- binary:split(HexPrefix, <<"/">>, [global]), erlang:byte_size(T) > 0]
+	F0, [T || T <- binary:split(HexPrefix, <<"/">>, [global]), erlang:byte_size(T) > 0]
     );
 is_valid_hex_prefix(undefined) ->
     true.
@@ -410,3 +434,41 @@ digit(15) -> $f.
 hex(undefined) -> <<>>;
 hex(Bin) -> << << (digit(A1)),(digit(A2)) >> || <<A1:4,A2:4>> <= Bin >>.
 unhex(Hex) -> << << (erlang:list_to_integer([H1,H2], 16)) >> || <<H1,H2>> <= Hex >>.
+
+%%
+%% Decodes hexadecimal representation of object path
+%% and returns list of unicode character numbers.
+%%
+-spec unhex_path(binary()|string()) -> list().
+
+unhex_path(Path) when erlang:is_list(Path) orelse erlang:is_list(Path) ->
+    Bits0 = binary:split(to_binary(Path), <<"/">>, [global]),
+
+    Bits1 = [case is_valid_hex_prefix(T) of
+	true -> unhex(T);
+	false -> T end || T <- Bits0, erlang:byte_size(T) > 0],
+    Bits2 = [unicode:characters_to_list(T) || T <- Bits1],
+    lists:flatten(join_list_with_separator(Bits2, "/", [])).
+
+timestamp() ->
+    {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_datetime(os:timestamp()),
+    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}}) - 62167219200.
+
+-spec is_hidden_object(proplist()) -> boolean().
+
+is_hidden_object(ObjInfo) ->
+    ObjectName = proplists:get_value(key, ObjInfo),
+    lists:suffix(?RIAK_INDEX_FILENAME, ObjectName) == true orelse 
+	lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectName) == true.
+
+%%
+%% Joins a list of elements adding a separator between each of them.
+%% Example: ["a", "/", "b"]
+%%
+join_list_with_separator([Head|Tail], Sep, Acc0) ->
+    Acc1 = case Tail of
+	[] -> [Head | Acc0];  % do not add separator at the beginning
+	_ -> [Sep, Head | Acc0]
+    end,
+    join_list_with_separator(Tail, Sep, Acc1);
+join_list_with_separator([], _Sep, Acc0) -> lists:reverse(Acc0).

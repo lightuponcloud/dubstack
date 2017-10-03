@@ -74,7 +74,7 @@ to_json(Req0, State) ->
 		{
 		    key, proplists:get_value(key, ObjInfo)
 		}] || ObjInfo <- Contents,
-		lists:suffix(?RIAK_INDEX_FILENAME, proplists:get_value(key, ObjInfo)) =/= true
+		utils:is_hidden_object(ObjInfo) =/= true
 	    ],
 	    Output = jsx:encode([
 		{list, [get_riak_object(ObjInfo) || ObjInfo <- MetadataList]},

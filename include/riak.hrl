@@ -9,8 +9,8 @@
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="<SECRET>"::string(),
-          secret_access_key="<SECRET>"::string(),
+          access_key_id="<REPLACE ME>"::string(),
+          secret_access_key="<REPLACE ME>"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
@@ -21,6 +21,7 @@
 -define(PUBLIC_BUCKET_SUFFIX, "public").
 -define(PRIVATE_BUCKET_SUFFIX, "private").
 -define(RIAK_INDEX_FILENAME, ".riak_index.html").
+-define(RIAK_ACTION_LOG_FILENAME, ".riak_action_log.xml").
 %% Riak is configured with the following option
 %% {multi_backend_prefix_list, [{<<"the-">>, be_blocks}]}
 -define(RIAK_BACKEND_PREFIX, "the").

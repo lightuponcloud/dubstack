@@ -3,10 +3,11 @@ Riak CS Middleware
 
 ![Screenshot](riak_middleware_screenshot.png)
 
+
 This is a Cowboy web application that you can put in front of Riak CS instances.
 
-Raison d'etre
-=============
+Purpose
+=======
 
 1. Authentication
 2. HTTP/2 support
@@ -14,20 +15,19 @@ Raison d'etre
 4. It provides RPC for uploading chunks of data
 5. It provides a nice web interface for managing object storage contents
 6. It generates index.html listing of pseudo-directories
-
-Planned:
 7. Audit log
 
 How it works
 ============
 
-When user uploads file, middleware does the following.
+When user uploads file, middleware do the following.
 
 1. It queries Keystone to check user's token
 2. If token is valid, it creates bucket with name "the-<user name>-<tenant name>-<bucket type>",
    where "user id" and "token id" are keystone user and token IDs and "bucket type"
    is one of "public" or "private".
 3. It uploads file to Riak CS
+4. It writes record to the hidden object ".riak_action_log.xml"
 
 When user calls API endpoint that lists objects, middleware checks token,
 compares bucket name to Keystone user id and if match found, queries Riak CS
@@ -72,3 +72,9 @@ See also
 [How to install Riak CS](/doc/riak_cs_setup.txt)
 
 [How to update Solr scema](/doc/solr_setup.txt)
+
+
+Other Screenshots
+=================
+
+![Action Log](action_log_screenshot.png)

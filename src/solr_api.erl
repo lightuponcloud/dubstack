@@ -68,14 +68,14 @@ index(BucketName, Prefix, ObjectName, ContentType) ->
     UniqueId = lists:flatten(io_lib:format("~s/~s", [BucketName, EncodedPrefixedObjectName])),
     ObjectURL = riak_api:get_object_url(BucketName, EncodedPrefixedObjectName),
     Config0 = #riak_api_config{},
-    % Download object from Riak CS
+    %% Download object from Riak CS
     Response = riak_api:request_httpc(ObjectURL, get, [{"content-type", "*/*"}], <<>>, Config0),
     case Response of
 	{error, _} ->
 	    {error, "Object not found"};
 	{ok, {_Status, _Headers, RequestBody}} ->
 	    Headers = [{"content-type", ContentType}],
-	    % Upload object to Solr
+	    %% Upload object to Solr
 	    Config1 = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
 	    MetaData = riak_api:get_object_metadata(BucketName, PrefixedObjectName),
 	    OrigName = erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", MetaData, ObjectName)),

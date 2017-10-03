@@ -21,6 +21,7 @@ start(_Type, _Args) ->
 	    {"/riak/copy/[:token]/[:src_bucket_name]", copy_handler, []},
 	    {"/riak/move/[:token]/[:src_bucket_name]", move_handler, []},
 
+	    {"/riak/action-log/[:token]/[:bucket_name]/", action_log, []},
 	    {"/riak-search/[:token]/", search_handler, []},
 	    {"/token/[:token]/[:bucket_name]/riak.js", js_handler, []},
 	    {"/riak/[:token]/[:bucket_name]/", first_page_handler, []}

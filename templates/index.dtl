@@ -41,6 +41,7 @@
 	    <div class="main-content logo-wrapper">
 		<div class="header_logo">
 		    <a class="logo desktop" href="{{ root_uri }}" title="{{ brand_name }}">
+			<!--img src="{{ static_root }}xentime.png" /-->
 		    </a>
 		</div>
 	    </div>
@@ -60,15 +61,17 @@
             <div id="init_content">
 
 <div class="management-block">
-<h3>
+<h3>{% block title %}
 <span class="mob-hidden" id="id-block-header">Object Storage&nbsp;&nbsp;</span><span id="id-status"></span>
+<span class="pushbutton"><button id="id-action-log" class="form-short-small-button1" type="button">Action Log</button></span>
+<span class="separator"></span>
 <span class="pushbutton"><button id="id-createdir-button" class="form-short-small-button1" type="button">Create Directory</button></span>
 <span class="separator"></span>
 <span class="pushbutton"><button id="id-upload-button" class="form-short-small-button1 mob-hidden">Upload</button><span class="hidden-btn"><span>Upload</span><input type="file" multiple="" name="files[]"></span></span>
-</h3>
+{% endblock %}</h3>
 <div class="management-table clearfix">
  <div class="articles-details">
-
+{% block content %}
 <div style="width:550px;">
 <form id="search_form" action="/riak-search/{{ bucket_name }}/{% if hex_prefix %}?prefix={{ hex_prefix }}{% endif %}" method="GET">
  <input class="query custom-input-420x31" id="obj_search" type="text" name="q" value="">&nbsp;<input type="button" value="Search">
@@ -116,6 +119,7 @@
 </div>
 </div>
 
+{% endblock %}
  </div>
 </div>
 </div>

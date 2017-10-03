@@ -418,10 +418,10 @@ tokenise("SUN"++Rest, Acc) -> tokenise(Rest, Acc);
 %% Hmm Excel reports GMT in times so nuke that too
 tokenise("GMT"++Rest, Acc) -> tokenise(Rest, Acc);
 tokenise("UTC"++Rest, Acc) -> tokenise(Rest, Acc);
-tokenise("DST"++Rest, Acc) -> tokenise(Rest, Acc); % daylight saving time
+tokenise("DST"++Rest, Acc) -> tokenise(Rest, Acc);  % daylight saving time
 
 tokenise([$, | Rest], Acc) -> tokenise(Rest, Acc);
-tokenise([32 | Rest], Acc) -> tokenise(Rest, Acc); % Spaces
+tokenise([32 | Rest], Acc) -> tokenise(Rest, Acc);  % Spaces
 tokenise("TH"++Rest, Acc) -> tokenise(Rest, Acc);
 tokenise("ND"++Rest, Acc) -> tokenise(Rest, Acc);
 tokenise("ST"++Rest, Acc) -> tokenise(Rest, Acc);

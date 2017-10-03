@@ -5,6 +5,7 @@
 	 content_types_provided/2, forbidden/2, to_json/2]).
 
 -include("riak.hrl").
+-include("action_log.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -74,6 +75,28 @@ validate_post(Req, State, DataSize, Prefix) ->
 	    end
     end.
 
+add_action_log_record(State) ->
+    UserName = proplists:get_value(user_name, State),
+    TenantName = proplists:get_value(tenant_name, State),
+    BucketName = proplists:get_value(bucket_name, State),
+    Prefix = proplists:get_value(prefix, State),
+    %% When you upload a single file, before the stage of parsing POST request,
+    %% object_name is unknown. It becomes available later, so ther'a two object_name
+    %% entries in State.
+    FileName = proplists:get_value(file_name, State),
+    TotalBytes = proplists:get_value(total_bytes, State),
+    ActionLogRecord0 = #riak_action_log_record{
+	action="upload",
+	user_name=UserName,
+	tenant_name=TenantName,
+	timestamp=io_lib:format("~p", [utils:timestamp()])
+	},
+
+    UnicodeObjectName = unicode:characters_to_list(FileName),
+    Summary = lists:flatten([["Uploaded "], [UnicodeObjectName], [io_lib:format(" ( ~p B )", [TotalBytes])]]),
+    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
+    action_log:add_record(BucketName, Prefix, ActionLogRecord1).
+
 %%
 %% Validates provided content range values and calls 'upload_to_riak()'
 %%
@@ -88,12 +111,11 @@ handle_post(Req0, State) ->
 		Headers),
 	    {ok, {Boundary, Body}} = maps:find(multipart, Req2),
 
-
 	    FieldValues = parse_field_values(Body, Boundary),
 	    ObjectName =
 		case proplists:get_value("object_name", FieldValues) of
 		    undefined -> undefined;
-		    _ObjectName -> binary_to_list(_ObjectName) % it should be an ascii string by now
+		    _ObjectName -> binary_to_list(_ObjectName)  % it should be an ascii string by now
 		end,
 	    Prefix0 = 
 		case proplists:get_value("prefix", FieldValues) of
@@ -104,15 +126,16 @@ handle_post(Req0, State) ->
 
 	    case validate_post(Req0, State, size(Data), Prefix0) of
 		{true, Req3, []} ->
-		    {true, Req3, []}; % error
+		    {true, Req3, []};  % error
 		Prefix1 ->
+		    FileName1 = unicode:characters_to_binary(FileName0),
 		    NewState = [
 			{object_name, ObjectName},
 			{etags, Etags},
-			{prefix, Prefix1}
+			{prefix, Prefix1},
+			{file_name, FileName1}
 		    ] ++ State,
-		    FileName1 = unicode:characters_to_binary(FileName0),
-		    upload_to_riak(Req2, NewState, FileName1, Data)
+		    upload_to_riak(Req2, NewState, Data)
 	    end;
 	_ ->
 	    error_response(Req0, 2)
@@ -121,12 +144,13 @@ handle_post(Req0, State) ->
 %%
 %% Picks object name and uploads file to Riak CS
 %%
-upload_to_riak(Req0, State, FileName, BinaryData) ->
+upload_to_riak(Req0, State, BinaryData) ->
     BucketName = proplists:get_value(bucket_name, State),
     Prefix = proplists:get_value(prefix, State),
     PartNumber = proplists:get_value(part_number, State),
     IsBig = proplists:get_value(is_big, State),
     TotalBytes = proplists:get_value(total_bytes, State),
+    FileName = proplists:get_value(file_name, State),
 
     case IsBig of
 	true ->
@@ -134,7 +158,7 @@ upload_to_riak(Req0, State, FileName, BinaryData) ->
 		true ->
 		    check_part(Req0, State, BinaryData);
 		false ->
-		    start_upload(Req0, State, FileName, BinaryData)
+		    start_upload(Req0, State, BinaryData)
 	    end;
 	false ->
 	    ObjectName = riak_api:pick_object_name(BucketName, Prefix, FileName),
@@ -145,6 +169,8 @@ upload_to_riak(Req0, State, FileName, BinaryData) ->
 	    gen_server:abcast(solr_api, [{bucket_name, BucketName},
 		{prefix, Prefix}, {object_name, ObjectName},
 		{total_bytes, TotalBytes}]),
+
+	    add_action_log_record(State),
 	    {true, Req1, []}
     end.
 
@@ -209,6 +235,8 @@ upload_part(Req0, State, BinaryData) ->
 			    gen_server:abcast(solr_api, [{bucket_name, BucketName},
 				{prefix, Prefix}, {object_name, ObjectName},
 				{total_bytes, TotalBytes}]),
+
+			    add_action_log_record(State),
 			    {true, Req1, []}
 		    end;
 		false ->
@@ -224,11 +252,12 @@ upload_part(Req0, State, BinaryData) ->
 %%
 %% Creates identifier and uploads first part of data
 %%
-start_upload(Req0, State, FileName, BinaryData) ->
-    % create a bucket if not exist
+start_upload(Req0, State, BinaryData) ->
+    %% Create a bucket if not exist
     BucketName = proplists:get_value(bucket_name, State),
     Prefix = proplists:get_value(prefix, State),
     EndByte = proplists:get_value(end_byte, State),
+    FileName = proplists:get_value(file_name, State),
 
     case riak_api:head_bucket(BucketName) of
     	not_found ->
@@ -266,8 +295,8 @@ resource_exists(Req0, State) ->
     BucketName = proplists:get_value(bucket_name, State),
     IsValidBucketName = utils:is_bucket_belongs_to_user(BucketName, UserName, TenantName),
 
-    % check if file size do not exceed the limit, then
-    % start multipart upload
+    %% Check if file size do not exceed the limit, then
+    %% start multipart upload
     case (TotalBytes > ?FILE_MAXIMUM_SIZE) andalso (IsValidBucketName =/= true) of
 	true -> {false, Req0, []};
 	false -> 

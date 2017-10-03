@@ -36,7 +36,7 @@ get_riak_object(RiakURL) ->
 
     OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectName),
     LastModified = proplists:get_value(last_modified, Metadata, ""),
-    % It would be better to parse string date, rather than making another query
+    %% It would be better to parse string date, rather than making another query
     LastModifiedTimetamp = calendar:datetime_to_gregorian_seconds(ec_date:parse(LastModified)) - 62167219200,
     Bytes =
 	case proplists:get_value(content_length, Metadata, undefined) of
@@ -72,7 +72,7 @@ search(_BucketName, _Prefix, Term0) ->
 	    SearchResult = proplists:get_value(<<"response">>, jsx:decode(ResponseBody)),
 	    RiakURLs = [binary_to_list(proplists:get_value(<<"_yz_id">>, I, <<"">>)) || I <- proplists:get_value(<<"docs">>, SearchResult)],
 	    [get_riak_object(URL) || URL <- RiakURLs,
-		lists:suffix(?RIAK_INDEX_FILENAME, URL) =/= true];
+		utils:is_hidden_object(URL) =/= true];
 	{error, {http_error, _, StatusLine,Body,_}} ->
 	    ?WARN("Riak ~p: ~p~n", [StatusLine, Body]),
 	    [];

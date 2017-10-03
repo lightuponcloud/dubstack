@@ -7,6 +7,7 @@
 	 validate_post/5, handle_post/2]).
 
 -include("riak.hrl").
+-include("action_log.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -76,7 +77,7 @@ handle_post(Req0, State0) ->
 	    SrcBucketName = proplists:get_value(src_bucket_name, State0),
 	    case validate_post(Req1, UserName, TenantName, SrcBucketName, FieldValues) of
 		{true, Req3, []} ->
-		    {true, Req3, []}; % error
+		    {true, Req3, []};  % error
 		State1 ->
 		    State2 = State1 ++ State0,
 		    move(Req1, State2)
@@ -85,33 +86,23 @@ handle_post(Req0, State0) ->
 	    error_response(Req0, 2)
     end.
 
-%%
-%% Removes part of prefix from source file.
-%% Returns object name that do not yet exist in destination pseudo-directory
-%%
-shorten_prefix(BucketName, ObjectName0, SrcPrefix0, DstPrefix) ->
-    ObjectName1 =
-	case SrcPrefix0 of
-	    undefined -> ObjectName0;
-	    SrcPrefix1 ->
-		re:replace(ObjectName0, "^" ++ SrcPrefix1, "", [{return, list}])
-    end,
-    ObjectName2 = riak_api:pick_object_name(BucketName, DstPrefix, list_to_binary(ObjectName1)),
-    utils:prefixed_object_name(DstPrefix, ObjectName2).
-
 copy_delete(SrcBucketName, DstBucketName, ObjectName, SrcPrefix, DstPrefix) ->
-    CopyResult = riak_api:copy_object(
-	DstBucketName, shorten_prefix(DstBucketName, ObjectName, SrcPrefix, DstPrefix),
-	SrcBucketName, ObjectName,
-	[{acl, public_read}]
-    ),
-    case proplists:get_value(content_length, CopyResult, 0) of
-	0 -> false;
-	_ ->
-	    riak_api:delete_object(SrcBucketName, ObjectName)
+    case utils:is_hidden_object([{key, ObjectName}]) of
+	true ->
+	    %% Delete index/action log object
+	    riak_api:delete_object(SrcBucketName, ObjectName),
+	    undefined;
+	false ->
+	    %% Delete regular object
+	    CopiedObjectName = copy_handler:do_conditional_copy(
+		SrcBucketName, DstBucketName, ObjectName, SrcPrefix, DstPrefix),
+	    riak_api:delete_object(SrcBucketName, ObjectName),
+	    CopiedObjectName
     end.
 
 move(Req0, State) ->
+    UserName = proplists:get_value(user_name, State),
+    TenantName = proplists:get_value(tenant_name, State),
     SrcBucketName = proplists:get_value(src_bucket_name, State),
     SrcPrefix0 =
 	case proplists:get_value(src_prefix, State) of
@@ -126,20 +117,40 @@ move(Req0, State) ->
 	    undefined -> undefined;
 	    DstPrefix1 -> binary_to_list(DstPrefix1)
 	end,
-
     ObjectNamesToMove0 = [
      case string:sub_string(N, length(N), length(N)) =:= "/" of
-	true -> riak_api:recursively_list_pseudo_dir(SrcBucketName, utils:prefixed_object_name(SrcPrefix0, N));
+	true -> riak_api:recursively_list_pseudo_dir(SrcBucketName, N);
 	false -> [N]
      end || N <- SrcObjectNames],
     ObjectNamesToMove1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectNamesToMove0),
 
-    %% TODO: check if user has access to DST bucket
-    %% TODO: add error handling in case some objects were not copied
-    %% TODO: restrict READ access
-    [
-	copy_delete(SrcBucketName, DstBucketName, ObjectName, SrcPrefix0, DstPrefix0) || ObjectName <- ObjectNamesToMove1
-    ],
+    MovedObjectNames0 = [copy_delete(SrcBucketName, DstBucketName, ObjectName, SrcPrefix0, DstPrefix0) ||
+	ObjectName <- ObjectNamesToMove1],
+    MovedObjectNames1 = [O || O <- MovedObjectNames0, O =/= undefined],
+
+    ActionLogRecord0 = #riak_action_log_record{
+	action="move",
+	user_name=UserName,
+	tenant_name=TenantName,
+	timestamp=io_lib:format("~p", [utils:timestamp()])
+	},
+
+    ReadableList0 = lists:flatten(utils:join_list_with_separator(MovedObjectNames1, ", ", [])),
+
+    Summary0 = lists:flatten([["Moved from: "], [ReadableList0]]),
+    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+    action_log:add_record(DstBucketName, DstPrefix0, ActionLogRecord1),
+
+    case SrcPrefix0 of
+	undefined -> ok;
+	_ ->
+	    ReadableList1 = lists:flatten(["/"]++utils:join_list_with_separator(
+		[DstBucketName, utils:unhex_path(DstPrefix0)], "/", [])),
+	    Summary1 = lists:flatten([["Moved "], [ReadableList0], [" to: "], [ReadableList1]]),
+
+	    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+	    action_log:add_record(SrcBucketName, SrcPrefix0, ActionLogRecord2)
+    end,
     {true, Req0, []}.
 
 

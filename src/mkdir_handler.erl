@@ -80,7 +80,7 @@ validate_post(Req, FieldValues) ->
 %%
 %% For example: "blah blah" is uploaded as blah-blah/.riak_index.html
 %%
--spec create_pseudo_directory(Req, proplist()) -> {true, Req, []}.
+-spec create_pseudo_directory(any(), proplist()) -> any().
 
 create_pseudo_directory(Req0, State) ->
     BucketName = proplists:get_value(bucket_name, State),
@@ -93,22 +93,11 @@ create_pseudo_directory(Req0, State) ->
 	end,
 	PrefixedIndexFilename = utils:prefixed_object_name(
 	    PrefixedDirectoryName, ?RIAK_INDEX_FILENAME),
-
 	ExistingIndexObject = riak_api:head_object(BucketName,
 	    PrefixedIndexFilename),
 	case ExistingIndexObject of
 	    not_found ->
-		%% Create .riak_index.html
-		Settings = #general_settings{},
-		{ok, Body0} = riak_index_dtl:render([
-		    {title, DirectoryName},
-		    {breadcrumbs, []},
-		    {objects_list, []},
-		    {static_root, Settings#general_settings.static_root}
-		]), % todo
-		Body1 = erlang:iolist_to_binary(Body0),
-		riak_api:put_object(BucketName, PrefixedDirectoryName,
-		    ?RIAK_INDEX_FILENAME, Body1),
+		riak_api:update_index(BucketName, PrefixedDirectoryName, DirectoryName),
 		{true, Req0, []};
 	    _ ->
 		error_response(Req0, 10)
@@ -121,7 +110,7 @@ handle_post(Req0, State) ->
 	    FieldValues = jsx:decode(Body),
 	    case validate_post(Req1, FieldValues) of
 		{true, Req2, []} ->
-		    {true, Req2, []}; % error
+		    {true, Req2, []};  % error
 		{DirectoryName, PrefixedDirectoryName} ->
 		    NewState = [{directory_name, DirectoryName},
 				{prefixed_directory_name, PrefixedDirectoryName}
