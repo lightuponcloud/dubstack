@@ -1,5 +1,5 @@
-<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
-<html xml:lang="ru-ru" xmlns="http://www.w3.org/1999/xhtml" lang="ru-ru"><head>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">{% load dtl_tags %}
+<html xml:lang="en-us" xmlns="http://www.w3.org/1999/xhtml" lang="en-us"><head>
 <meta http-equiv="content-type" content="text/html; charset=UTF-8">
 <title>{{ title }}</title>
 <meta http-equiv="imagetoolbar" content="no"/>
@@ -26,17 +26,25 @@
         </div>
   <!-- End Header -->
 
+{% if directories %}
+<ul class="photo-list">
+{% for o in directories %}
+  <a href="/{{ bucket_id }}/{{ o }}"><img src="{{ static_root }}icon_dir.png" /><br/><span class="image-fn">{{ o }}</span></a>
+{% endfor %}
+</ul>
+{% endif %}
+
 <ul class="photo-list">
 {% for o in objects_list %}
 <li>
- {% if o.content_type|equal:"image/jpeg" and o|key:"short_url" %}
-  <a href="http://{{ short_url }}/{{ o.short_url }}"><img src="http://{{ short_url }}/{{ o.short_url }}?size=1" title="{{ o.name }}" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+ {% if o.content_type == "image/jpeg" %}
+  <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/riak/icon/{{ bucket_id }}?object_name={{ o.orig_name|basename }}&prefix={{ prefix }}" title="{{ o.orig_name }}" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
  {% else %}
-   {% if o.content_type|startswith:"video" and o|key:"preview_url" %}
-      <a href="{{ o.preview_url }}"><img src="{{ media_url }}swift_video.png" title="{{ o.name }}" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+   {% if o.content_type|startswith:"video" %}
+      <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/{{ bucket_id }}/{{ prefix }}/{{ o.name }}" title="{{ o.orig_name }}"><img src="{{ static_root }}icon_video.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
    {% else %}
-     {% if o.content_type|equal:"application/pdf" %}
-       <a href="http://{{ short_url }}/{{ o.short_url }}"><img src="{{ media_url }}swift_pdf.png" /><br/><span class="image-fn">{{ o.name|basename }}</span></a>
+     {% if o.content_type == "application/pdf" %}
+       <a href="/{{ bucket_id }}/{{ o.name }}"><img src="{{ static_root }}icon_pdf.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
      {% endif %}
    {% endif %}
  {% endif %}

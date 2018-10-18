@@ -1,3 +1,0 @@
-var error_codes = {
-    {% for k,v in error_codes %}{{ k }}: "{{ v }}"{% if not forloop.last %},{% endif %}{% endfor %}
-};

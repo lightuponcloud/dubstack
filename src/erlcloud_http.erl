@@ -21,10 +21,10 @@ make_query_string(Params, EmptyQueryOpt) ->
     string:join([encode_query_term(Key, Value, EmptyQueryOpt) || {Key, Value} <-
                   Params, Value =/= none, Value =/= undefined], "&").
 
-value_to_string(Integer) when is_integer(Integer) -> integer_to_list(Integer);
-value_to_string(Atom) when is_atom(Atom) -> atom_to_list(Atom);
-value_to_string(Binary) when is_binary(Binary) -> Binary;
-value_to_string(String) when is_list(String) -> unicode:characters_to_binary(String);
+value_to_string(Integer) when erlang:is_integer(Integer) -> erlang:integer_to_list(Integer);
+value_to_string(Atom) when erlang:is_atom(Atom) -> erlang:atom_to_list(Atom);
+value_to_string(Binary) when erlang:is_binary(Binary) -> Binary;
+value_to_string(String) when erlang:is_list(String) -> unicode:characters_to_binary(String);
 value_to_string({{_Yr, _Mo, _Da}, {_Hr, _Min, _Sec}} = Timestamp) -> format_timestamp(Timestamp).
 
 format_timestamp({{Yr, Mo, Da}, {H, M, S}}) ->
@@ -32,7 +32,7 @@ format_timestamp({{Yr, Mo, Da}, {H, M, S}}) ->
       io_lib:format("~4.10.0b-~2.10.0b-~2.10.0bT~2.10.0b:~2.10.0b:~2.10.0bZ",
                     [Yr, Mo, Da, H, M, S])).
 
-url_encode(Binary) when is_binary(Binary) ->
+url_encode(Binary) when erlang:is_binary(Binary) ->
     url_encode(unicode:characters_to_list(Binary));
 url_encode(String) ->
     url_encode(String, []).
@@ -48,8 +48,8 @@ url_encode([Char|String], Accum)
 url_encode([Char|String], Accum) ->
     url_encode(String, utf8_encode_char(Char) ++ Accum).
 
-url_encode_loose(Binary) when is_binary(Binary) ->
-    url_encode_loose(binary_to_list(Binary));
+url_encode_loose(Binary) when erlang:is_binary(Binary) ->
+    url_encode_loose(erlang:binary_to_list(Binary));
 url_encode_loose(String) ->
     url_encode_loose(String, []).
 url_encode_loose([], Accum) ->

@@ -28,7 +28,7 @@ padding-left:15px;
 
 #popup_content input
 {
-background:url(/media/sprite.png);
+background:url(sprite.png);
 padding:3px;
 color:#000;
 margin-top:20px;
@@ -52,7 +52,7 @@ background-position:0 -1300px;
 position:static;
 text-indent:0;
 -moz-border-radius:5px 5px 5px 5px;
-background:url("/media/sprite.png") repeat scroll 0 0 transparent;
+background:url("sprite.png") repeat scroll 0 0 transparent;
 border:1px solid #DADADA;
 color:#000000;
 height:25px;

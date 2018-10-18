@@ -49,28 +49,28 @@ get_value(XPath, Type, Node) ->
             end;
         present -> xmerl_xpath:string(XPath, Node) =/= [];
         xml -> Node;
-        Fun when is_function(Fun, 1) ->
+        Fun when erlang:is_function(Fun, 1) ->
             Fun(xmerl_xpath:string(XPath, Node));
-        {single, Fun} when is_function(Fun, 1) ->
+        {single, Fun} when erlang:is_function(Fun, 1) ->
             case xmerl_xpath:string(XPath, Node) of
                 [] -> undefined;
                 [SubNode] -> Fun(SubNode)
             end;
-        {map, Fun} when is_function(Fun, 1) ->
+        {map, Fun} when erlang:is_function(Fun, 1) ->
             lists:map(Fun, xmerl_xpath:string(XPath, Node));
-        {optional_map, Fun} when is_function(Fun, 1) ->
+        {optional_map, Fun} when erlang:is_function(Fun, 1) ->
             case xmerl_xpath:string(XPath, Node) of
                 [] -> undefined;
                 List  -> lists:map(Fun, List)
             end;
-        {single, List} when is_list(List) ->
+        {single, List} when erlang:is_list(List) ->
             case xmerl_xpath:string(XPath, Node) of
                 [] -> undefined;
                 [SubNode] -> decode(List, SubNode)
             end;
-        {value, Fun} when is_function(Fun, 1) ->
+        {value, Fun} when erlang:is_function(Fun, 1) ->
             Fun(get_text(XPath, Node));
-        List when is_list(List) ->
+        List when erlang:is_list(List) ->
             [decode(List, SubNode) || SubNode <- xmerl_xpath:string(XPath, Node)]
     end.
 

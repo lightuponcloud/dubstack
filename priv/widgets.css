@@ -63,12 +63,12 @@
 ----------------------------------*/
 .ui-widget { font-size: 1.1em; font-weight:bold; }
 .ui-widget input[type="text"], .ui-widget select, .ui-widget textarea{font-size: .8125em; border: 1px solid #ccc; -moz-border-radius: 3px; -webkit-border-radius: 3px; margin-bottom:0;width:100%;padding:10px;box-sizing:padding-box;}
-.ui-widget input[type="button"]{font-weight:bold; float:left; margin-top:5px;margin-right:10px; background:transparent url(/media/sprite.png) repeat-x scroll 0 0;border:1px solid #dadada;height:25px;width:auto;}
+.ui-widget input[type="button"]{font-weight:bold; float:left; margin-top:5px;margin-right:10px; background:transparent url(sprite.png) repeat-x scroll 0 0;border:1px solid #dadada;height:25px;width:auto;}
 .ui-widget input[type="button"]:hover, .ui-widget input[type="button"]:focus{background-position:0 -1300px;}
-.ui-widget-content {/* border: 2px solid #dadada;*/ /*background: url(/media/ui-bg_inset-hard_100_fcfdfd_1x100.png) 50% bottom repeat-x;*/ }
+.ui-widget-content {/* border: 2px solid #dadada;*/ /*background: url(ui-bg_inset-hard_100_fcfdfd_1x100.png) 50% bottom repeat-x;*/ }
 .ui-widget-content a { color: #000000; }
 .ui-widget-header {color:#000000; font-weight:bold; margin-left:0; margin-right:9px;}
-/*.ui-widget-header {background-image:url(/media/organizer_header.png); color:#000000; font-weight:bold;}*/
+/*.ui-widget-header {background-image:url(organizer_header.png); color:#000000; font-weight:bold;}*/
 .ui-widget-header a { color: #ffffff; }
 
 
@@ -78,18 +78,18 @@
 ----------------------------------*/
 
 
-.ui-state-default, .ui-widget-content .ui-state-default { border: 1px solid #c5dbec; background: #dfeffc url(/media/ui-bg_glass_85_dfeffc_1x400.png) 50% 50% repeat-x; font-weight: bold; color: #2e6e9e; outline: none; }
+.ui-state-default, .ui-widget-content .ui-state-default { border: 1px solid #c5dbec; background: #dfeffc url(ui-bg_glass_85_dfeffc_1x400.png) 50% 50% repeat-x; font-weight: bold; color: #2e6e9e; outline: none; }
 .ui-state-default a, .ui-state-default a:link, .ui-state-default a:visited { color: #2e6e9e; text-decoration: none; outline: none; }
 #datepicker .ui-state-hover, #datepicker .ui-widget-content .ui-state-hover, #datepicker .ui-state-focus, #datepicker .ui-widget-content .ui-state-focus { border: 1px solid #DADADA; background: #DADADA  50% 50% repeat-x; font-weight: bold; color: #fff; outline: none; }
 .ui-state-hover a, .ui-state-hover a:hover { color: #1d5987; text-decoration: none; outline: none; }
-.ui-state-active, .ui-widget-content .ui-state-active { border: 1px solid #79b7e7; background: #f5f8f9 url(/media/ui-bg_inset-hard_100_f5f8f9_1x100.png) 50% 50% repeat-x; font-weight: bold; color: #e17009; outline: none; }
+.ui-state-active, .ui-widget-content .ui-state-active { border: 1px solid #79b7e7; background: #f5f8f9 url(ui-bg_inset-hard_100_f5f8f9_1x100.png) 50% 50% repeat-x; font-weight: bold; color: #e17009; outline: none; }
 .ui-state-active a, .ui-state-active a:link, .ui-state-active a:visited { color: #e17009; outline: none; text-decoration: none; }
 
 /* Interaction Cues
 ----------------------------------*/
-.ui-state-highlight, .ui-widget-content .ui-state-highlight {border: 1px solid #fad42e; background: #fbec88 url(/media/ui-bg_flat_55_fbec88_40x100.png) 50% 50% repeat-x; color: #363636; }
+.ui-state-highlight, .ui-widget-content .ui-state-highlight {border: 1px solid #fad42e; background: #fbec88 url(ui-bg_flat_55_fbec88_40x100.png) 50% 50% repeat-x; color: #363636; }
 .ui-state-highlight a, .ui-widget-content .ui-state-highlight a { color: #363636; }
-.ui-state-error, .ui-widget-content .ui-state-error {border: 1px solid #cd0a0a; background: #fef1ec url(/media/ui-bg_glass_95_fef1ec_1x400.png) 50% 50% repeat-x; color: #cd0a0a; }
+.ui-state-error, .ui-widget-content .ui-state-error {border: 1px solid #cd0a0a; background: #fef1ec url(ui-bg_glass_95_fef1ec_1x400.png) 50% 50% repeat-x; color: #cd0a0a; }
 .ui-state-error a, .ui-widget-content .ui-state-error a { color: #cd0a0a; }
 .ui-state-error-text, .ui-widget-content .ui-state-error-text { color: #cd0a0a; }
 .ui-state-disabled, .ui-widget-content .ui-state-disabled { opacity: .35; -filter:Alpha(Opacity=35); background-image: none; }
@@ -102,16 +102,16 @@
 
 
 /* states and images */
-.ui-icon {width: 35px; height: 35px;/* background-image: url(/media/ui-icons_469bdd_256x240.png);*/ }
-.ui-widget-content .ui-icon {background-image:url(/media/cancel.png); background-repeat:no-repeat;}
-/*url(/media/titlebar_b9b9b9_close.gif); background-repeat:no-repeat;}*/
-.ui-widget-header .ui-icon {background-image: url(/media/cancel.png); background-repeat:no-repeat;}
-/*url(/media/titlebar_dadada_close.gif); background-repeat:no-repeat; }*/
-.ui-state-default .ui-icon { background-image: url(/media/ui-icons_6da8d5_256x240.png); }
-#datepicker .ui-state-hover .ui-icon, .ui-state-focus .ui-icon {background-image: url(/media/cancel.png); background-repeat:no-repeat; }
-.ui-state-active .ui-icon {background-image: url(/media/ui-icons_f9bd01_256x240.png); }
-.ui-state-highlight .ui-icon {background-image: url(/media/ui-icons_2e83ff_256x240.png); }
-.ui-state-error .ui-icon, .ui-state-error-text .ui-icon {background-image: url(/media/ui-icons_cd0a0a_256x240.png); }
+.ui-icon {width: 35px; height: 35px;/* background-image: url(ui-icons_469bdd_256x240.png);*/ }
+.ui-widget-content .ui-icon {background-image:url(cancel.png); background-repeat:no-repeat;}
+/*url(titlebar_b9b9b9_close.gif); background-repeat:no-repeat;}*/
+.ui-widget-header .ui-icon {background-image: url(cancel.png); background-repeat:no-repeat;}
+/*url(titlebar_dadada_close.gif); background-repeat:no-repeat; }*/
+.ui-state-default .ui-icon { background-image: url(ui-icons_6da8d5_256x240.png); }
+#datepicker .ui-state-hover .ui-icon, .ui-state-focus .ui-icon {background-image: url(cancel.png); background-repeat:no-repeat; }
+.ui-state-active .ui-icon {background-image: url(ui-icons_f9bd01_256x240.png); }
+.ui-state-highlight .ui-icon {background-image: url(ui-icons_2e83ff_256x240.png); }
+.ui-state-error .ui-icon, .ui-state-error-text .ui-icon {background-image: url(ui-icons_cd0a0a_256x240.png); }
 
 /* positioning */
 .ui-icon-carat-1-n { background-position: 0 0; }
@@ -304,8 +304,8 @@
 .ui-corner-all { -moz-border-radius: 5px; -webkit-border-radius: 5px; }
 
 /* Overlays */
-.ui-widget-overlay { background: #aaaaaa url(/media/ui-bg_flat_0_aaaaaa_40x100.png) 50% 50% repeat-x; opacity: .30;-filter:Alpha(Opacity=30); }
-.ui-widget-shadow { margin: -8px 0 0 -8px; padding: 8px; background: #aaaaaa url(/media/ui-bg_flat_0_aaaaaa_40x100.png) 50% 50% repeat-x; opacity: .30;-filter:Alpha(Opacity=30); -moz-border-radius: 8px; -webkit-border-radius: 8px; }/* Accordion
+.ui-widget-overlay { background: #aaaaaa url(ui-bg_flat_0_aaaaaa_40x100.png) 50% 50% repeat-x; opacity: .30;-filter:Alpha(Opacity=30); }
+.ui-widget-shadow { margin: -8px 0 0 -8px; padding: 8px; background: #aaaaaa url(ui-bg_flat_0_aaaaaa_40x100.png) 50% 50% repeat-x; opacity: .30;-filter:Alpha(Opacity=30); -moz-border-radius: 8px; -webkit-border-radius: 8px; }/* Accordion
 ----------------------------------*/
 .ui-accordion .ui-accordion-header { cursor: pointer; position: relative; margin-top: 1px; -zoom: 1; }
 .ui-accordion .ui-accordion-li-fix { display: inline; }
@@ -340,7 +340,7 @@
 
 
 .ui-datepicker-next .ui-icon, .ui-datepicker-prev .ui-icon {
-background-image: url("/media/phpThumb_generated_thumbnailpng.png");
+background-image: url("phpThumb_generated_thumbnailpng.png");
 display: block;
 left: 50%;
 margin-left: -8px;
@@ -348,7 +348,7 @@ margin-top: -8px;
 position: absolute;
 top: 50%;
 }
-#datepicker .ui-state-hover .ui-icon {background-image: url(/media/phpThumb_generated_thumbnailpng.png); background-repeat:no-repeat; }
+#datepicker .ui-state-hover .ui-icon {background-image: url(phpThumb_generated_thumbnailpng.png); background-repeat:no-repeat; }
 .ui-icon-circle-triangle-e {background-position: -48px -192px;}
 
 /* with multiple calendars */
@@ -396,14 +396,14 @@ top: 50%;
 .ui-dialog .ui-dialog-titlebar-close span { display: block; margin-left: 3px; margin-top:-17px;}
 /*.ui-dialog .ui-dialog-titlebar-close:hover, .ui-dialog .ui-dialog-titlebar-close:focus { padding: 0; }*/
 .ui-dialog .ui-dialog-content { border:0; padding:0 2px 15px 0; overflow: hidden; -zoom: 1; background: #ffffff; margin-left:9px; margin-right:9px; border:1px solid #dadada; border-top:none; -moz-border-radius-bottomleft:3px; -moz-border-radius-bottomright:3px;}
-/*.ui-dialog .ui-dialog-content { border:0; padding:15px 30px 10px 30px; overflow: auto; -zoom: 1; background: url(/media/organizer_body.png) repeat-y scroll 50% bottom; }*/
+/*.ui-dialog .ui-dialog-content { border:0; padding:15px 30px 10px 30px; overflow: auto; -zoom: 1; background: url(organizer_body.png) repeat-y scroll 50% bottom; }*/
 .ui-dialog .ui-dialog-buttonpane { text-align: left; border-width: 1px 0 0 0; background-image: none; margin: .5em 0 0 0; padding: .3em 1em .5em .4em; }
 .ui-dialog .ui-dialog-buttonpane button { float: right; margin: .5em .4em .5em 0; cursor: pointer; padding: .2em .6em .3em .6em; line-height: 1.4em; width:auto; overflow:visible; }
 .ui-dialog .ui-resizable-se { width: 14px; height: 14px; right: 3px; bottom: 3px; }
 .ui-draggable .ui-dialog-titlebar { cursor: move; }
-.ui-dialog-footer {background: url(/media/bg_footer.png); margin-left:9px; margin-right:9px; height:15px; }
-.ui-dialog-header{background:url(/media/navigation_background.jpg); height:28px; -moz-border-radius-topleft:5px; -moz-border-radius-topright:5px; -webkit-border-top-left-radius:5px;-webkit-border-top-right-radius:5px;/*margin:0 1px 0 1px;*/}
-/*.ui-dialog-footer {background: url(/media/organizer_footer.png); height:30px; }*/
+.ui-dialog-footer {background: url(bg_footer.png); margin-left:9px; margin-right:9px; height:15px; }
+.ui-dialog-header{background:url(navigation_background.jpg); height:28px; -moz-border-radius-topleft:5px; -moz-border-radius-topright:5px; -webkit-border-top-left-radius:5px;-webkit-border-top-right-radius:5px;/*margin:0 1px 0 1px;*/}
+/*.ui-dialog-footer {background: url(organizer_footer.png); height:30px; }*/
 /* Progressbar
 ----------------------------------*/
 .ui-progressbar { height:2em; text-align: left; }

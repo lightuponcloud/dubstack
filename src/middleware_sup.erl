@@ -1,3 +1,6 @@
+%%
+%% This module supervises the middleware's gen_server.
+%%
 -module(middleware_sup).
 -behaviour(supervisor).
 

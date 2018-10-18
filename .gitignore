@@ -15,6 +15,10 @@ erlang.mk
 erl_crash.dump
 .edts
 eunit.coverage.xml
-ercloud.iml
+c_src/img.d
+c_src/img
 *[#]*[#]
 *[#]*
+*.o
+*.beam
+*.plt

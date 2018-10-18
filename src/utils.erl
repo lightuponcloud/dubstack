@@ -1,15 +1,22 @@
+%%
+%% This module contains common utilities.
+%%
 -module(utils).
--export([mime_type/1, slugify_object_name/0, slugify_object_name/1,
-	 prefixed_object_name/2, increment_filename/1,
-	 to_integer/1, to_integer/2, to_float/1, to_float/2,
-         to_number/1, to_list/1, to_binary/1, to_atom/1, to_boolean/1,
-         is_true/1, is_false/1, is_valid_bucket_name/2, is_valid_name/1,
-	 hex/1, unhex/1, unhex_path/1, validate_utf8/2,
-	 is_bucket_belongs_to_user/3, is_bucket_belongs_to_tenant/2,
-	 get_bucket_suffix/1, is_valid_hex_prefix/1, timestamp/0,
-	 is_hidden_object/1, join_list_with_separator/3]).
+-export([mime_type/1,
+	 slugify_object_name/0, slugify_object_name/1,
+	 prefixed_object_name/2, alphanumeric/1, trim_spaces/1,
+	 increment_filename/1, is_valid_bucket_id/2, is_valid_object_name/1,
+	 is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
+	 to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1,
+	 to_list/1, to_binary/1, to_atom/1, to_boolean/1, is_true/1, is_false/1,
+	 even/1, has_duplicates/1, ends_with/2, starts_with/2,
+	 hex/1, unhex/1, unhex_path/1, validate_utf8/2, is_valid_hex_prefix/1,
+	 is_hidden_object/1, join_list_with_separator/3, check_token/1,
+	 to_lower/1, timestamp/0]).
 
 -include("riak.hrl").
+-include("general.hrl").
+-include("user.hrl").
 
 mime_types() ->
     MimeTypesFile = "/etc/mime.types",
@@ -18,7 +25,7 @@ mime_types() ->
 
 -spec mime_type(string()) -> string().
 
-mime_type(FileName) when is_list(FileName) ->
+mime_type(FileName) when erlang:is_list(FileName) ->
     case filename:extension(FileName) of
 	[] ->
 	    "application/octet_stream";
@@ -28,36 +35,70 @@ mime_type(FileName) when is_list(FileName) ->
 	    proplists:get_value(LookupKey, MimeTypes, "application/octet_stream")
     end.
 
+%%
+%% Extracts letters and digits from binary.
+%%
+-spec alphanumeric(binary()|list()) -> list().
+
+alphanumeric(String) when erlang:is_list(String) ->
+    alphanumeric(erlang:list_to_binary(String));
+alphanumeric(String) when erlang:is_binary(String)  ->
+    re:replace(String, <<"[^a-zA-Z0-9]+">>, <<"">>, [{return, binary}, global]).
+
+%%
+%% Generates random string.
+%%
 -spec slugify_object_name() -> string().
 
 slugify_object_name() ->
     Length = 20,
     AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
-    lists:foldl(fun(_, Acc) ->
-	[lists:nth(rand:uniform(length(AllowedChars)),
-	    AllowedChars)]
-	    ++ Acc
+    lists:foldl(
+	fun(_, Acc) ->
+	    try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
+		Value -> Value ++ Acc
+	    catch error:low_entropy ->
+		riak_crypto:seed(),
+		[lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
+	    end
 	end, [], lists:seq(1, Length)).
 
+%%
+%% Transliterates binary to ascii.
+%%
 -spec slugify_object_name(binary()) -> string().
 
-slugify_object_name(FileName0) when is_binary(FileName0) ->
-    FileName1 = unicode:characters_to_binary(FileName0),
-    BaseName = filename:rootname(FileName1),
-    Extension = filename:extension(FileName1),
-    case Extension of
-	[] -> slughifi:slugify(BaseName);
-	_ -> lists:concat([slughifi:slugify(BaseName), slughifi:slugify(Extension)])
+slugify_object_name(FileName0) when erlang:is_binary(FileName0) ->
+    FileName1 = filename:rootname(FileName0),
+    FileName2 = slughifi:slugify(FileName1),
+    %% Not all unicode characters can be transliterated
+    Regex = <<"[^a-zA-Z0-9\-\._~,\\s+]+">>,
+    FileName3 = re:replace(unicode:characters_to_binary(FileName2), Regex, <<"">>, [{return, binary}, global]),
+    FileName4 = string:to_lower(erlang:binary_to_list(FileName3)),
+    Extension0 = filename:extension(FileName0),
+    Extension1 = slughifi:slugify(Extension0),
+    Extension2 = re:replace(unicode:characters_to_binary(Extension1), Regex, <<"">>, [{return, binary}, global]),
+    Extension3 = string:to_lower(erlang:binary_to_list(Extension2)),
+    case Extension3 of
+	[] -> FileName4;
+	_ -> lists:concat([FileName4, Extension3])
     end.
+
+%%
+%% Removes spaces at the end and on the beginning of binary string
+%%
+-spec trim_spaces(binary()) -> binary().
+
+trim_spaces(Bin0) ->
+    re:replace(Bin0, <<"^\\s+|\\s+$">>, <<"">>, [{return, binary}, global]).
 
 -spec increment_filename(binary()|string()) -> binary()|string().
 
-increment_filename(FileName) when is_binary(FileName) ->
+increment_filename(FileName) when erlang:is_binary(FileName) ->
     {RootName, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
 
     case binary:matches(RootName, <<"-">>) of
-	[] ->
-	    << RootName/binary,  <<"-1">>/binary, Extension/binary >>;
+	[] -> << RootName/binary,  <<"-1">>/binary, Extension/binary >>;
 	HyphenPositions ->
 	    {LastHyphenPos, _} = lists:last(HyphenPositions),
 	    V = binary:part(RootName, size(RootName), -(size(RootName)-LastHyphenPos-1)),
@@ -71,14 +112,14 @@ increment_filename(FileName) when is_binary(FileName) ->
 	    end
     end;
 
-increment_filename(FileName) when is_list(FileName) ->
+increment_filename(FileName) when erlang:is_list(FileName) ->
     {RootName, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
     LastHyphen = string:rchr(RootName, $-),
     case LastHyphen of
 	0 -> string:concat(RootName ++ "-1", Extension);
 	_ -> try
-		N = list_to_integer(string:substr(RootName, LastHyphen+1)),
-		string:concat(string:sub_string(RootName, 1, LastHyphen) ++ integer_to_list(N+1), Extension)
+		N = erlang:list_to_integer(string:substr(RootName, LastHyphen+1)),
+		string:concat(string:sub_string(RootName, 1, LastHyphen) ++ erlang:integer_to_list(N+1), Extension)
 	     catch error:badarg ->
 		string:concat(RootName ++ "-1", Extension)
 	    end
@@ -88,17 +129,28 @@ increment_filename(FileName) when is_list(FileName) ->
 %% Returns 'prefix/object_name'
 %% or, if prefix is empty just 'object_name'
 %%
--spec prefixed_object_name(string(), string()) -> string().
+-spec prefixed_object_name(string()|binary()|undefined, string()|binary()) -> string().
 
 prefixed_object_name(undefined, ObjectName) -> ObjectName;
 prefixed_object_name([], ObjectName) -> ObjectName;
-prefixed_object_name(Prefix, ObjectName0) when is_list(Prefix), is_list(ObjectName0) ->
-    ObjectName1 = case string:sub_string(ObjectName0, 1, 1) =:= "/" of
-	true ->
-	    string:sub_string(ObjectName0, 2, length(ObjectName0));
-	false ->
-	    ObjectName0
-    end,
+prefixed_object_name(Prefix, ObjectName0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectName0) ->
+    ObjectName1 =
+	case starts_with(ObjectName0, <<"/">>) of
+	    true ->
+		<< _:1/binary, N0/binary >> = ObjectName0,
+		N0;
+	    false -> ObjectName0
+	end,
+    case ends_with(Prefix, <<"/">>) of
+	true -> << Prefix/binary, ObjectName1/binary >>;
+	false -> << Prefix/binary, <<"/">>/binary, ObjectName1/binary >>
+    end;
+prefixed_object_name(Prefix, ObjectName0) when erlang:is_list(Prefix), erlang:is_list(ObjectName0) ->
+    ObjectName1 =
+	case string:sub_string(ObjectName0, 1, 1) =:= "/" of
+	    true -> string:sub_string(ObjectName0, 2, length(ObjectName0));
+	    false -> ObjectName0
+	end,
     case string:sub_string(Prefix, length(Prefix), length(Prefix)) =:= "/" of
 	%% strip '/' at the end, return 'prefix/object_name'
 	true -> string:concat(Prefix, ObjectName1);
@@ -142,10 +194,9 @@ to_integer(X, _)
 to_float(X) ->
     to_float(X, nonstrict).
 
--spec to_float(string() | binary() | integer() | float(),
-               strict | nonstrict) ->
-                       float().
-to_float(X, S) when is_binary(X) ->
+-spec to_float(string() | binary() | integer() | float(), strict | nonstrict) -> float().
+
+to_float(X, S) when erlang:is_binary(X) ->
     to_float(erlang:binary_to_list(X), S);
 to_float(X, S)
   when erlang:is_list(X) ->
@@ -186,81 +237,55 @@ to_number(X)
 
 %% @doc
 %% Automatic conversion of a term into Erlang list
--spec to_list(atom() | list() | binary() | integer() | float()) ->
-                     list().
-to_list(X)
-  when erlang:is_float(X) ->
+-spec to_list(atom() | list() | binary() | integer() | float()) -> list().
+to_list(X) when erlang:is_float(X) ->
     erlang:float_to_list(X);
-to_list(X)
-  when erlang:is_integer(X) ->
+to_list(X) when erlang:is_integer(X) ->
     erlang:integer_to_list(X);
-to_list(X)
-  when erlang:is_binary(X) ->
+to_list(X) when erlang:is_binary(X) ->
     erlang:binary_to_list(X);
-to_list(X)
-  when erlang:is_atom(X) ->
+to_list(X) when erlang:is_atom(X) ->
     erlang:atom_to_list(X);
-to_list(X)
-  when erlang:is_list(X) ->
+to_list(X) when erlang:is_list(X) ->
     X.
 
 %% @doc
 %% Known limitations:
 %%   Converting [256 | _], lists with integers > 255
--spec to_binary(atom() | string() | binary() | integer() | float()) ->
-                       binary().
-to_binary(X)
-  when erlang:is_float(X) ->
+-spec to_binary(atom() | string() | binary() | integer() | float()) -> binary().
+to_binary(X) when erlang:is_float(X) ->
     to_binary(to_list(X));
-to_binary(X)
-  when erlang:is_integer(X) ->
+to_binary(X) when erlang:is_integer(X) ->
     erlang:iolist_to_binary(integer_to_list(X));
-to_binary(X)
-  when erlang:is_atom(X) ->
+to_binary(X) when erlang:is_atom(X) ->
     erlang:list_to_binary(erlang:atom_to_list(X));
-to_binary(X)
-  when erlang:is_list(X) ->
+to_binary(X) when erlang:is_list(X) ->
     erlang:iolist_to_binary(X);
-to_binary(X)
-  when erlang:is_binary(X) ->
+to_binary(X) when erlang:is_binary(X) ->
     X.
 
 -spec to_boolean(binary() | string() | atom()) ->
                         boolean().
-to_boolean(<<"true">>) ->
-    true;
-to_boolean("true") ->
-    true;
-to_boolean(true) ->
-    true;
-to_boolean(<<"false">>) ->
-    false;
-to_boolean("false") ->
-    false;
-to_boolean(false) ->
-    false.
+to_boolean(<<"true">>) -> true;
+to_boolean("true") -> true;
+to_boolean(true) -> true;
+to_boolean(<<"false">>) -> false;
+to_boolean("false") -> false;
+to_boolean(false) -> false.
 
--spec is_true(binary() | string() | atom()) ->
-                     boolean().
-is_true(<<"true">>) ->
-    true;
-is_true("true") ->
-    true;
-is_true(true) ->
-    true;
-is_true(_) ->
-    false.
+-spec is_true(binary() | string() | atom()) -> boolean().
 
--spec is_false(binary() | string() | atom()) ->
-                      boolean().
-is_false(<<"false">>) ->
-    true;
-is_false("false") ->
-    true;
-is_false(false) ->
-    true;
-is_false(_) ->
-    false.
+is_true(<<"true">>) -> true;
+is_true("true") -> true;
+is_true(true) -> true;
+is_true(_) -> false.
+
+-spec is_false(binary() | string() | atom()) -> boolean().
+
+is_false(<<"false">>) -> true;
+is_false("false") -> true;
+is_false(false) -> true;
+is_false(_) -> false.
 
 %% @doc
 %% Automation conversion a term to an existing atom. badarg is
@@ -268,12 +293,10 @@ is_false(_) ->
 %% you leak atoms
 -spec to_atom(atom() | list() | binary() | integer() | float()) ->
                      atom().
-to_atom(X)
-  when erlang:is_atom(X) ->
+to_atom(X) when erlang:is_atom(X) ->
     X;
-to_atom(X)
-  when erlang:is_list(X) ->
-    erlang:list_to_existing_atom(X);
+to_atom(X) when erlang:is_list(X) ->
+    erlang:list_to_atom(X);
 to_atom(X) ->
     to_atom(to_list(X)).
 
@@ -319,26 +342,27 @@ validate_hex(_, _) -> 1.
 %%     as system do not allow to read contents of other tenants
 %% - Length of bucket is less than 63
 %%     as this is limit of Riak CS
-%% - Suffix is either "private" or "public"
+%% - Suffix is either private, public or restricted
 %%
--spec is_valid_bucket_name(string(), string()) -> boolean().
+-spec is_valid_bucket_id(string(), string()) -> boolean().
 
-is_valid_bucket_name(BucketName, TenantName)
-	when erlang:is_list(BucketName), erlang:is_list(TenantName) ->
-    Bits = string:tokens(BucketName, "-"),
-    case length(Bits) =:= 4 andalso length(BucketName) =< 63 of
+is_valid_bucket_id(BucketId, TenantName)
+	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+    Bits = string:tokens(BucketId, "-"),
+    case length(Bits) =:= 4 andalso length(BucketId) =< 63 of
 	true ->
 	    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
 	    BucketSuffix = lists:last(Bits),
 	    BucketSuffix = lists:last(Bits),
 	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 	     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
+	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
 	    ) andalso BucketTenantName =:= TenantName
 	      andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
 	false ->
 	    false
     end;
-is_valid_bucket_name(_, _) -> false.
+is_valid_bucket_id(_, _) -> false.
 
 even(X) when X >= 0 -> (X band 1) == 0.
 
@@ -350,7 +374,7 @@ is_valid_hex_prefix(HexPrefix) when erlang:is_binary(HexPrefix) ->
 	    case even(erlang:byte_size(T)) of
 		true ->
 		    case validate_hex(T, 0) of
-			0 -> is_valid_name(unhex(T));
+			0 -> is_valid_object_name(unhex(T));
 			1 -> false
 		    end;
 	    _ ->
@@ -364,54 +388,70 @@ is_valid_hex_prefix(undefined) ->
     true.
 
 %%
-%% Returns "private" or "public"
+%% - Converts binary to string.
+%% - Appends "/" at the end if absent.
+%% - Make lowercase.
 %%
--spec get_bucket_suffix(string()) -> string().
+-spec to_lower(binary()) -> list()|undefined.
 
-get_bucket_suffix(BucketName) when erlang:is_list(BucketName) ->
-    Bits = string:tokens(BucketName, "-"),
-    lists:last(Bits).
+to_lower(Data0) when erlang:is_binary(Data0) ->
+    case Data0 of
+	<<>> -> undefined;
+	Data1 ->
+	    Data2 = string:to_lower(lists:flatten(erlang:binary_to_list(Data1))),
+	    case ends_with(Data1, <<"/">>) of
+		true -> Data2;
+		false -> Data2++"/"
+	    end
+    end;
+to_lower(undefined) -> undefined.
 
 %%
-%% Returns true, if "tenant id", encoded in BucketName
-%% equals to provided TenantName. Also it checks if "user id",
-%% equals to provided UserId.
-%% the-companyname-gesfecso-public
-%% ^^^ ^^^^^^^^^^ ^^^
-%% prefix  bucket  username
+%% Returns true, if "tenant id" and "group name", that are encoded
+%% in BucketId equal to provided TenantName and GroupName.
+%% the-projectname-groupname-public
+%% ^^^ ^^^^^^^^^^^ ^^^^^^^^
+%% prefix  bucket  group
 %%
--spec is_bucket_belongs_to_user(string(), string(), string()) -> boolean().
+-spec is_bucket_belongs_to_group(string(), string(), string()) -> boolean().
 
-is_bucket_belongs_to_user(BucketName, UserName, TenantName)
-    when erlang:is_list(BucketName), erlang:is_list(UserName),
-	 erlang:is_list(TenantName) ->
-    Bits = string:tokens(BucketName, "-"),
+is_bucket_belongs_to_group(BucketId, TenantName, GroupName)
+    when erlang:is_list(BucketId), erlang:is_list(TenantName),
+	 erlang:is_list(GroupName) ->
+    Bits = string:tokens(BucketId, "-"),
     BucketTenantName = string:to_lower(lists:nth(2, Bits)),
-    BucketUserName = string:to_lower(lists:nth(3, Bits)),
-    BucketUserName =:= UserName andalso BucketTenantName =:= TenantName;
-is_bucket_belongs_to_user(_,_,_) -> false.
+    BucketGroupName = string:to_lower(lists:nth(3, Bits)),
+    BucketGroupName =:= GroupName andalso BucketTenantName =:= TenantName;
+is_bucket_belongs_to_group(_,_,_) -> false.
 
-is_bucket_belongs_to_tenant(BucketName, TenantName)
-    when erlang:is_list(BucketName), erlang:is_list(TenantName) ->
-    Bits = string:tokens(BucketName, "-"),
+is_bucket_belongs_to_tenant(BucketId, TenantName)
+	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+    Bits = string:tokens(BucketId, "-"),
     BucketTenantName = string:to_lower(lists:nth(2, Bits)),
     BucketTenantName =:= TenantName;
 is_bucket_belongs_to_tenant(_,_) -> false.
 
-%% This function returns 0 when binary string do not contain forbidden 
-%% characters. It returns 1 otherwise.
-%% FORBIDDEN_CHARS are ' " ` < >
-is_valid_name(<<>>, State) -> State;
-is_valid_name(<< $', _/bits >>, 0) -> 1;
-is_valid_name(<< $", _/bits >>, 0) -> 1;
-is_valid_name(<< $`, _/bits >>, 0) -> 1;
-is_valid_name(<< $<, _/bits >>, 0) -> 1;
-is_valid_name(<< $>, _/bits >>, 0) -> 1;
-is_valid_name(<< _, Rest/bits >>, 0) -> is_valid_name(Rest, 0).
+%%
+%% This function returns 0 when binary string do not contain forbidden
+%% characters. Returns 1 otherwise.
+%%
+%% Forbidden characters are " < > \ | / : * ?
+%%
+is_valid_object_name(<<>>, State) -> State;
+is_valid_object_name(<< $", _/bits >>, 0) -> 1;
+is_valid_object_name(<< $<, _/bits >>, 0) -> 1;
+is_valid_object_name(<< $>, _/bits >>, 0) -> 1;
+is_valid_object_name(<< "\\", _/bits >>, 0) -> 1;
+is_valid_object_name(<< $|, _/bits >>, 0) -> 1;
+is_valid_object_name(<< $/, _/bits >>, 0) -> 1;
+is_valid_object_name(<< $:, _/bits >>, 0) -> 1;
+is_valid_object_name(<< $*, _/bits >>, 0) -> 1;
+is_valid_object_name(<< $?, _/bits >>, 0) -> 1;
+is_valid_object_name(<< _, Rest/bits >>, 0) -> is_valid_object_name(Rest, 0).
 
-is_valid_name(Prefix) when erlang:is_binary(Prefix) ->
-    (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_name(Prefix, 0) =:= 0);
-is_valid_name(_) ->
+is_valid_object_name(Prefix) when erlang:is_binary(Prefix) ->
+    (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_name(Prefix, 0) =:= 0);
+is_valid_object_name(_) ->
     false.
 
 digit(0) -> $0;
@@ -431,25 +471,30 @@ digit(13) -> $d;
 digit(14) -> $e;
 digit(15) -> $f.
 
-hex(undefined) -> <<>>;
-hex(Bin) -> << << (digit(A1)),(digit(A2)) >> || <<A1:4,A2:4>> <= Bin >>.
+hex(undefined) -> [];
+hex(Bin) -> erlang:binary_to_list(<< << (digit(A1)),(digit(A2)) >> || <<A1:4,A2:4>> <= Bin >>).
 unhex(Hex) -> << << (erlang:list_to_integer([H1,H2], 16)) >> || <<H1,H2>> <= Hex >>.
 
 %%
 %% Decodes hexadecimal representation of object path
 %% and returns list of unicode character numbers.
 %%
--spec unhex_path(binary()|string()) -> list().
+-spec unhex_path(string()) -> list().
 
-unhex_path(Path) when erlang:is_list(Path) orelse erlang:is_list(Path) ->
-    Bits0 = binary:split(to_binary(Path), <<"/">>, [global]),
+unhex_path(undefined) -> [];
+unhex_path(Path) when erlang:is_list(Path) ->
+    Bits0 = binary:split(unicode:characters_to_binary(Path), <<"/">>, [global]),
 
     Bits1 = [case is_valid_hex_prefix(T) of
 	true -> unhex(T);
 	false -> T end || T <- Bits0, erlang:byte_size(T) > 0],
     Bits2 = [unicode:characters_to_list(T) || T <- Bits1],
-    lists:flatten(join_list_with_separator(Bits2, "/", [])).
+    join_list_with_separator(Bits2, "/", []).
 
+%%
+%% Returns UNIX timestamp by taking the number of gregorian seconds
+%% and subtracting the unix time in gregorian seconds (62167219200).
+%%
 timestamp() ->
     {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_datetime(os:timestamp()),
     calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}}) - 62167219200.
@@ -458,8 +503,9 @@ timestamp() ->
 
 is_hidden_object(ObjInfo) ->
     ObjectName = proplists:get_value(key, ObjInfo),
-    lists:suffix(?RIAK_INDEX_FILENAME, ObjectName) == true orelse 
-	lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectName) == true.
+    lists:suffix(?RIAK_INDEX_FILENAME, ObjectName) =:= true orelse 
+    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectName) =:= true orelse
+    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectName) =:= true.
 
 %%
 %% Joins a list of elements adding a separator between each of them.
@@ -472,3 +518,68 @@ join_list_with_separator([Head|Tail], Sep, Acc0) ->
     end,
     join_list_with_separator(Tail, Sep, Acc1);
 join_list_with_separator([], _Sep, Acc0) -> lists:reverse(Acc0).
+
+%%
+%% Extracts token from request headers and looks it up in "security" bucket
+%%
+-spec check_token(any()) -> user()|undefined|not_found|expired.
+
+check_token(Req0) ->
+    case cowboy_req:header(<<"authorization">>, Req0) of
+        <<"Token ", TokenValue0/binary>> ->
+	    TokenValue1 = erlang:binary_to_list(TokenValue0),
+	    login_handler:check_token(TokenValue1);
+	_ -> undefined
+    end.
+
+%%
+%% Checks if provided list has duplicate items.
+%%
+-spec has_duplicates(list()) -> boolean().
+
+has_duplicates([H|T]) ->
+    case lists:member(H, T) of
+	true -> true;
+	false -> has_duplicates(T)
+    end;
+has_duplicates([]) -> false.
+
+%%
+%% Returns true, if `Name` ends with `Characters`
+%%
+-spec ends_with(binary()|list()|undefined, binary()) -> boolean().
+
+ends_with(undefined, _Smth) -> false;
+ends_with(Name, Characters)
+	when erlang:is_list(Name), erlang:is_binary(Characters) ->
+    ends_with(erlang:list_to_binary(Name), Characters);
+ends_with(Name, Characters)
+	when erlang:is_binary(Name), erlang:is_binary(Characters) ->
+    Size0 = byte_size(Characters),
+    Size1 = byte_size(Name)-Size0,
+    case Size1 < 0 of
+	true -> false;
+	false ->
+	    <<_:Size1/binary, Rest/binary>> = Name,
+	    Rest =:= Characters
+    end.
+
+%%
+%% Returns true, if `Name` starts with `Characters`
+%%
+-spec starts_with(binary()|list()|undefined, binary()) -> boolean().
+
+starts_with(undefined, _Smth) -> false;
+starts_with(Name, Characters)
+	when erlang:is_list(Name), erlang:is_binary(Characters) ->
+    starts_with(erlang:list_to_binary(Name), Characters);
+starts_with(Name, Characters)
+	when erlang:is_binary(Name), erlang:is_binary(Characters) ->
+    Size0 = byte_size(Characters),
+    Size1 = byte_size(Name)-Size0,
+    case Size1 < 0 of
+	true -> false;
+	false ->
+	    <<Beginning:Size0/binary, _/binary>> = Name,
+	    Beginning =:= Characters
+    end.

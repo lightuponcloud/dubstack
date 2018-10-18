@@ -1,3 +1,6 @@
+%%
+%% This file contains all the URI routing configuration.
+%%
 -module(middleware_app).
 -behaviour(application).
 
@@ -10,29 +13,46 @@
 start(_Type, _Args) ->
     Dispatch = cowboy_router:compile([
 	{'_', [
-	    {"/riak/list/[:token]/[:bucket_name]/", list_handler, []},
-	    {"/riak/object/[:token]/[:bucket_name]/", object_handler, []},
+	    {"/riak/list/[:bucket_id]/", list_handler, []},
+	    {"/riak/object/[:bucket_id]/", object_handler, []},
+	    {"/riak/thumbnail/[:bucket_id]/", img_scale_handler, []},
 
-	    {"/riak/upload/[:token]/[:bucket_name]/", upload_handler, []},
-	    {"/riak/upload/[:token]/[:bucket_name]/[:upload_id]/[:part_num]/", upload_handler, []},
+	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
+	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},
 
-	    {"/riak/delete/[:token]/[:bucket_name]/", delete_handler, []},
-	    {"/riak/create-pseudo-directory/[:token]/[:bucket_name]/", mkdir_handler, []},
-	    {"/riak/copy/[:token]/[:src_bucket_name]", copy_handler, []},
-	    {"/riak/move/[:token]/[:src_bucket_name]", move_handler, []},
+	    {"/riak/copy/[:src_bucket_id]/", copy_handler, []},
+	    {"/riak/move/[:src_bucket_id]/", move_handler, []},
+	    {"/riak/rename/[:bucket_id]/", rename_handler, []},
 
-	    {"/riak/action-log/[:token]/[:bucket_name]/", action_log, []},
-	    {"/riak-search/[:token]/", search_handler, []},
-	    {"/token/[:token]/[:bucket_name]/riak.js", js_handler, []},
-	    {"/riak/[:token]/[:bucket_name]/", first_page_handler, []}
+	    {"/riak/action-log/[:bucket_id]/", action_log, []},
+	    {"/riak-search/", search_handler, []},
+
+	    {"/riak/admin/users/", admin_users_handler, []},
+	    {"/riak/admin/[:tenant_id]/users/", admin_users_handler, []},
+	    {"/riak/admin/[:tenant_id]/users/[:user_id]/", admin_users_handler, []},
+	    {"/riak/admin/tenants/", admin_tenants_handler, []},
+	    {"/riak/admin/tenants/[:tenant_id]/", admin_tenants_handler, []},
+
+	    {"/riak/login/", login_handler, []},
+	    {"/riak/logout/", logout_handler, []},
+
+	    {"/riak/js/", js_handler, []},
+	    {"/riak/js/[:bucket_id]/", js_handler, []},
+	    {"/riak/", first_page_handler, []},
+	    {"/riak/[:bucket_id]/", first_page_handler, []}
+	    %% The following line should be uncommented if you like Cowboy to serve static files
+	    %% {"/riak-media/[...]", cowboy_static, {priv_dir, middleware, ""}}
 	]}
     ]),
     Settings = #general_settings{},
-    {ok, _} = cowboy:start_clear(middleware_http_listener, 100,
+    {ok, _} = cowboy:start_clear(middleware_http_listener,
         [{port, Settings#general_settings.listen_port}],
         #{env => #{dispatch => Dispatch}}
     ),
+    img:start_link(0),
+    riak_crypto_app:start(),
     middleware_sup:start_link().
+
 
 stop(_State) ->
     ok.

@@ -40,9 +40,9 @@ color:#212121;
 .ui-menu .ui-menu-item a.ui-state-hover,
 .ui-menu .ui-menu-item a.ui-state-active {
 margin: -1px;
-background:#DADADA url(/media/ui-bg_autocomplete.png) repeat-x scroll 50% 50%;
+background:#DADADA url(ui-bg_autocomplete.png) repeat-x scroll 50% 50%;
 border:1px solid #999999;
 color:#212121;
 -moz-border-radius:4px;
 }
-.custom-input-420x31{background: #ffffff url('/media/inputs.png') no-repeat 0 -108px; height: 19px; width:406px !important; padding:6px 7px;border:1px solid #DDDDDD;}
+.custom-input-420x31{background: #ffffff url('inputs.png') no-repeat 0 -108px; height: 19px; width:406px !important; padding:6px 7px;border:1px solid #DDDDDD;}
