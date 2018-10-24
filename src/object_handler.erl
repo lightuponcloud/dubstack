@@ -53,16 +53,9 @@ to_json(Req0, State) ->
 		    false -> <<>>;
 		    true ->
 			%% Rarely used endpoint
-			PrefixedIndexFilename = utils:prefixed_object_name(Prefix0, ?RIAK_INDEX_FILENAME),
-			List0 =
-			    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-				not_found -> [{access_tokens, []}];
-				C -> erlang:binary_to_term(proplists:get_value(content, C))
-			    end,
-			AccessTokens = proplists:get_value(access_tokens, List0),
-			erlang:list_to_binary(
-			    proplists:get_value(
-				erlang:binary_to_list(ObjectName0), AccessTokens, ""))
+			List0 = riak_index:get_index(BucketId, Prefix0),
+			ObjectRecord = riak_index:get_object_record(ObjectName0, List0),
+			erlang:list_to_binary(proplists:get_value(access_token, ObjectRecord, ""))
 		end,
 	    {jsx:encode([
 		{prefix, unicode:characters_to_binary(Prefix1)},

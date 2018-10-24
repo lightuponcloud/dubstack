@@ -26,5 +26,6 @@
     "26": "Destination bucket cannot be modified.",
     "27": "No access to source bucket.",
     "28": "Incorrect access token",
+    "29": "Object exists already.",
     "Loading..": "Loading.."
 }

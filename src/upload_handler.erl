@@ -211,8 +211,8 @@ upload_to_riak(Req0, State, BinaryData) ->
 	    end;
 	false ->
 	    ModifiedTime = proplists:get_value(modified_utc, State),
-	    ObjectName = riak_api:pick_object_name(BucketId, Prefix, FileName),
-	    Options = [{acl, public_read}, {meta, [{"orig-filename", FileName},
+	    {ObjectName, OrigName} = riak_api:pick_object_name(BucketId, Prefix, FileName),
+	    Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
 						   {"modified-utc", utils:to_list(ModifiedTime)}]}],
 	    PrefixedObjectName = riak_api:put_object(BucketId, Prefix, ObjectName, BinaryData, Options),
 	    Req1 = cowboy_req:set_resp_body(jsx:encode([
@@ -316,10 +316,9 @@ start_upload(Req0, State, BinaryData) ->
     FileName = proplists:get_value(file_name, State),
     ModifiedTime = proplists:get_value(modified_utc, State),
 
-    ObjectName = riak_api:pick_object_name(BucketId, Prefix, FileName),
-    Options = [{acl, public_read}, {meta, [{"orig-filename", FileName},
+    {ObjectName, OrigName} = riak_api:pick_object_name(BucketId, Prefix, FileName),
+    Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
 					   {"modified-utc", utils:to_list(ModifiedTime)}]}],
-
     MimeType = utils:mime_type(ObjectName),
     Headers = [{"content-type", MimeType}],
 

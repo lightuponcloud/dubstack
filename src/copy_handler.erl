@@ -6,9 +6,7 @@
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
 	 to_json/2, allowed_methods/2, is_authorized/2, forbidden/2,
-	 validate_post/3, handle_post/2, do_copy/5,
-	 shorten_pseudo_directory_name/3, update_pseudo_directory_index/5,
-	 update_pseudo_directory_index/6]).
+	 validate_post/3, handle_post/2, copy_objects/6, copy_forbidden/2]).
 
 -include("riak.hrl").
 -include("user.hrl").
@@ -85,106 +83,108 @@ handle_post(Req0, State0) ->
     end.
 
 %%
-%% Adjusts prefix and object name of object.
-%% Returns object name that do not yet exist in destination pseudo-directory
+%% Copies object.
 %%
-shorten_prefix(BucketId, ObjectName0, SrcPrefix0, DstPrefix0) ->
-    case SrcPrefix0 of
-	undefined ->
-	    %% Copying from root directory
-	    ObjectName1 = utils:prefixed_object_name(DstPrefix0, ObjectName0),
-	    DstPrefix1 =
-		case filename:dirname(ObjectName1) of
-		    "." -> undefined;
-		    DstPrefix2 -> DstPrefix2 ++ "/"
-		end,
-	    ObjectName2 = riak_api:pick_object_name(BucketId, DstPrefix1,
-		erlang:list_to_binary(filename:basename(ObjectName1))),
-	    utils:prefixed_object_name(DstPrefix1, ObjectName2);
-	_ ->
-	    ObjectName1 = re:replace(ObjectName0, "^" ++ SrcPrefix0, "", [{return, list}]),
-	    DstPrefix3 =
-		case filename:dirname(ObjectName1) of
-		    "." -> DstPrefix0;
-		    DstPrefix4 ->
-			utils:prefixed_object_name(DstPrefix0, DstPrefix4 ++ "/")
-		end,
-	    ObjectName2 = riak_api:pick_object_name(BucketId, DstPrefix3,
-		erlang:list_to_binary(filename:basename(ObjectName1))),
-	    utils:prefixed_object_name(DstPrefix3, ObjectName2)
-    end.
+-spec do_copy(string(), string(), string(), string(), string(), list()) -> list().
 
-%%
-%% Removes part of source prefix
-%% Returns directory name that do not yet exist in destination pseudo-directory
-%%
-shorten_pseudo_directory_name(ObjectName0, SrcPrefix0, DstPrefix) ->
-    ObjectName1 =
-	case SrcPrefix0 of
-	    undefined -> ObjectName0;
-	    SrcPrefix1 ->
-		re:replace(ObjectName0, "^" ++ SrcPrefix1, "", [{return, list}])
-	end,
-    utils:prefixed_object_name(DstPrefix, ObjectName1).
+do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, SrcIndexContent, DstIndexContent) ->
+    ExistingPrefixes = [proplists:get_value(prefix, P)
+			|| P <- proplists:get_value(dirs, DstIndexContent, [])],
+    ExistingOrigNames = [proplists:get_value(orig_name, O)
+			 || O <- proplists:get_value(list, DstIndexContent, [])],
+    ObjectKey0 = filename:basename(PrefixedObjectKey0),
+    ObjectRecord = riak_index:get_object_record(ObjectKey0, SrcIndexContent),
+    OrigName0 = proplists:get_value(orig_name, ObjectRecord),
+    Bytes = proplists:get_value(bytes, ObjectRecord),
 
-%%
-%% Copies renaming map from the old pseudo-directory to the new directory.
-%% Updates indices in new pseudo-directory.
-%%
-%% Returns list of objects in destination directory ( contains renamed objects map )
-%%
--spec update_pseudo_directory_index(string(), string(), string(), string(), string()) -> proplist().
+    %% Get object name that do not yet exist in destination pseudo-directory first.
+    {ObjectKey1, OrigName1} = riak_api:pick_object_name(DstBucketId, DstPrefix0, OrigName0,
+	ExistingPrefixes, ExistingOrigNames),
+    PrefixedObjectKey1 = utils:prefixed_object_name(DstPrefix0, ObjectKey1),
 
-update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedSrcObjectName,
-	PrefixedDstObjectName, PrefixedDstDirectoryName) ->
-    update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedSrcObjectName,
-	PrefixedDstObjectName, PrefixedDstDirectoryName, []).
-
-update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedSrcObjectName,
-	PrefixedDstObjectName, PrefixedDstDirectoryName, CopiedNames0) ->
-    SrcObjectPrefix =
-	case filename:dirname(PrefixedSrcObjectName) of
-	    "." -> undefined;
-	    P0 -> P0++"/"
-	end,
-    DstObjectPrefix =
-	case filename:dirname(PrefixedDstObjectName) of
-	    "." -> undefined;
-	    P1 -> P1++"/"
-	end,
-    CopiedNames1 = [{filename:basename(element(1, CN)), filename:basename(element(2, CN))}
-		    || CN <- CopiedNames0],
-    %% Update index for copied directory ( nested one )
-    riak_index:update(DstBucketId, DstObjectPrefix,
-		[{copy_from, [{bucket_id, SrcBucketId},
-		 {prefix, SrcObjectPrefix},
-		 {copied_names, CopiedNames1}]}]),
-    %% Update destination directory
-    riak_index:update(DstBucketId, PrefixedDstDirectoryName),
-    ok.
-
-%%
-%% Copies object and returns 
-%%
-%% {previous object name with new prefix: new object name without prefix}
-%%
--spec do_copy(string(), string(), string(), string(), string()) -> list().
-
-do_copy(SrcBucketId, DstBucketId, PrefixedObjectName, SrcPrefix, DstPrefix) ->
-    %% short prefix is used to update index ( list of objects )
-    ShortPrefixedObjectName = shorten_prefix(DstBucketId, PrefixedObjectName, SrcPrefix, DstPrefix),
     %% TODO: check if user has access to DST bucket
     %%       add error handling in case some objects were not copied
     %%       restrict READ access
-    _CopyResult = riak_api:copy_object(DstBucketId, ShortPrefixedObjectName, SrcBucketId,
-	PrefixedObjectName, [{acl, public_read}]),
-    %% TODO: report unsuccessful status of copy: 
+    _CopyResult = riak_api:copy_object(DstBucketId, PrefixedObjectKey1, SrcBucketId,
+	PrefixedObjectKey0, [{acl, public_read}]),
+    %% TODO: report unsuccessful status of copy:
     %% proplists:get_value(content_length, CopyResult, 0) == 0
+    OldKey = filename:basename(PrefixedObjectKey0),
+    NewKey = filename:basename(PrefixedObjectKey1),
+    IsRenamed = OrigName1 =/= OrigName0 orelse OldKey =/= NewKey,
     [
-	{dst_prefix, DstPrefix},
-	{old_name, filename:basename(PrefixedObjectName)},
-	{new_name, filename:basename(ShortPrefixedObjectName)}
+	{src_prefix, filename:dirname(PrefixedObjectKey0)},
+	{dst_prefix, DstPrefix0},
+	{old_key, OldKey},
+	{new_key, NewKey},
+	{src_orig_name, OrigName0},
+	{dst_orig_name, OrigName1},
+	{bytes, Bytes},
+	{renamed, IsRenamed}
     ].
+
+%%
+%% Copies objects.
+%%
+copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, ObjectKeysToCopy, SrcIndexPrefixPath) ->
+    CurrentSrcPrefix0 = filename:dirname(SrcIndexPrefixPath),
+    CurrentSrcPrefix1 =
+	case CurrentSrcPrefix0 of
+	    "." -> undefined;
+	    _ -> CurrentSrcPrefix0++"/"
+	end,
+    ShortenSrcPrefix =
+	case CurrentSrcPrefix0 of
+	    "." -> "";
+	    _ ->
+		case SrcPrefix0 of
+		    undefined -> CurrentSrcPrefix0++"/";
+		    _ -> re:replace(CurrentSrcPrefix0++"/", "^"++SrcPrefix0, "", [{return, list}])
+		end
+	end,
+    CurrentDstPrefix = utils:prefixed_object_name(DstPrefix0, ShortenSrcPrefix),
+    SrcIndexContent = riak_index:get_index(SrcBucketId, CurrentSrcPrefix1),
+    DstIndexContent = riak_index:get_index(DstBucketId, CurrentDstPrefix),
+    CopiedObjects0 = [do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey, CurrentDstPrefix,
+	SrcIndexContent, DstIndexContent) || PrefixedObjectKey <- ObjectKeysToCopy,
+	utils:is_hidden_object([{key, PrefixedObjectKey}]) =/= true andalso
+	filename:dirname(PrefixedObjectKey) =:= CurrentSrcPrefix0],
+
+    %% Copy action log if it absent in destination directory
+    lists:map(
+	fun(PrefixedObjectKey) ->
+	    case filename:basename(PrefixedObjectKey) =:= ?RIAK_ACTION_LOG_FILENAME andalso
+		    filename:dirname(PrefixedObjectKey) =:= CurrentSrcPrefix0 of
+		true ->
+		    DstActionLog = utils:prefixed_object_name(CurrentDstPrefix, ?RIAK_ACTION_LOG_FILENAME),
+		    case riak_api:head_object(DstBucketId, DstActionLog) of
+			not_found -> riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
+							  PrefixedObjectKey, [{acl, public_read}]);
+			_ -> ok
+		    end;
+		false -> ok
+	    end
+	end, ObjectKeysToCopy),
+    %% Update indices for pseudo-sub-directories, as some of objects were renamed.
+    %% Rename map should be updated in index file.
+
+    %% Update index for copied directory ( nested one )
+    riak_index:update(DstBucketId, CurrentDstPrefix,
+	[{copy_from, [{bucket_id, SrcBucketId},
+	 {prefix, CurrentSrcPrefix1},
+	 {copied_names, CopiedObjects0}]}]),
+
+    %% Update parent directory
+    ParentDir0 =
+	case filename:dirname(CurrentDstPrefix) of
+	    "." -> undefined;
+	    ParentDir1 -> ParentDir1++"/"
+	end,
+    case filename:dirname(CurrentDstPrefix) =:= "." of
+	true -> ok;
+	false -> riak_index:update(DstBucketId, ParentDir0)
+    end,
+    CopiedObjects0.
 
 copy(Req0, State) ->
     SrcBucketId = proplists:get_value(src_bucket_id, State),
@@ -192,7 +192,7 @@ copy(Req0, State) ->
     SrcObjectNames = proplists:get_value(src_object_names, State),
     DstBucketId = proplists:get_value(dst_bucket_id, State),
     DstPrefix0 = proplists:get_value(dst_prefix, State),
-    ObjectNamesToCopy0 = lists:map(
+    ObjectKeysToCopy0 = lists:map(
 	fun(N) ->
 	    case utils:ends_with(N, <<"/">>) of
 		true ->
@@ -201,34 +201,35 @@ copy(Req0, State) ->
 		false -> [utils:prefixed_object_name(SrcPrefix0, erlang:binary_to_list(N))]
 	    end
 	end, SrcObjectNames),
-    ObjectNamesToCopy1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectNamesToCopy0),
-    CopiedNames0 = [do_copy(SrcBucketId, DstBucketId, PrefixedObjectName, SrcPrefix0, DstPrefix0)
-	|| PrefixedObjectName <- ObjectNamesToCopy1, utils:is_hidden_object([{key, PrefixedObjectName}]) =/= true],
-    %% Update indices for pseudo-sub-directories
-    %% Some of objects might have been renamed,
-    %% therefore rename map should be updated in index file.
-    List0 = [update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedObjectName,
-		shorten_pseudo_directory_name(PrefixedObjectName, SrcPrefix0, DstPrefix0),
-		DstPrefix0,
-		[{proplists:get_value(old_name, CN), proplists:get_value(new_name, CN)}
-		    || CN <- CopiedNames0, proplists:get_value(dst_prefix, CN) =:= DstPrefix0]
-	     ) || PrefixedObjectName <- ObjectNamesToCopy1,
-	     lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =:= true],
+    ObjectKeysToCopy1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectKeysToCopy0),
 
-    %% If no directories copied, just update indices.
-    List1 =
-	case length(List0) of
-	    0 ->
-		CopiedNames1 = [{proplists:get_value(old_name, IN), proplists:get_value(new_name, IN)}
-		    || IN <- CopiedNames0],
-		riak_index:update(DstBucketId, DstPrefix0,
-		    [{copy_from, [{bucket_id, SrcBucketId}, {prefix, SrcPrefix0},
-				  {copied_names, CopiedNames1}]}]);
-	    _ -> []
-	end,
+    SrcIndexPath = utils:prefixed_object_name(SrcPrefix0, ?RIAK_INDEX_FILENAME),
+    SrcIndexPaths = [IndexPath || IndexPath <- ObjectKeysToCopy1, lists:suffix(?RIAK_INDEX_FILENAME, IndexPath)
+			] ++ [SrcIndexPath],
+    CopiedObjects0 = [copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, ObjectKeysToCopy1, I)
+		     || I <- SrcIndexPaths],
     %%
     %% Add action log record
     %%
+    CopiedDirectories =
+	case length(SrcIndexPaths) > 1 of
+	    true ->
+		    lists:map(
+			fun(I) ->
+			    D = utils:unhex(erlang:list_to_binary(filename:basename(filename:dirname(I)))),
+			    [[" \""], unicode:characters_to_list(D), ["/\""]]
+			end, lists:droplast(SrcIndexPaths));
+	    false -> [" "]
+	end,
+    CopiedObjects1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], CopiedObjects0),
+    CopiedObjects2 = lists:map(
+	fun(I) ->
+	    case proplists:get_value(src_orig_name, I) =:= proplists:get_value(dst_orig_name, I) of
+		true -> [[" \""], unicode:characters_to_list(proplists:get_value(dst_orig_name, I)), "\""];
+		false -> [[" \""], unicode:characters_to_list(proplists:get_value(src_orig_name, I)), ["\""],
+			  [" as \""], unicode:characters_to_list(proplists:get_value(dst_orig_name, I)), ["\""]]
+	    end
+	end, [J || J <- CopiedObjects1, proplists:get_value(src_prefix, J) =:= filename:dirname(SrcIndexPath)]),
     User = proplists:get_value(user, State),
     ActionLogRecord0 = #riak_action_log_record{
 	action="copy",
@@ -241,16 +242,8 @@ copy(Req0, State) ->
 	    undefined -> "/";
 	    _ -> unicode:characters_to_list(utils:unhex_path(SrcPrefix0)) ++ ["/"]
 	end,
-    ReadableList0 = lists:map(
-	fun(N) ->
-	    case utils:ends_with(N, <<"/">>) of
-		true -> unicode:characters_to_list(utils:unhex(N)) ++ ["/"];
-		false ->
-		    [unicode:characters_to_list(proplists:get_value(orig_name, R))
-		     || R <- List1, proplists:get_value(object_name, R) =:= N]
-	    end
-	end, SrcObjectNames),
-    Summary0 = lists:flatten([["Copied \""], [ReadableList0], ["\" from \"", SrcPrefix1, "\"."]]),
+    Summary0 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects2,
+			     ["\" from \"", SrcPrefix1, "\"."]]),
     ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
     action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
     DstPrefix1 =
@@ -258,7 +251,8 @@ copy(Req0, State) ->
 	    undefined -> "/";
 	    _ -> unicode:characters_to_list(utils:unhex_path(DstPrefix0))++["/"]
 	end,
-    Summary1 = lists:flatten([["Copied \""], [ReadableList0], ["\" to \""], [DstPrefix1, "\"."]]),
+    Summary1 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects2,
+			     [" to \""], [DstPrefix1, "\"."]]),
     ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
     action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2),
     {true, Req0, []}.
@@ -287,14 +281,7 @@ is_authorized(Req0, _State) ->
 	User -> {true, Req0, [{user, User}]}
     end.
 
-%%
-%% Checks if user has access
-%% - To source bucket
-%% - To destination bucket
-%%
-%% ( called after 'is_authorized()' )
-%%
-forbidden(Req0, State) ->
+copy_forbidden(Req0, State) ->
     SrcBucketId = erlang:binary_to_list(cowboy_req:binding(src_bucket_id, Req0)),
     User = proplists:get_value(user, State),
     TenantId = User#user.tenant_id,
@@ -346,3 +333,13 @@ forbidden(Req0, State) ->
 	    Req3 = cowboy_req:set_resp_body(jsx:encode([{error, 27}]), Req0),
 	    {true, Req3, []}
     end.
+
+%%
+%% Checks if user has access
+%% - To source bucket
+%% - To destination bucket
+%%
+%% ( called after 'is_authorized()' )
+%%
+forbidden(Req0, State) ->
+    copy_forbidden(Req0, State).

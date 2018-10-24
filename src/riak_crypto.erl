@@ -1,6 +1,6 @@
 -module(riak_crypto).
 
--export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0]).
+-export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0, random_string/0]).
 
 -include("riak.hrl").
 
@@ -165,3 +165,21 @@ uuid4() ->
     <<First:32, Second:16, Third:12, Fourth:2, Fifth:12, Sixth:48, _UselessPadding:6, _Rest/binary>> = RandomBytes,
     erlang:list_to_binary(io_lib:format("~8.16.0b-~4.16.0b-4~3.16.0b-~1.16.0b~3.16.0b-~12.16.0b",
 	[First, Second, Third, Fourth+8, Fifth, Sixth])).
+
+%%
+%% Generates random string.
+%%
+-spec random_string() -> string().
+
+random_string() ->
+    Length = 20,
+    AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
+    lists:foldl(
+	fun(_, Acc) ->
+	    try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
+		Value -> Value ++ Acc
+	    catch error:low_entropy ->
+		riak_crypto:seed(),
+		[lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
+	    end
+	end, [], lists:seq(1, Length)).

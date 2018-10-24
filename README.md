@@ -1,4 +1,6 @@
-# DubStack. Middleware for Riak CS object storage
+# DubStack
+
+This middleware is used to synchronize Riak CS contents with filesystem.
 
 ![Screenshot](doc/dubstack.png)
 
@@ -38,7 +40,7 @@
 
     Thumbnails are generated on demand by dedicated gen_server process.
 
-7. **Provides web interface and Android application**
+7. **Provides web interface, Android application and synchronization client for Windows**
 
     You can manage objects, users, their groups and tenants using browser or Android App.
 

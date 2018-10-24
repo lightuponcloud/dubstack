@@ -3,13 +3,11 @@
 %%
 -module(utils).
 -export([mime_type/1,
-	 slugify_object_name/0, slugify_object_name/1,
-	 prefixed_object_name/2, alphanumeric/1, trim_spaces/1,
-	 increment_filename/1, is_valid_bucket_id/2, is_valid_object_name/1,
-	 is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
-	 to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1,
-	 to_list/1, to_binary/1, to_atom/1, to_boolean/1, is_true/1, is_false/1,
-	 even/1, has_duplicates/1, ends_with/2, starts_with/2,
+	 slugify_object_name/1, prefixed_object_name/2, alphanumeric/1, trim_spaces/1,
+	 is_valid_bucket_id/2, is_valid_object_name/1, is_bucket_belongs_to_group/3,
+	 is_bucket_belongs_to_tenant/2, to_integer/1, to_integer/2, to_float/1,
+	 to_float/2, to_number/1, to_list/1, to_binary/1, to_atom/1, to_boolean/1,
+	 is_true/1, is_false/1, even/1, has_duplicates/1, ends_with/2, starts_with/2,
 	 hex/1, unhex/1, unhex_path/1, validate_utf8/2, is_valid_hex_prefix/1,
 	 is_hidden_object/1, join_list_with_separator/3, check_token/1,
 	 to_lower/1, timestamp/0]).
@@ -46,24 +44,6 @@ alphanumeric(String) when erlang:is_binary(String)  ->
     re:replace(String, <<"[^a-zA-Z0-9]+">>, <<"">>, [{return, binary}, global]).
 
 %%
-%% Generates random string.
-%%
--spec slugify_object_name() -> string().
-
-slugify_object_name() ->
-    Length = 20,
-    AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
-    lists:foldl(
-	fun(_, Acc) ->
-	    try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
-		Value -> Value ++ Acc
-	    catch error:low_entropy ->
-		riak_crypto:seed(),
-		[lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
-	    end
-	end, [], lists:seq(1, Length)).
-
-%%
 %% Transliterates binary to ascii.
 %%
 -spec slugify_object_name(binary()) -> string().
@@ -92,39 +72,6 @@ slugify_object_name(FileName0) when erlang:is_binary(FileName0) ->
 trim_spaces(Bin0) ->
     re:replace(Bin0, <<"^\\s+|\\s+$">>, <<"">>, [{return, binary}, global]).
 
--spec increment_filename(binary()|string()) -> binary()|string().
-
-increment_filename(FileName) when erlang:is_binary(FileName) ->
-    {RootName, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
-
-    case binary:matches(RootName, <<"-">>) of
-	[] -> << RootName/binary,  <<"-1">>/binary, Extension/binary >>;
-	HyphenPositions ->
-	    {LastHyphenPos, _} = lists:last(HyphenPositions),
-	    V = binary:part(RootName, size(RootName), -(size(RootName)-LastHyphenPos-1)),
-	    try binary_to_integer(V) of
-		N ->
-		    NamePart = binary:part(RootName, 0, LastHyphenPos+1),
-		    IncrementedValue = integer_to_binary(N+1),
-		    << NamePart/binary, IncrementedValue/binary, Extension/binary >>
-	    catch error:badarg ->
-		<< RootName/binary,  <<"-1">>/binary, Extension/binary >>
-	    end
-    end;
-
-increment_filename(FileName) when erlang:is_list(FileName) ->
-    {RootName, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
-    LastHyphen = string:rchr(RootName, $-),
-    case LastHyphen of
-	0 -> string:concat(RootName ++ "-1", Extension);
-	_ -> try
-		N = erlang:list_to_integer(string:substr(RootName, LastHyphen+1)),
-		string:concat(string:sub_string(RootName, 1, LastHyphen) ++ erlang:integer_to_list(N+1), Extension)
-	     catch error:badarg ->
-		string:concat(RootName ++ "-1", Extension)
-	    end
-    end.
-
 %%
 %% Returns 'prefix/object_name'
 %% or, if prefix is empty just 'object_name'
@@ -133,6 +80,8 @@ increment_filename(FileName) when erlang:is_list(FileName) ->
 
 prefixed_object_name(undefined, ObjectName) -> ObjectName;
 prefixed_object_name([], ObjectName) -> ObjectName;
+prefixed_object_name(".", ObjectName) -> ObjectName;
+prefixed_object_name(<<>>, ObjectName) -> ObjectName;
 prefixed_object_name(Prefix, ObjectName0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectName0) ->
     ObjectName1 =
 	case starts_with(ObjectName0, <<"/">>) of

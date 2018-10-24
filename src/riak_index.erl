@@ -3,7 +3,8 @@
 %% Index contains information on renamed and deleted objects.
 %%
 -module(riak_index).
--export([update/2, update/3, get_detailed_list/5, get_full_list/2]).
+-export([update/2, update/3, get_detailed_list/5, get_full_list/2,
+	 get_index/2, get_object_record/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -163,7 +164,7 @@ get_detailed_list(Prefix, List0, ObjectRenameMap0, DeletedObjects0, AccessTokens
     %% Those tokens are stored in index file, as they can be changed by user.
     %% Also exclude non-existent objects.
     AccessTokens1 = AccessTokens0 ++ [
-	{K, utils:slugify_object_name()} || K <- AllKeys,
+	{K, riak_crypto:random_string()} || K <- AllKeys,
 	proplists:is_defined(K, AccessTokens0) =:= false andalso
 	utils:is_hidden_object([{key, K}]) =:= false],
     [{dirs, [[
@@ -176,6 +177,32 @@ get_detailed_list(Prefix, List0, ObjectRenameMap0, DeletedObjects0, AccessTokens
      {renamed, ObjectRenameMap1},
      {to_delete, DeletedObjects1},
      {access_tokens, AccessTokens1}].
+
+%%
+%% Returns contents of existing index.
+%%
+get_index(BucketId, Prefix0)
+	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
+    PrefixedIndexFilename = utils:prefixed_object_name(Prefix0, ?RIAK_INDEX_FILENAME),
+    %% Get index object in destination directory
+    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+	not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}, {access_tokens, []}];
+	C -> erlang:binary_to_term(proplists:get_value(content, C))
+    end.
+
+%%
+%% Returns record of object from index.
+%%
+get_object_record(ObjectKey, IndexContent) when erlang:is_list(ObjectKey) ->
+    get_object_record(erlang:list_to_binary(ObjectKey), IndexContent);
+get_object_record(ObjectKey, IndexContent) when erlang:is_binary(ObjectKey) ->
+    Record = lists:filter(
+	fun(R) -> proplists:get_value(object_name, R) =:= ObjectKey end,
+	proplists:get_value(list, IndexContent)),
+    case length(Record) of
+	0 -> [];
+	_ -> lists:nth(1, Record)
+    end.
 
 %%
 %% Creates list of objects for bucket and prefix,
@@ -199,7 +226,12 @@ get_detailed_list(Prefix, List0, ObjectRenameMap0, DeletedObjects0, AccessTokens
 %%   {copy_from, [
 %%	{bucket_id, "the-example-team-public"},
 %%	{prefix, "d08732/"},
-%%	{copied_names, [{old_key, new_key}, ..]}
+%%	{copied_names, [
+%%		[{dst_prefix, "d08732/"},
+%%		{old_key, "somethind.random"},
+%%		{new_key, "something-1.random"},
+%%		{orig_name, "Something-1.Random"}]  %% orig_name is optional
+%%	]}
 %%   ]}
 %%
 %% - {to_delete, {"blah.png", 1532357691}}
@@ -232,13 +264,8 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    %% Create lock file instantly
 	    riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, RiakOptions),
 
-	    % Retrieve existing index object first
-	    PrefixedIndexFilename = utils:prefixed_object_name(Prefix0, ?RIAK_INDEX_FILENAME),
-	    %% Get index object in destination directory
-	    List0 = case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-			not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}, {access_tokens, []}];
-			C -> erlang:binary_to_term(proplists:get_value(content, C))
-		    end,
+	    %% Retrieve existing index object first
+	    List0 = get_index(BucketId, Prefix0),
 	    %% Take renamed object list from options and the retrieved one
 	    ObjectRenameMap0 = proplists:get_value(renamed, Options, []),
 	    ObjectRenameMap1 = proplists:get_value(renamed, List0, []),
@@ -274,18 +301,18 @@ update(BucketId, Prefix0, Options, RiakOptions)
 			    Content ->
 				SrcList = erlang:binary_to_term(proplists:get_value(content, Content)),
 				%% Add new renamed AND copied objects to rename map.
-				%% We avoid overwriting objects this way
+				%% We avoid overwriting objects on desktop client this way
 				ObjectRenameMap4 = proplists:get_value(renamed, SrcList, []),
 				%% Go through copied object _keys_ and find renamed ones
-				CopiedNames2 = [C0 || C0 <- CopiedNames1,
-				    proplists:is_defined(element(1, C0), ObjectRenameMap4) andalso
-				    element(2, C0) =/= element(1, C0)],
 				%% Add copied-renamed objects to renamed map
-				ObjectRenameMap5 = [{
-					element(2, C1),
-					proplists:get_value(element(1, C1), ObjectRenameMap4)
-				    } || C1 <- CopiedNames2],
-				[ObjectRenameMap4 ++ ObjectRenameMap5,  proplists:get_value(to_delete, SrcList, [])]
+				ObjectRenameMap5 = [{proplists:get_value(new_key, P), [
+				    {name, proplists:get_value(dst_orig_name, P)},
+				    {bytes, proplists:get_value(bytes, P)}]}
+				 || P <- CopiedNames1, proplists:get_value(renamed, P) =:= true],
+				ObjectRenameMap6 = lists:filter(
+				    fun({K, _}) -> proplists:is_defined(K, ObjectRenameMap5) =:= false end,
+				    ObjectRenameMap4),
+				[ObjectRenameMap5 ++ ObjectRenameMap6,  proplists:get_value(to_delete, SrcList, [])]
 			end
 		end,
 	    List1 = get_full_list(BucketId, Prefix0),
@@ -297,6 +324,5 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    %% Remove lock
 	    riak_api:delete_object(BucketId, PrefixedLockFilename),
 	    proplists:get_value(list, List2);
-	_ ->
-	    []
+	_ -> []
     end.

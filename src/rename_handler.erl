@@ -8,7 +8,7 @@
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
 	 to_json/2, allowed_methods/2, forbidden/2, is_authorized/2,
-	 validate_post/2, handle_post/2, rename_pseudo_directory/4]).
+	 validate_post/3, handle_post/2, rename_pseudo_directory/4]).
 
 -include("riak.hrl").
 -include("user.hrl").
@@ -33,30 +33,38 @@ content_types_provided(Req, State) ->
 	{{<<"application">>, <<"json">>, []}, to_json}
     ], Req, State}.
 
-validate_src_object_name(SrcObjectName0) ->
-    case utils:ends_with(SrcObjectName0, <<"/">>) of
-	true -> utils:is_valid_hex_prefix(SrcObjectName0);
-	false -> true
+validate_src_object_name(BucketId, Prefix0, SrcObjectName0) ->
+    case list_handler:validate_prefix(BucketId, Prefix0) of
+	{error, Number0} -> {error, Number0};
+	Prefix1 ->
+	    case utils:ends_with(SrcObjectName0, <<"/">>) of
+		true ->
+		    case list_handler:validate_prefix(BucketId,
+			    utils:prefixed_object_name(Prefix0, SrcObjectName0)) of
+			{error, Number1} -> {error, Number1};
+			SrcObjectName1 -> {Prefix1, SrcObjectName1}
+		    end;
+		false -> {Prefix1, string:to_lower(erlang:binary_to_list(SrcObjectName0))}
+	    end
     end.
 
-validate_post(Req, FieldValues) ->
-    Prefix = proplists:get_value(<<"prefix">>, FieldValues),
+validate_post(Req, BucketId, FieldValues) ->
+    Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
     SrcObjectName0 = proplists:get_value(<<"src_object_name">>, FieldValues),
     DstObjectName0 = proplists:get_value(<<"dst_object_name">>, FieldValues),
-    case (SrcObjectName0 =:= undefined orelse DstObjectName0 =:= undefined) orelse
-	    utils:is_valid_hex_prefix(Prefix) =:= false of
+    case (SrcObjectName0 =:= undefined orelse DstObjectName0 =:= undefined) of
 	true -> js_handler:bad_request(Req, 9);
 	false ->
-	    case validate_src_object_name(SrcObjectName0) of
-		true ->
+	    case validate_src_object_name(BucketId, Prefix0, SrcObjectName0) of
+		{error, Number} -> js_handler:bad_request(Req, Number);
+		{Prefix1, SrcObjectName1} ->
 		    case utils:is_valid_object_name(DstObjectName0) of
+			false -> js_handler:bad_request(Req, 9);
 			true ->
-			    [{prefix, utils:to_lower(Prefix)},
-			     {src_object_name, string:to_lower(erlang:binary_to_list(SrcObjectName0))},
-			     {dst_object_name, unicode:characters_to_list(DstObjectName0)}];
-			false -> js_handler:bad_request(Req, 9)
-		    end;
-		false -> js_handler:bad_request(Req, 9)
+			    [{prefix, Prefix1},
+			     {src_object_name, SrcObjectName1},
+			     {dst_object_name, DstObjectName0}]
+		    end
 	    end
     end.
 
@@ -74,7 +82,7 @@ handle_post(Req0, State0) ->
 		false -> js_handler:bad_request(Req1, 21);
 		true ->
 		    FieldValues = jsx:decode(Body),
-		    case validate_post(Req1, FieldValues) of
+		    case validate_post(Req1, BucketId, FieldValues) of
 			{true, Req3, []} -> {true, Req3, []};  % error
 			State1 -> rename(Req0, BucketId, State0 ++ State1)
 		    end
@@ -101,17 +109,11 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
 %%
 %% SrcDirectoryName0 -- hex encoded pseudo-directory, that should be renamed
 %%
--spec rename_pseudo_directory(string(), string()|undefined, string(), string()) -> not_found|exists|true.
+-spec rename_pseudo_directory(string(), string()|undefined, string(), binary()) -> not_found|exists|true.
 
-rename_pseudo_directory(BucketId, Prefix0, SrcDirectoryName0, DstDirectoryName0)
+rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
-	     erlang:is_list(SrcDirectoryName0), erlang:is_list(DstDirectoryName0) ->
-    PrefixedSrcDirectoryName =
-	case Prefix0 of
-	    undefined -> SrcDirectoryName0;
-	    _ ->
-		utils:prefixed_object_name(Prefix0, SrcDirectoryName0)
-	end,
+	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
     PrefixedSrcIndexObjectName = utils:prefixed_object_name(PrefixedSrcDirectoryName, ?RIAK_INDEX_FILENAME),
     %% Check if pseudo-directory exists first
     case riak_api:head_object(BucketId, PrefixedSrcIndexObjectName) of
@@ -120,14 +122,12 @@ rename_pseudo_directory(BucketId, Prefix0, SrcDirectoryName0, DstDirectoryName0)
 	    %% Check if destination name exists already
 	    PrefixedDstDirectoryName =
 		case Prefix0 of
-		    undefined ->
-			utils:hex(unicode:characters_to_binary(DstDirectoryName0))++"/";
+		    undefined -> utils:hex(DstDirectoryName0)++"/";
 		    _ ->
-			DstDirectoryName1 = utils:hex(unicode:characters_to_binary(DstDirectoryName0)),
+			DstDirectoryName1 = utils:hex(DstDirectoryName0),
 			utils:prefixed_object_name(Prefix0, DstDirectoryName1)++"/"
 		end,
-	    PrefixedDstIndexObjectName = utils:prefixed_object_name(PrefixedDstDirectoryName,
-		?RIAK_INDEX_FILENAME),
+	    PrefixedDstIndexObjectName = utils:prefixed_object_name(PrefixedDstDirectoryName, ?RIAK_INDEX_FILENAME),
 	    case riak_api:head_object(BucketId, PrefixedDstIndexObjectName) of
 		not_found ->
 		    List0 = riak_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
@@ -137,15 +137,13 @@ rename_pseudo_directory(BucketId, Prefix0, SrcDirectoryName0, DstDirectoryName0)
 
 		    [move_handler:update_pseudo_directory_index(BucketId, BucketId, PrefixedObjectName,
 			copy_handler:shorten_pseudo_directory_name(PrefixedObjectName,
-			    PrefixedSrcDirectoryName, PrefixedDstDirectoryName, []),
-			PrefixedDstDirectoryName) || PrefixedObjectName <- List0,
+			    PrefixedSrcDirectoryName, PrefixedDstDirectoryName),
+			PrefixedDstDirectoryName, []) || PrefixedObjectName <- List0,
 		     lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =:= true],
-
 		    %% Update source directory index
 		    riak_index:update(BucketId, Prefix0),
 		    true;
-		_ ->
-		    exists
+		_ -> exists
 	    end
     end.
 
@@ -168,8 +166,10 @@ rename(Req0, BucketId, State) ->
 		exists -> js_handler:bad_request(Req0, 10);
 		true ->
 		    %% Create action log record
-		    SrcObjectName1 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectName0))),
-		    Summary0 = lists:flatten([["Renamed \""], [SrcObjectName1], ["\" to \""], [DstObjectName0], "\""]),
+		    SrcObjectName1 = filename:basename(SrcObjectName0),
+		    SrcObjectName2 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectName1))),
+		    DstObjectName1 = unicode:characters_to_list(DstObjectName0),
+		    Summary0 = lists:flatten([["Renamed \""], [SrcObjectName2], ["\" to \""], [DstObjectName1], "\""]),
 		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
 		    action_log:add_record(BucketId, Prefix0, ActionLogRecord1),
 		    {true, Req0, State}
@@ -179,23 +179,54 @@ rename(Req0, BucketId, State) ->
 	    ObjectMetaData = riak_api:head_object(BucketId, PrefixedSrcObjectName),
 	    ContentLength = proplists:get_value(content_length, ObjectMetaData),
 
-	    %% Update objects index with new name
-	    riak_index:update(BucketId, Prefix0,
-		[{renamed, [{SrcObjectName0, [{name, DstObjectName0},
-					      {bytes, utils:to_integer(ContentLength)}]}]}]),
-	    %% Find original object name for action log record
-	    Metadata = riak_api:get_object_metadata(BucketId, PrefixedSrcObjectName),
-	    OrigName0 =
-		case proplists:get_value("x-amz-meta-orig-filename", Metadata, SrcObjectName0) of
-		    undefined -> SrcObjectName0;
-		    N -> N
+	    %% Check if object with the same name or pseudo-directory with the same name exist
+	    PrefixedIndexFilename = utils:prefixed_object_name(Prefix0, ?RIAK_INDEX_FILENAME),
+	    IndexContent =
+		case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+		    not_found -> [{dirs, []}, {list, []}, {renamed, []}];
+		    Content -> erlang:binary_to_term(proplists:get_value(content, Content))
 		end,
-	    %% Create action log record
-	    OrigName1 = unicode:characters_to_list(erlang:list_to_binary(OrigName0)),
-	    Summary1 = lists:flatten([["Renamed \""], [OrigName1], ["\" to \""], [DstObjectName0], ["\""]]),
-	    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
-	    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
-	    {true, Req0, []}
+	    ExistingPrefixes = [proplists:get_value(prefix, P)
+				|| P <- proplists:get_value(dirs, IndexContent, [])],
+	    DstObjectName2 =
+		case utils:ends_with(DstObjectName0, <<"/">>) of
+		    true ->
+			Size0 = byte_size(DstObjectName0)-1,
+			<<DstObjectName3:Size0/binary, _/binary>> = DstObjectName0,
+			DstObjectName4 = utils:hex(DstObjectName3),
+			<< DstObjectName4/binary, <<"/">>/binary >>;
+		    false ->
+			DstObjectName5 = erlang:list_to_binary(utils:hex(DstObjectName0)),
+			<<  DstObjectName5/binary, <<"/">>/binary >>
+		end,
+	    case lists:member(DstObjectName2, ExistingPrefixes) of
+		true -> js_handler:bad_request(Req0, 10);
+		false ->
+		    ExistingObjectNames = [proplists:get_value(orig_name, R)
+				|| R <- proplists:get_value(list, IndexContent, [])],
+		    case lists:member(DstObjectName0, ExistingObjectNames) of
+			true -> js_handler:bad_request(Req0, 29);
+			false ->
+			    %% Update objects index with new name
+			    riak_index:update(BucketId, Prefix0,
+				[{renamed, [{SrcObjectName0, [{name, unicode:characters_to_list(DstObjectName0)},
+							      {bytes, utils:to_integer(ContentLength)}]}]}]),
+			    %% Find original object name for action log record
+			    Metadata = riak_api:get_object_metadata(BucketId, PrefixedSrcObjectName),
+			    OrigName0 =
+				case proplists:get_value("x-amz-meta-orig-filename", Metadata, SrcObjectName0) of
+				    undefined -> SrcObjectName0;
+				    N -> N
+				end,
+			    %% Create action log record
+			    OrigName1 = unicode:characters_to_list(erlang:list_to_binary(OrigName0)),
+			    Summary1 = lists:flatten([["Renamed \""], [OrigName1], ["\" to \""],
+						      [unicode:characters_to_list(DstObjectName0)], ["\""]]),
+			    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+			    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
+			    {true, Req0, []}
+		    end
+	    end
     end.
 
 %%

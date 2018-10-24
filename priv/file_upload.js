@@ -338,7 +338,7 @@ function refreshMenu(){
 	$(".current").addClass("deleting");
 
 	$("#ok-btn").off('click');
-	$("#ok-btn").unbind().click(function(){
+	$("#ok-btn").unbind('click').click(function(){
     	    var lid=$("#context-menu").attr('data-line-id');
 	    $(".confirm").hide();
 	    $("#shadow").hide();
@@ -366,7 +366,7 @@ function refreshMenu(){
 	    stack.delete_object(hex_prefix, bits[bits.length-1]);
 	    return false;
 	});
-	$("#cancel-btn").unbind().click(function(){
+	$("#cancel-btn").unbind('click').click(function(){
 	    $(".confirm").hide();
 	    $("#shadow").hide();
 	    $(".file-item").removeClass("deleting");
@@ -483,7 +483,7 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
  });
  $("#dialog").dialog('open');
 
- $('#id-dialog-submit-copy').unbind().click(function(){
+ $('#id-dialog-submit-copy').unbind('click').click(function(){
   if($("#id-dialog-submit-copy")=="disabled") return false;
   $("#id-dialog-submit-copy").attr("disabled","disabled");
   var root_uri=$('body').attr('data-root-uri');
@@ -528,6 +528,7 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
 	$('#submit_rename').attr("disabled", false);
       });
       if(!vresult){
+	$('#submit_rename').attr("disabled", false);
 	return false;
       }
     }
@@ -550,13 +551,12 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
     }});
     stack.rename_object(hex_prefix, from_object_name, dst_object_name);
     // TODO: to check status of renamed object
+    $('#submit_rename').attr("disabled", false);
 }
 
 function rename_dialog(e, from_object_name, orig_name){
  var bucket_id = $("body").attr("data-bucket-id");
  var hex_prefix=$('body').attr('data-hex-prefix');
-// var rname = unhex(from_object_name);
-// if(rname.indexOf('/') == rname.length-1) rname = rname.substring(0, rname.length-1);
  var is_dir = from_object_name.indexOf('/') == from_object_name.length-1;
  var rename_form = '<form method="POST" id="id-rename-form" name="rename_form" > \
 <input type="hidden" name="hex_prefix" id="id-dialog-prefix" value=""> \
@@ -602,22 +602,22 @@ function rename_dialog(e, from_object_name, orig_name){
  });
  $("#dialog").dialog('open');
  $('#id_object_name').focus();
- $('#id_object_name').keydown(function(e){
+ $('#id_object_name').unbind('keydown').keydown(function(e){
     var key;
     if(window.event) key = window.event.keyCode;
     else key = e.which;
     if(key == 13) return false;
  });
- $('#id_object_name').keyup(function(e){
+ $('#id_object_name').unbind('keyup').keyup(function(e){
     var key;
     if(window.event) key = window.event.keyCode;
     else key = e.which;
     if(key == 13) {
-      submit_rename(bucket_id, hex_prefix, from_object_name, is_dir);
-      return false;
+      $('#submit_rename').click();
     }
  });
- $('#submit_rename').unbind().click(function(){
+ $('#submit_rename').unbind('click').click(function(e){
+    $('#submit_rename').attr("disabled", "disabled");
     submit_rename(bucket_id, hex_prefix, from_object_name, is_dir);
     return false;
  });
@@ -1028,13 +1028,13 @@ $('span.pushbutton').on('click', '#id-createdir-button', function(){
         }
  });
  $("#dialog").dialog('open');
- $('#id_directory_name').keydown(function(e){
+ $('#id_directory_name').unbind('keydown').keydown(function(e){
     var key;
     if(window.event) key = window.event.keyCode;
     else key = e.which;
     if(key == 13) return false;
  });
- $('#id_directory_name').keyup(function(e){
+ $('#id_directory_name').unbind('keyup').keyup(function(e){
     var key;
     if(window.event) key = window.event.keyCode;
     else key = e.which;
@@ -1047,7 +1047,7 @@ $('span.pushbutton').on('click', '#id-createdir-button', function(){
   submit_dirname(hex_prefix);
  });
  $('#id_directory_name').focus();
- $('#id_submit_createdir').unbind().click(function(){
+ $('#id_submit_createdir').unbind('click').click(function(){
   submit_dirname(hex_prefix);
   return false;
  });

@@ -16,7 +16,8 @@
          get_object_url/2,
 	 s3_xml_request/8,
 	 validate_upload_id/4,
-	 pick_object_name/3,
+	 increment_filename/1,
+	 pick_object_name/3, pick_object_name/5,
 	 s3_request/8,
 	 request_httpc/5,
 	 recursively_list_pseudo_dir/2
@@ -230,28 +231,105 @@ fetch_object(MethodName, BucketId, Key, Options)
     end.
 
 %%
-%% Returns unique object name for provided bucket and prefix
+%% Returns filename-N, where N is added integer number
 %%
--spec pick_object_name(BucketId, Prefix, FileName) -> string() when
-    BucketId :: string(),
-    Prefix :: binary(),
-    FileName :: string().
+-spec increment_filename(binary()) -> binary().
 
-pick_object_name(BucketId, Prefix, FileName)
-    when erlang:is_list(BucketId), erlang:is_binary(FileName),
-         erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    %% Call slugify or pick a random name
-    ObjectName =
-	case utils:slugify_object_name(FileName) of
-	    [] -> utils:slugify_object_name();
-	    "." -> utils:slugify_object_name();
+increment_filename(FileName) when erlang:is_binary(FileName) ->
+    {RootName, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
+
+    case binary:matches(RootName, <<"-">>) of
+	[] -> << RootName/binary,  <<"-1">>/binary, Extension/binary >>;
+	HyphenPositions ->
+	    {LastHyphenPos, _} = lists:last(HyphenPositions),
+	    V = binary:part(RootName, size(RootName), -(size(RootName)-LastHyphenPos-1)),
+	    try binary_to_integer(V) of
+		N ->
+		    NamePart = binary:part(RootName, 0, LastHyphenPos+1),
+		    IncrementedValue = integer_to_binary(N+1),
+		    << NamePart/binary, IncrementedValue/binary, Extension/binary >>
+	    catch error:badarg ->
+		<< RootName/binary,  <<"-1">>/binary, Extension/binary >>
+	    end
+    end.
+
+%%
+%% Returns unique object name for provided bucket/prefix.
+%% It takes into account existing pseudo-directory names.
+%%
+%% Returns { unique object key, unique original name }
+%%
+-spec pick_object_name(BucketId, Prefix, FileName) -> {binary(), binary()} when
+    BucketId :: string(),
+    Prefix :: string(),
+    FileName :: binary().
+
+pick_object_name(BucketId, Prefix, FileName0) ->
+    pick_object_name(BucketId, Prefix, FileName0, undefined, undefined).
+
+-spec pick_object_name(BucketId, Prefix, FileName, ExistingPrefixes, OrigNamesList) -> {binary(), binary()} when
+    BucketId :: string(),
+    Prefix :: string(),
+    FileName :: binary(),
+    ExistingPrefixes :: list()|undefined,
+    OrigNamesList :: list()|undefined.
+
+pick_object_name(BucketId, Prefix, FileName0, undefined, undefined) ->
+    %% Pick object key and orig name that do not clash with existing keys/dirs.
+    IndexContent = riak_index:get_index(BucketId, Prefix),
+    ExistingPrefixes = [proplists:get_value(prefix, P) || P <- proplists:get_value(dirs, IndexContent, [])],
+    ExistingOrigNames = [proplists:get_value(orig_name, O) || O <- proplists:get_value(list, IndexContent, [])],
+    pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, undefined);
+
+%%
+%% The following function accepts pre-fetched list of prefixes and original names
+%% to take into account during selection of object key and orig_name.
+%%
+pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames)
+	when erlang:is_list(ExistingPrefixes), erlang:is_list(ExistingOrigNames) ->
+    pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, undefined).
+
+pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, Uniq1)
+    when erlang:is_list(BucketId), erlang:is_binary(FileName0),
+         erlang:is_list(Prefix) orelse Prefix =:= undefined,
+	 erlang:is_binary(Uniq1) orelse Uniq1 =:= undefined,
+	 erlang:is_list(ExistingPrefixes), erlang:is_list(ExistingOrigNames) ->
+    ObjectKey0 =
+	case Uniq1 of
+	    undefined -> FileName0;
+	    _ -> Uniq1
+	end,
+    %% Transliterate filename
+    ObjectKey1 =
+	case utils:slugify_object_name(ObjectKey0) of
+	    [] -> utils:hex(ObjectKey0);
+	    "." -> utils:hex(ObjectKey0);
+	    ".." -> utils:hex(ObjectKey0);
 	    ON -> ON
 	end,
-    %% check if object exists in storage
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    case head_object(BucketId, PrefixedObjectName) of
-	not_found -> ObjectName;
-	_ -> pick_object_name(BucketId, Prefix, utils:increment_filename(FileName))
+    %% Check if key exists
+    PrefixedObjectKey = utils:prefixed_object_name(Prefix, ObjectKey1),
+    case head_object(BucketId, PrefixedObjectKey) of
+	not_found ->
+	    %% Check if pseudo-directory with such name exists
+	    HexObjectKey0 = erlang:list_to_binary(utils:hex(ObjectKey0)),
+	    HexObjectKey1 = << HexObjectKey0/binary, <<"/">>/binary >>,
+	    case lists:member(HexObjectKey1, ExistingPrefixes) of
+		true -> pick_object_name(BucketId, Prefix, FileName0,
+					 ExistingPrefixes, ExistingOrigNames,
+					 increment_filename(ObjectKey0));
+		false ->
+		    %% Check if orig_name exists, as object could have been renamed
+		    case lists:member(ObjectKey0, ExistingOrigNames) of
+			true -> pick_object_name(BucketId, Prefix, FileName0,
+						 ExistingPrefixes, ExistingOrigNames,
+						 increment_filename(ObjectKey0));
+			false -> {ObjectKey1, ObjectKey0}
+		    end
+	    end;
+	_ -> pick_object_name(BucketId, Prefix, FileName0,
+			      ExistingPrefixes, ExistingOrigNames,
+			      increment_filename(ObjectKey0))
     end.
 
 -spec get_object_metadata(string(), string()) -> proplist().

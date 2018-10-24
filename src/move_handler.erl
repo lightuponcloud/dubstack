@@ -6,7 +6,7 @@
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
 	 to_json/2, allowed_methods/2, is_authorized/2, forbidden/2,
-	 handle_post/2, update_pseudo_directory_index/6]).
+	 handle_post/2]).
 
 -include("riak.hrl").
 -include("user.hrl").
@@ -43,7 +43,6 @@ handle_post(Req0, State0) ->
 	    DstPrefix0 = proplists:get_value(dst_prefix, State0),
 	    SrcObjectNames0 = proplists:get_value(src_object_names, State0),
 	    User = proplists:get_value(user, State0),
-
 	    case copy_handler:validate_post(SrcPrefix0, DstPrefix0, SrcObjectNames0) of
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		State1 ->
@@ -56,25 +55,6 @@ handle_post(Req0, State0) ->
 	    end;
 	_ -> js_handler:bad_request(Req0, 16)
     end.
-
-copy_delete(SrcBucketId, DstBucketId, ObjectName, SrcPrefix, DstPrefix) ->
-    CopiedNames0 = copy_handler:do_copy(SrcBucketId, DstBucketId, ObjectName, SrcPrefix, DstPrefix),
-    %% Delete regular object
-    riak_api:delete_object(SrcBucketId, ObjectName),
-    CopiedNames0.
-
-%%
-%% Copies renaming map from the old pseudo-directory to the new directory.
-%% Updates indices in new pseudo-directory.
-%% Deletes old pseudo-directory index.
-%%
-update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedSrcObjectName,
-	PrefixedDstObjectName, PrefixedDstDirectoryName, CopiedNames) ->
-    copy_handler:update_pseudo_directory_index(SrcBucketId, DstBucketId,
-	PrefixedSrcObjectName, PrefixedDstObjectName, PrefixedDstDirectoryName, CopiedNames),
-    %% Delte old pseudo-directory index object
-    riak_api:delete_object(SrcBucketId, PrefixedSrcObjectName),
-    ok.
 
 move(Req0, State) ->
     SrcBucketId = proplists:get_value(src_bucket_id, State),
@@ -91,42 +71,54 @@ move(Req0, State) ->
 		false -> [utils:prefixed_object_name(SrcPrefix0, erlang:binary_to_list(N))]
 	    end
        end, SrcObjectNames),
-    ObjectNamesToMove1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectNamesToMove0),
+    ObjectKeysToMove1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectNamesToMove0),
 
-    MovedNames0 = [copy_delete(SrcBucketId, DstBucketId, PrefixedObjectName, SrcPrefix0, DstPrefix0)
-	|| PrefixedObjectName <- ObjectNamesToMove1,
-	lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =/= true],
-
-    % Update indices for pseudo-sub-directories
-    List0 = [update_pseudo_directory_index(SrcBucketId, DstBucketId, PrefixedObjectName,
-		copy_handler:shorten_pseudo_directory_name(PrefixedObjectName, SrcPrefix0, DstPrefix0),
-		DstPrefix0,
-               [{proplists:get_value(old_name, CN), proplists:get_value(new_name, CN)}
-                   || CN <- MovedNames0, proplists:get_value(dst_prefix, CN) =:= DstPrefix0]
-	     ) || PrefixedObjectName <- ObjectNamesToMove1,
-	     lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =:= true],
-
-    %% If no directories moved, just update indices.
-    %% Code below saves a lot of requests to Riak CS.
-    List1 =
-	case length(List0) of
-	    0 ->
-		%% No sub-directories were moved.
-		CopiedNames1 = [{proplists:get_value(old_name, IN), proplists:get_value(new_name, IN)}
-                   || IN <- MovedNames0],
-		riak_index:update(DstBucketId, DstPrefix0,
-                   [{copy_from, [{bucket_id, SrcBucketId}, {prefix, SrcPrefix0},
-                                 {copied_names, CopiedNames1}]}]);
-	    _ -> []
-	end,
-    %% Update source directory index
+    SrcIndexPath = utils:prefixed_object_name(SrcPrefix0, ?RIAK_INDEX_FILENAME),
+    SrcIndexPaths = [IndexPath || IndexPath <- ObjectKeysToMove1, lists:suffix(?RIAK_INDEX_FILENAME, IndexPath)
+			] ++ [SrcIndexPath],
+    CopiedObjects0 = [copy_handler:copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, ObjectKeysToMove1, I)
+		     || I <- SrcIndexPaths],
+    CopiedObjects1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], CopiedObjects0),
+    %% Delete objects in previous place
+    lists:map(
+	fun(I) ->
+	    SrcPrefix = proplists:get_value(src_prefix, I),
+	    OldKey = proplists:get_value(old_key, I),
+	    PrefixedObjectKey = utils:prefixed_object_name(SrcPrefix, OldKey),
+	    riak_api:delete_object(SrcBucketId, PrefixedObjectKey)
+	end, CopiedObjects1),
+    %% Delete pseudo-directories
+    lists:map(
+	fun(I) ->
+	    ActionLogPath = utils:prefixed_object_name(filename:dirname(I), ?RIAK_ACTION_LOG_FILENAME),
+	    riak_api:delete_object(SrcBucketId, ActionLogPath),
+	    riak_api:delete_object(SrcBucketId, I)
+	end, lists:droplast(SrcIndexPaths)),
     riak_index:update(SrcBucketId, SrcPrefix0),
     %%
-    %% Add record to action log
+    %% Add action log record
     %%
+    MovedDirectories =
+	case length(SrcIndexPaths) > 1 of
+	    true ->
+		    lists:map(
+			fun(I) ->
+			    D = utils:unhex(erlang:list_to_binary(filename:basename(filename:dirname(I)))),
+			    [[" \""], unicode:characters_to_list(D), ["/\""]]
+			end, lists:droplast(SrcIndexPaths));
+	    false -> [" "]
+	end,
+    MovedObjects2 = lists:map(
+	fun(I) ->
+	    case proplists:get_value(src_orig_name, I) =:= proplists:get_value(dst_orig_name, I) of
+		true -> [[" \""], unicode:characters_to_list(proplists:get_value(dst_orig_name, I)), "\""];
+		false -> [[" \""], unicode:characters_to_list(proplists:get_value(src_orig_name, I)), ["\""],
+			  [" as \""], unicode:characters_to_list(proplists:get_value(dst_orig_name, I)), ["\""]]
+	    end
+	end, [J || J <- CopiedObjects1, proplists:get_value(src_prefix, J) =:= filename:dirname(SrcIndexPath)]),
     User = proplists:get_value(user, State),
     ActionLogRecord0 = #riak_action_log_record{
-	action="move",
+	action="copy",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [utils:timestamp()])
@@ -136,17 +128,8 @@ move(Req0, State) ->
 	    undefined -> "/";
 	    _ -> unicode:characters_to_list(utils:unhex_path(SrcPrefix0)) ++ ["/"]
 	end,
-    ReadableList0 = lists:map(
-       fun(N) ->
-	    case utils:ends_with(N, <<"/">>) of
-               true -> unicode:characters_to_list(utils:unhex(N)) ++ ["/"];
-               false ->
-                   [unicode:characters_to_list(proplists:get_value(orig_name, R))
-                    || R <- List1, proplists:get_value(object_name, R) =:= N]
-
-           end
-       end, SrcObjectNames),
-    Summary0 = lists:flatten([["Moved \""], [ReadableList0], ["\" from \"", SrcPrefix1, "\"."]]),
+    Summary0 = lists:flatten([["Moved"], MovedDirectories ++ MovedObjects2,
+			     ["\" from \"", SrcPrefix1, "\"."]]),
     ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
     action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
     DstPrefix1 =
@@ -154,7 +137,8 @@ move(Req0, State) ->
 	    undefined -> "/";
 	    _ -> unicode:characters_to_list(utils:unhex_path(DstPrefix0))++["/"]
 	end,
-    Summary1 = lists:flatten([["Moved \""], [ReadableList0], ["\" to \""], [DstPrefix1, "\"."]]),
+    Summary1 = lists:flatten([["Moved"], MovedDirectories ++ MovedObjects2,
+			     [" to \""], [DstPrefix1, "\"."]]),
     ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
     action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2),
     {true, Req0, []}.
@@ -191,54 +175,4 @@ is_authorized(Req0, _State) ->
 %% ( called after 'is_authorized()' )
 %%
 forbidden(Req0, State) ->
-    SrcBucketId = erlang:binary_to_list(cowboy_req:binding(src_bucket_id, Req0)),
-    User = proplists:get_value(user, State),
-    TenantId = User#user.tenant_id,
-    UserBelongsToGroup =
-	case utils:is_valid_bucket_id(SrcBucketId, TenantId) of
-	    true -> lists:any(fun(Group) ->
-		    utils:is_bucket_belongs_to_group(SrcBucketId, TenantId, Group#group.id) end,
-		    User#user.groups);
-	    false -> false
-	end,
-    case UserBelongsToGroup of
-	true ->
-	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-	    case jsx:is_json(Body) of
-		{error, badarg} -> js_handler:bad_request(Req1, 21);
-		false -> js_handler:bad_request(Req1, 21);
-		true ->
-		    FieldValues = jsx:decode(Body),
-		    DstBucketId0 =
-			case proplists:get_value(<<"dst_bucket_id">>, FieldValues) of
-			    undefined -> undefined;
-			    DstBucketId1 -> unicode:characters_to_list(DstBucketId1)
-			end,
-		    User = proplists:get_value(user, State),
-		    TenantId = User#user.tenant_id,
-		    DstBucketCanBeModified =
-			case utils:is_valid_bucket_id(DstBucketId0, TenantId) of
-			    true ->
-				lists:any(fun(Group) ->
-				    utils:is_bucket_belongs_to_group(DstBucketId0, TenantId, Group#group.id) end,
-				    User#user.groups);
-			    false -> false
-			end,
-		    case DstBucketCanBeModified of
-			false ->
-			    Req2 = cowboy_req:set_resp_body(jsx:encode([{error, 26}]), Req1),
-			    {true, Req2, []};
-			true -> {false, Req1, [
-				    {user, User},
-				    {src_bucket_id, SrcBucketId},
-				    {dst_bucket_id, DstBucketId0},
-				    {src_prefix, proplists:get_value(<<"src_prefix">>, FieldValues)},
-				    {dst_prefix, proplists:get_value(<<"dst_prefix">>, FieldValues)},
-				    {src_object_names, proplists:get_value(<<"src_object_names">>, FieldValues)}
-				]}
-		    end
-	    end;
-	false ->
-	    Req3 = cowboy_req:set_resp_body(jsx:encode([{error, 27}]), Req0),
-	    {true, Req3, []}
-    end.
+    copy_handler:copy_forbidden(Req0, State).
