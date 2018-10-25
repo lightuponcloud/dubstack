@@ -134,13 +134,35 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 		    [copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName,
 			PrefixedObjectName) || PrefixedObjectName <- List0,
 			lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =/= true],
-
-		    [move_handler:update_pseudo_directory_index(BucketId, BucketId, PrefixedObjectName,
-			copy_handler:shorten_pseudo_directory_name(PrefixedObjectName,
-			    PrefixedSrcDirectoryName, PrefixedDstDirectoryName),
-			PrefixedDstDirectoryName, []) || PrefixedObjectName <- List0,
-		     lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectName) =:= true],
-		    %% Update source directory index
+		    %% Update indices for nested pseudo-directories
+		    lists:map(
+			fun(PrefixedObjectKey) ->
+			    case lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectKey) of
+				false -> ok;
+				true ->
+				    SrcPrefix =
+					case filename:dirname(PrefixedObjectKey) of
+					    "." -> undefined;
+					    P0 -> P0++"/"
+					end,
+				    DstKey0 = re:replace(PrefixedObjectKey, "^"++PrefixedSrcDirectoryName, "",
+							 [{return, list}]),
+				    DstPrefix =
+					case utils:prefixed_object_name(PrefixedDstDirectoryName, DstKey0) of
+					    "." -> undefined;
+					    P1 ->
+						case filename:dirname(P1) of
+						    "." -> undefined;
+						    P2 -> P2++"/"
+						end
+					end,
+				    riak_index:update(BucketId, DstPrefix,
+						      [{copy_from, [{bucket_id, BucketId},
+						       {prefix, SrcPrefix}]}]),
+				    riak_api:delete_object(BucketId, PrefixedObjectKey)
+			    end
+			end, List0),
+		    %% Update the pseudo-directory
 		    riak_index:update(BucketId, Prefix0),
 		    true;
 		_ -> exists

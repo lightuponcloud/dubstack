@@ -111,6 +111,8 @@ $.stack = function(options){
       } catch(e) {};
       if(data&&data.hasOwnProperty('error')){
         onFailure(gettext(data['error']), xhr, status);
+      }else{
+        onFailure(gettext("Something's went horribly wrong."), xhr, status);
       }
      });
     },

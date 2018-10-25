@@ -87,7 +87,7 @@ move(Req0, State) ->
 	    PrefixedObjectKey = utils:prefixed_object_name(SrcPrefix, OldKey),
 	    riak_api:delete_object(SrcBucketId, PrefixedObjectKey)
 	end, CopiedObjects1),
-    %% Delete pseudo-directories
+    %% Delete pseudo-directories in previous place
     lists:map(
 	fun(I) ->
 	    ActionLogPath = utils:prefixed_object_name(filename:dirname(I), ?RIAK_ACTION_LOG_FILENAME),

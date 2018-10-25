@@ -524,9 +524,7 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
     disable_menu_item('menu-rename');
 
     if(is_dir){
-      var vresult = validate_dirname($('#id_object_name').val(), $('#id_object_name_errors'), function(){
-	$('#submit_rename').attr("disabled", false);
-      });
+      var vresult = validate_dirname($('#id_object_name').val(), $('#id_object_name_errors'), function(){});
       if(!vresult){
 	$('#submit_rename').attr("disabled", false);
 	return false;
@@ -544,6 +542,7 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
 	enable_menu_item('menu-rename');
 	$('.ui-dialog-titlebar-close').click();
 	$('#id-status').empty();
+	$('#submit_rename').attr("disabled", false);
 	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
     }, 'onFailure': function(msg, xhr, status){
 	$('#id-dialog-loading-message-text').empty().append('<br/><span class="err">'+msg+'</span>');
@@ -551,7 +550,6 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
     }});
     stack.rename_object(hex_prefix, from_object_name, dst_object_name);
     // TODO: to check status of renamed object
-    $('#submit_rename').attr("disabled", false);
 }
 
 function rename_dialog(e, from_object_name, orig_name){

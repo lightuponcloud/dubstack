@@ -168,7 +168,6 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, ObjectKeysToCopy,
     %% Update indices for pseudo-sub-directories, as some of objects were renamed.
     %% Rename map should be updated in index file.
 
-    %% Update index for copied directory ( nested one )
     riak_index:update(DstBucketId, CurrentDstPrefix,
 	[{copy_from, [{bucket_id, SrcBucketId},
 	 {prefix, CurrentSrcPrefix1},

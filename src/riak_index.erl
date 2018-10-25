@@ -227,12 +227,17 @@ get_object_record(ObjectKey, IndexContent) when erlang:is_binary(ObjectKey) ->
 %%	{bucket_id, "the-example-team-public"},
 %%	{prefix, "d08732/"},
 %%	{copied_names, [
-%%		[{dst_prefix, "d08732/"},
-%%		{old_key, "somethind.random"},
-%%		{new_key, "something-1.random"},
-%%		{orig_name, "Something-1.Random"}]  %% orig_name is optional
+%%		[{src_prefix, "d08732/"},
+%%		 {dst_prefix, "d08732/d08732/"},
+%%		 {old_key, "something.random"},
+%%		 {new_key, "something-1.random"},
+%%		 {src_orig_name, "Something.Random"},
+%%		 {dst_orig_name, "Something-1.Random"},
+%%		 {bytes, 1532357691},
+%%		 {renamed, true}]
 %%	]}
 %%   ]}
+%%   ``copied_names`` is optional.
 %%
 %% - {to_delete, {"blah.png", 1532357691}}
 %%
@@ -257,7 +262,6 @@ update(BucketId, Prefix, Options) when erlang:is_list(BucketId),
 update(BucketId, Prefix0, Options, RiakOptions)
 	when erlang:is_list(BucketId),
 	     erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
-
     PrefixedLockFilename = utils:prefixed_object_name(Prefix0, ?RIAK_LOCK_INDEX_FILENAME),
     case riak_api:head_object(BucketId, PrefixedLockFilename) of
 	not_found ->
@@ -294,7 +298,7 @@ update(BucketId, Prefix0, Options, RiakOptions)
 		    CopyFrom ->
 			SrcBucketId = proplists:get_value(bucket_id, CopyFrom),
 			SrcPrefix = proplists:get_value(prefix, CopyFrom),
-			CopiedNames1 = proplists:get_value(copied_names, CopyFrom),
+			CopiedNames1 = proplists:get_value(copied_names, CopyFrom, []),
 			PrefixedSrcIndexFilename = utils:prefixed_object_name(SrcPrefix, ?RIAK_INDEX_FILENAME),
 			case riak_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
 			    not_found -> [[],[]];
