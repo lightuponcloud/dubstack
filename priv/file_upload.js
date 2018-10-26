@@ -86,15 +86,14 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 	breadcrumbs.push({'part': bits[i], 'prefix': part_prefix});
       }
       $(brEl).empty();
-      $(brEl).append('<a href="'+root_uri+bucket_id+'/">Root</a>');
+      $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
       if(breadcrumbs.length>5){
 	$(brEl).append('<span class="dirseparator"></span><span class="short">* * *</span>');
 	breadcrumbs = breadcrumbs.slice(Math.max(breadcrumbs.length - 5, 1));
       }
       for(var i=0;i!=breadcrumbs.length-1;i++){
-	var url = root_uri+bucket_id+'/?prefix='+breadcrumbs[i]['prefix'];
 	var part_name = breadcrumbs[i]['part'];
-	$(brEl).append('<span class="dirseparator"></span><a href="'+url+'">'+part_name+'</a>');
+	$(brEl).append('<span class="dirseparator"></span><a href="#" class="dialog-bc-file-link" data-prefix="'+breadcrumbs[i]['prefix']+'">'+part_name+'</a>');
       }
       $(brEl).append('<span class="dirseparator"></span><span class="current">'+bits[bits.length-1]+'</span>');
       var prev_prefix = '';
@@ -102,6 +101,9 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 	var prev_prefix = hex_bits.slice(0, hex_bits.length-1).join('/');
       }
       directories.push({'name': '..', 'prefix': prev_prefix});
+    }else{
+      $(brEl).empty();
+      $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
     }
     $(data.dirs).each(function(i,v){
       if(v.is_deleted) return true;
@@ -453,9 +455,15 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
     $(v).find('.file-name').removeClass('file-name').addClass('dialog-file-name');
     $(v).attr('id', guid());
    });
-   $("#id-dialog-objects-list").off('click');
-   $("#id-dialog-objects-list").on('click', '.dialog-file-name', function(e){
+   $("#id-dialog-objects-list").off('click').on('click', '.dialog-file-name', function(e){
     var hex_prefix=$(this).find('a.dialog-file-link').attr('data-prefix');
+    $('#id-dialog-prefix').val(hex_prefix);
+    $('#id-dialog-block-header .current').empty();
+    fetch_file_list(bucket_id, hex_prefix, 'id-dialog-loading-message-text', 'id-dialog-objects-list', true);
+    return false;
+   });
+   $("#id-dialog-block-header").off('click').on('click', '.dialog-bc-file-link', function(e){
+    var hex_prefix=$(this).attr('data-prefix');
     $('#id-dialog-prefix').val(hex_prefix);
     $('#id-dialog-block-header .current').empty();
     fetch_file_list(bucket_id, hex_prefix, 'id-dialog-loading-message-text', 'id-dialog-objects-list', true);

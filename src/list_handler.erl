@@ -159,8 +159,7 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	false -> {error, 11}
     end.
 
-validate_directory_name(_BucketId, _Prefix, undefined) ->
-    {error, 12};
+validate_directory_name(_BucketId, _Prefix, undefined) -> {error, 12};
 validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	when erlang:is_list(BucketId),
 	     erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined,
@@ -170,9 +169,21 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	    case validate_prefix(BucketId, Prefix0) of
 		{error, Number} -> {error, Number};
 		Prefix1 ->
-		    HexDirectoryName = utils:hex(DirectoryName0),
-		    PrefixedDirectoryName = utils:prefixed_object_name(Prefix1, HexDirectoryName),
-		    {PrefixedDirectoryName, Prefix1, DirectoryName0}
+		    IndexContent = riak_index:get_index(BucketId, Prefix1),
+		    ExistingPrefixes = lists:map(
+			fun(P0) ->
+			    P1 = proplists:get_value(prefix, P0),
+			    P2 = unicode:characters_to_list(utils:unhex(P1)),
+			    ux_string:to_lower(P2)
+			end, proplists:get_value(dirs, IndexContent, [])),
+		    DirectoryName1 = ux_string:to_lower(unicode:characters_to_list(DirectoryName0)),
+		    case lists:member(DirectoryName1, ExistingPrefixes) of
+			true -> {error, 10};
+			false ->
+			    HexDirectoryName = utils:hex(DirectoryName0),
+			    PrefixedDirectoryName = utils:prefixed_object_name(Prefix1, HexDirectoryName),
+			    {PrefixedDirectoryName, Prefix1, DirectoryName0}
+		    end
 	    end;
 	false -> {error, 12}
     end.
@@ -207,37 +218,30 @@ create_pseudo_directory(Req0, State) ->
     PrefixedDirectoryName = proplists:get_value(prefixed_directory_name, State),
     DirectoryName = unicode:characters_to_list(proplists:get_value(directory_name, State)),
     Prefix = proplists:get_value(prefix, State),
-    case riak_api:head_bucket(BucketId) of
-    	not_found ->
-	    riak_api:create_bucket(BucketId);
-	_ -> ok
-    end,
-    PrefixedIndexFilename = utils:prefixed_object_name(PrefixedDirectoryName, ?RIAK_INDEX_FILENAME),
-    case riak_api:head_object(BucketId, PrefixedIndexFilename) of
-	not_found ->
-	    riak_index:update(BucketId, PrefixedDirectoryName++"/"),
-	    riak_index:update(BucketId, Prefix),
+    riak_index:update(BucketId, PrefixedDirectoryName++"/"),
+    riak_index:update(BucketId, Prefix),
 
-	    User = proplists:get_value(user, State),
-	    ActionLogRecord0 = #riak_action_log_record{
-		action="mkdir",
-		user_name=User#user.name,
-		tenant_name=User#user.tenant_name,
-		timestamp=io_lib:format("~p", [utils:timestamp()])
-	    },
-	    Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
-	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-	    {true, Req0, []};
-	_ ->
-	    js_handler:bad_request(Req0, 10)
-    end.
+    User = proplists:get_value(user, State),
+    ActionLogRecord0 = #riak_action_log_record{
+	action="mkdir",
+	user_name=User#user.name,
+	tenant_name=User#user.tenant_name,
+	timestamp=io_lib:format("~p", [utils:timestamp()])
+    },
+    Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
+    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+    {true, Req0, []}.
 
 %%
 %% Creates pseudo directory
 %%
 handle_post(Req0, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
+    case riak_api:head_bucket(BucketId) of
+    	not_found -> riak_api:create_bucket(BucketId);
+	_ -> ok
+    end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case validate_post(Req1, Body, BucketId) of
 	{true, Req2, []} -> {true, Req2, []};  % error
