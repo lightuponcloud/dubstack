@@ -86,14 +86,23 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 	breadcrumbs.push({'part': bits[i], 'prefix': part_prefix});
       }
       $(brEl).empty();
-      $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
+      if(embedded){
+        $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
+      }else{
+	$(brEl).append('<a href="'+root_uri+bucket_id+'/">Root</a>');
+      }
       if(breadcrumbs.length>5){
 	$(brEl).append('<span class="dirseparator"></span><span class="short">* * *</span>');
 	breadcrumbs = breadcrumbs.slice(Math.max(breadcrumbs.length - 5, 1));
       }
       for(var i=0;i!=breadcrumbs.length-1;i++){
+	var url = root_uri+bucket_id+'/?prefix='+breadcrumbs[i]['prefix'];
 	var part_name = breadcrumbs[i]['part'];
-	$(brEl).append('<span class="dirseparator"></span><a href="#" class="dialog-bc-file-link" data-prefix="'+breadcrumbs[i]['prefix']+'">'+part_name+'</a>');
+	if(embedded){
+	  $(brEl).append('<span class="dirseparator"></span><a href="#" class="dialog-bc-file-link" data-prefix="'+breadcrumbs[i]['prefix']+'">'+part_name+'</a>');
+	}else{
+	  $(brEl).append('<span class="dirseparator"></span><a href="'+url+'">'+part_name+'</a>');
+	}
       }
       $(brEl).append('<span class="dirseparator"></span><span class="current">'+bits[bits.length-1]+'</span>');
       var prev_prefix = '';
@@ -190,13 +199,13 @@ function fetch_file_list(bucket_id, hex_prefix, msgEid, targetE, embedded){
       var prev=(hex_prefix+'/').split('/', (slash==null?0:slash.length-1)).join('/');
       directories.push({'name': '..', 'modified': '', 'prefix': (prev==''?'':prev+'/')});
     }
-    if(!embedded) {
-     display_objects(lst, $('#id-block-header'), hex_prefix, data, stack, embedded);
+    if(!embedded){
+     display_objects(lst, $('#id-block-header'), hex_prefix, data, stack, false);
      enable_menu_item('menu-createdir');
      enable_menu_item('menu-actionlog');
      refreshMenu();
     }else{
-     display_objects(lst, $('#id-dialog-block-header'), hex_prefix, data, stack, embedded);
+     display_objects(lst, $('#id-dialog-block-header'), hex_prefix, data, stack, true);
     }
     $('.files-tbl').show();
     if($(window).width()<670) {
@@ -434,6 +443,24 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
   open: function (event, ui) {
    $(this).empty().append(copy_form);
    $('#id-block-header *').clone().appendTo($('#id-dialog-block-header'));
+   $('#id-dialog-block-header a').each(function(i,v){
+    var url=$(v).attr('href');
+    var urlparts=url.split('?');
+    if(urlparts.length==1){
+	$(v).attr('data-prefix', "");
+	return true;
+    }
+    var bits=urlparts[1].split('&');
+    for (i=0;i<bits.length;i++) {
+      var param=bits[i].split('=');
+      if(param[0]=='prefix'){
+	$(v).attr('data-prefix', param[1]);
+	break;
+      }
+    }
+    $(v).attr('href', '#');
+    $(v).addClass('dialog-bc-file-link');
+   });
    $('#id-dialog-block-header').find('.current').css('color', 'black');
    $('#id-objects-list div.file-item').each(function(i,v){
     if($(v).hasClass('inactive')||!$(v).hasClass('dir')) return false;
@@ -509,7 +536,7 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
     $('#id-dialog-loading-message-text').empty();
     $("#id-dialog-submit-copy").attr("disabled",false);
     $("#dialog").dialog('close');
-    if(to_move) fetch_file_list(src_bucket_id, src_hex_prefix, 'id-loading-message-text', 'id-objects-list');
+    if(to_move) fetch_file_list(src_bucket_id, src_hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
    }, 'onFailure': function(msg, xhr, status){
     $('#id-dialog-loading-message-text').empty().append('<br/><span class="err">'+msg+'</span>');
     $("#id-dialog-submit-copy").attr("disabled",false);
@@ -546,12 +573,12 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
 	$('#id-status').empty();
 	$("#shadow").empty().css('z-index', 9).hide();
 	$('#id_rename').attr("disabled", false);
-	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
+	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
 	enable_menu_item('menu-rename');
 	$('.ui-dialog-titlebar-close').click();
 	$('#id-status').empty();
 	$('#submit_rename').attr("disabled", false);
-	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
+	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
     }, 'onFailure': function(msg, xhr, status){
 	$('#id-dialog-loading-message-text').empty().append('<br/><span class="err">'+msg+'</span>');
 	$("#submit_rename").attr("disabled",false);
@@ -707,7 +734,7 @@ function submit_dirname(hex_prefix){
       $("#shadow").empty().css('z-index', 9).hide();
       enable_menu_item('menu-createdir');
       $('#id_submit_createdir').attr("disabled", false);
-      fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
+      fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
       enable_menu_item('menu-createdir');
       $('.ui-dialog-titlebar-close').click();
       $('#id-status').empty();
@@ -763,10 +790,10 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
     } else {
       $('#id-upload-button').attr('data-uploadDisabled', false);
       if(hex_prefix){
-	  fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
+	  fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
 	} else {
 	  $('#id-action-log').attr("disabled","disabled");
-	  fetch_file_list(bucket_id, NaN, 'id-loading-message-text', 'id-objects-list');
+	  fetch_file_list(bucket_id, NaN, 'id-loading-message-text', 'id-objects-list', false);
 	}
     };
    }
@@ -866,9 +893,9 @@ $(document).ready(function(){
  var hex_prefix = $("body").attr("data-hex-prefix");
  var bucket_id = $("body").attr("data-bucket-id");
  if(hex_prefix){
-  fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list');
+  fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
  } else {
-  fetch_file_list(bucket_id, NaN, 'id-loading-message-text', 'id-objects-list');
+  fetch_file_list(bucket_id, NaN, 'id-loading-message-text', 'id-objects-list', false);
  }
 
  $('.files-tbl').on('click', 'a.file-link:not(.folder)', function(){return false;})
