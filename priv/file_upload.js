@@ -112,7 +112,11 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
       directories.push({'name': '..', 'prefix': prev_prefix});
     }else{
       $(brEl).empty();
-      $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
+      if(embedded){
+        $(brEl).append('<a href="#" data-prefix="" class="dialog-bc-file-link">Root</a>');
+      }else{
+	$(brEl).append('<a href="'+root_uri+bucket_id+'/">Root</a><span class="dirseparator"></span>');
+      }
     }
     $(data.dirs).each(function(i,v){
       if(v.is_deleted) return true;
