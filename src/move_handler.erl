@@ -37,21 +37,9 @@ content_types_provided(Req, State) ->
 handle_post(Req0, State0) ->
     case cowboy_req:method(Req0) of
 	<<"POST">> ->
-	    SrcBucketId = proplists:get_value(src_bucket_id, State0),
-	    DstBucketId = proplists:get_value(dst_bucket_id, State0),
-	    SrcPrefix0 = proplists:get_value(src_prefix, State0),
-	    DstPrefix0 = proplists:get_value(dst_prefix, State0),
-	    SrcObjectNames0 = proplists:get_value(src_object_names, State0),
-	    User = proplists:get_value(user, State0),
-	    case copy_handler:validate_post(SrcPrefix0, DstPrefix0, SrcObjectNames0) of
+	    case copy_handler:validate_copy_parameters(State0) of
 		{error, Number} -> js_handler:bad_request(Req0, Number);
-		State1 ->
-		    State2 = State1 ++ [
-			{src_bucket_id, SrcBucketId},
-			{dst_bucket_id, DstBucketId},
-			{user, User}
-		    ],
-		    move(Req0, State2)
+		State1 -> move(Req0, State1)
 	    end;
 	_ -> js_handler:bad_request(Req0, 16)
     end.
@@ -66,9 +54,9 @@ move(Req0, State) ->
        fun(N) ->
 	    case utils:ends_with(N, <<"/">>) of
 		true ->
-		    ON = string:to_lower(erlang:binary_to_list(N)),  %% lowercase hex prefix
+		    ON = string:to_lower(N),  %% lowercase hex prefix
 		    riak_api:recursively_list_pseudo_dir(SrcBucketId, utils:prefixed_object_name(SrcPrefix0, ON));
-		false -> [utils:prefixed_object_name(SrcPrefix0, erlang:binary_to_list(N))]
+		false -> [utils:prefixed_object_name(SrcPrefix0, N)]
 	    end
        end, SrcObjectNames),
     ObjectKeysToMove1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectNamesToMove0),

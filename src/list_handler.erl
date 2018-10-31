@@ -65,7 +65,7 @@ to_json(Req0, State) ->
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
 		not_found ->
 		    case Prefix1 of
-			undefined -> {jsx:encode([{list, []}, {dirs, []}, {timestamp, UTCTimestamp}]), Req0, []};
+			undefined -> {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp}]), Req0, []};
 			_ -> js_handler:not_found(Req0)
 		    end;
 		RiakResponse ->
@@ -173,7 +173,7 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 		    ExistingPrefixes = lists:map(
 			fun(P0) ->
 			    P1 = proplists:get_value(prefix, P0),
-			    P2 = unicode:characters_to_list(utils:unhex(P1)),
+			    P2 = unicode:characters_to_list(utils:unhex_path(erlang:binary_to_list(P1))),
 			    ux_string:to_lower(P2)
 			end, proplists:get_value(dirs, IndexContent, [])),
 		    DirectoryName1 = ux_string:to_lower(unicode:characters_to_list(DirectoryName0)),

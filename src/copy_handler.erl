@@ -6,7 +6,8 @@
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
 	 to_json/2, allowed_methods/2, is_authorized/2, forbidden/2,
-	 validate_post/3, handle_post/2, copy_objects/6, copy_forbidden/2]).
+	 handle_post/2, copy_objects/6, copy_forbidden/2,
+	 validate_copy_parameters/1]).
 
 -include("riak.hrl").
 -include("user.hrl").
@@ -31,30 +32,99 @@ content_types_provided(Req, State) ->
 	{{<<"application">>, <<"json">>, []}, to_json}
     ], Req, State}.
 
--spec validate_post(list(), list(), list()) -> proplist()|{error, integer()}.
+%%
+%% Checks if source object exists.
+%%
+-spec validate_src_object_name(list(), list(), binary()) -> list()|{error, integer()}.
 
-validate_post(SrcPrefix0, DstPrefix0, SrcObjectNames0) ->
-    case erlang:is_list(SrcObjectNames0) of
-	true ->
-	    case (utils:is_valid_hex_prefix(SrcPrefix0)
-		    andalso utils:is_valid_hex_prefix(DstPrefix0)) of
+validate_src_object_name(BucketId, SrcPrefix, ObjectKey0)
+	when erlang:is_binary(ObjectKey0), erlang:is_list(BucketId),
+	     erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
+    ObjectKey1 = utils:trim_spaces(ObjectKey0),
+    case ObjectKey1 of
+	<<>> -> {error, 30};
+	_ ->
+	    IndexContent = riak_index:get_index(BucketId, SrcPrefix),
+	    ExistingPrefixes = [proplists:get_value(prefix, P)
+                        || P <- proplists:get_value(dirs, IndexContent, [])],
+	    ExistingKeys = [proplists:get_value(object_name, O)
+                         || O <- proplists:get_value(list, IndexContent, [])],
+	    ObjectKey2 = erlang:binary_to_list(ObjectKey1),
+	    PrefixedObjectKey = utils:prefixed_object_name(SrcPrefix, ObjectKey2),
+	    case utils:ends_with(ObjectKey1, <<"/">>) of
 		true ->
-		    SrcPrefix1 = utils:to_lower(SrcPrefix0),
-		    DstPrefix1 = utils:to_lower(DstPrefix0),
-		    SrcObjectNames1 =
-			[N || N <- SrcObjectNames0,
-			    utils:starts_with(DstPrefix0,
-					      utils:prefixed_object_name(SrcPrefix0, N)) =:= false],
-		    case length(SrcObjectNames1) =:= 0 orelse DstPrefix1 =:= SrcPrefix1 of
-			true -> {error, 13};
-			false ->
-			    [{src_prefix, SrcPrefix1},
-			     {src_object_names, SrcObjectNames1},
-			     {dst_prefix, DstPrefix1}]
+		    case lists:member(erlang:list_to_binary(PrefixedObjectKey), ExistingPrefixes) of
+			false -> {error, 32};
+			true -> ObjectKey2
 		    end;
-		false -> {error, 14}
-	    end;
-	false -> {error, 15}
+		false ->
+		    case lists:member(ObjectKey1, ExistingKeys) of
+			false -> {error, 30};
+			true -> ObjectKey2
+		    end
+	    end
+    end.
+
+%%
+%% Checks if every key in src_object_names exists and ther'a no duplicates
+%%
+validate_src_object_names(_BucketId, _SrcPrefix, undefined) -> [];
+validate_src_object_names(_BucketId, _SrcPrefix, <<>>) -> {error, 15};
+validate_src_object_names(BucketId, SrcPrefix, SrcObjectNames0) when erlang:is_binary(SrcObjectNames0),
+	erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
+    SrcObjectNames1 = [K || K <- binary:split(SrcObjectNames0, <<",">>, [global]), erlang:byte_size(K) > 0],
+    validate_src_object_names(BucketId, SrcPrefix, SrcObjectNames1);
+validate_src_object_names(BucketId, SrcPrefix, SrcObjectNames0) when erlang:is_list(SrcObjectNames0),
+	erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
+    SrcObjectNames1 = [validate_src_object_name(BucketId, SrcPrefix, K) || K <- SrcObjectNames0],
+    Error = lists:keyfind(error, 1, SrcObjectNames1),
+    case Error of
+	{error, Number} -> {error, Number};
+	_ ->
+	    case utils:has_duplicates(SrcObjectNames1) of
+		true -> {error, 31};
+		false -> SrcObjectNames1
+	    end
+    end.
+
+-spec validate_copy_parameters(proplist()) -> any().
+
+validate_copy_parameters(State0) ->
+    SrcBucketId = proplists:get_value(src_bucket_id, State0),
+    DstBucketId = proplists:get_value(dst_bucket_id, State0),
+    SrcPrefix0 = proplists:get_value(src_prefix, State0),
+    DstPrefix0 = proplists:get_value(dst_prefix, State0),
+    SrcObjectNames0 = proplists:get_value(src_object_names, State0),
+
+    SrcPrefix1 = list_handler:validate_prefix(SrcBucketId, SrcPrefix0),
+    DstPrefix1 = list_handler:validate_prefix(DstBucketId, DstPrefix0),
+    SrcObjectNames1 = validate_src_object_names(SrcBucketId, SrcPrefix1, SrcObjectNames0),
+
+    Error = lists:keyfind(error, 1, [SrcPrefix1, DstPrefix1, SrcObjectNames1]),
+    case Error of
+	{error, Number} -> {error, Number};
+	_ ->
+	    SrcObjectNames2 = lists:filter(
+		fun(N) ->
+		    PN0 = utils:prefixed_object_name(SrcPrefix1, N),
+		    PN1 = erlang:list_to_binary(PN0),
+		    case utils:starts_with(DstPrefix1, PN1) of
+			false -> true;
+			true -> false
+		    end
+		end, SrcObjectNames1),
+	    %% The destination directory might be subdirectory of the source directory.
+	    case length(SrcObjectNames2) =:= 0 orelse DstPrefix1 =:= SrcPrefix1 of
+		true -> {error, 13};
+		false ->
+		    User = proplists:get_value(user, State0),
+		    [{src_bucket_id, SrcBucketId},
+			      {dst_bucket_id, DstBucketId},
+			      {src_prefix, SrcPrefix1},
+			      {dst_prefix, DstPrefix1},
+			      {src_object_names, SrcObjectNames2},
+			      {user, User}]
+	    end
     end.
 
 %%
@@ -63,21 +133,9 @@ validate_post(SrcPrefix0, DstPrefix0, SrcObjectNames0) ->
 handle_post(Req0, State0) ->
     case cowboy_req:method(Req0) of
 	<<"POST">> ->
-	    SrcBucketId = proplists:get_value(src_bucket_id, State0),
-	    DstBucketId = proplists:get_value(dst_bucket_id, State0),
-	    SrcPrefix0 = proplists:get_value(src_prefix, State0),
-	    DstPrefix0 = proplists:get_value(dst_prefix, State0),
-	    SrcObjectNames0 = proplists:get_value(src_object_names, State0),
-	    User = proplists:get_value(user, State0),
-	    case validate_post(SrcPrefix0, DstPrefix0, SrcObjectNames0) of
+	    case validate_copy_parameters(State0) of
 		{error, Number} -> js_handler:bad_request(Req0, Number);
-		State1 ->
-		    State2 = State1 ++ [
-			{src_bucket_id, SrcBucketId},
-			{dst_bucket_id, DstBucketId},
-			{user, User}
-		    ],
-		    copy(Req0, State2)
+		State1 -> copy(Req0, State1)
 	    end;
 	_ -> js_handler:bad_request(Req0, 16)
     end.
@@ -96,7 +154,6 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, SrcIndexConten
     ObjectRecord = riak_index:get_object_record(ObjectKey0, SrcIndexContent),
     OrigName0 = proplists:get_value(orig_name, ObjectRecord),
     Bytes = proplists:get_value(bytes, ObjectRecord),
-
     %% Get object name that do not yet exist in destination pseudo-directory first.
     {ObjectKey1, OrigName1} = riak_api:pick_object_name(DstBucketId, DstPrefix0, OrigName0,
 	ExistingPrefixes, ExistingOrigNames),
@@ -195,9 +252,9 @@ copy(Req0, State) ->
 	fun(N) ->
 	    case utils:ends_with(N, <<"/">>) of
 		true ->
-		    ON = string:to_lower(erlang:binary_to_list(N)),  %% lowercase hex prefix
+		    ON = string:to_lower(N),  %% lowercase hex prefix
 		    riak_api:recursively_list_pseudo_dir(SrcBucketId, utils:prefixed_object_name(SrcPrefix0, ON));
-		false -> [utils:prefixed_object_name(SrcPrefix0, erlang:binary_to_list(N))]
+		false -> [utils:prefixed_object_name(SrcPrefix0, N)]
 	    end
 	end, SrcObjectNames),
     ObjectKeysToCopy1 = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], ObjectKeysToCopy0),

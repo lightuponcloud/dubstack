@@ -4,7 +4,8 @@
 %%
 -module(first_page_handler).
 
--export([init/2, allowed_methods/2, login/2, forbidden_response/1]).
+-export([init/2, allowed_methods/2, login/2, forbidden_response/1,
+	 content_types_accepted/2, bad_request/1]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -29,6 +30,17 @@ init(Req0, _Opts) ->
 allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>], Req, State}.
 
+bad_request(Req0) ->
+    Req1 = cowboy_req:reply(400, #{
+	<<"content-type">> => <<"application/json">>
+    }, <<>>, Req0),
+    {true, Req1, []}.
+
+content_types_accepted(Req, State) ->
+    case cowboy_req:method(Req) of
+	<<"POST">> -> {[{{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, handle_post}], Req, State};
+	_ -> {[{{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, bad_request}], Req, State}
+    end.
 
 forbidden_response(Req0) ->
     {ok, Body} = forbidden_dtl:render([]),
@@ -118,7 +130,6 @@ login(Req0, Settings) ->
 	    }, Body, Req1),
 	    {ok, Req2, []};
 	<<"POST">> ->
-	    %% Set CSRF token to reset expiration time
 	    case validate_post(Req0, Settings) of
 		false -> forbidden_response(Req0);
 		{Login, Password} ->

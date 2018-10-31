@@ -451,6 +451,8 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
     var url=$(v).attr('href');
     var urlparts=url.split('?');
     if(urlparts.length==1){
+	$(v).addClass('dialog-bc-file-link');
+	$(v).attr('href', "#");
 	$(v).attr('data-prefix', "");
 	return true;
     }

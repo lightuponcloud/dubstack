@@ -29,7 +29,7 @@ $(document).ready(function(){
 <div class="main">
 <div class="frontpage_container">
 
-<form action="." method="post" id="login-form" class="clearfix"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+<form action="{{ root_path }}" method="post" id="login-form" class="clearfix"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
 	<div class="row">
 	    <span class="err">
 	    <span style="color:red;">{% if error %}<p class="err">{{ error }}</p>{% endif %}</span></span>

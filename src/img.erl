@@ -4,11 +4,10 @@
 -module(img).
 -behaviour(gen_server).
 
--export([start_link/1]).
+-export([start_link/1, scale/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
--export([lookup/1]).
 
 -record(state, {port :: undefined | port(),
 		links = sets:new() :: sets:set(),
@@ -23,13 +22,10 @@ init([PortNumber]) ->
     process_flag(trap_exit, true),
     {ok, #state{port = Port, os_pid = OSPid, num = PortNumber}}.
 
-%%%----------------------------------------------------------------------
-%%% External API
-%%%----------------------------------------------------------------------
 
--spec lookup(proplists:proplist()) -> binary().
+-spec scale(proplists:proplist()) -> binary().
 
-lookup(Term) when erlang:is_list(Term) ->
+scale(Term) when erlang:is_list(Term) ->
     Tag = erlang:term_to_binary(self()),
     %% TODO: to use a random port number
     Port = whereis(img_port_0),
@@ -55,7 +51,7 @@ lookup(Term) when erlang:is_list(Term) ->
 	demonitor_port(Port),
 	{error, no_response}
     end.
-%%%----------------------------------------------------------------------
+
 
 -spec start_port(pos_integer()) -> {port() | undefined, integer() | undefined}.
 
@@ -63,12 +59,16 @@ start_port(PortNumber) ->
     EbinDir = filename:dirname(code:which(img)),
     AppDir = filename:dirname(EbinDir),
     Path = filename:join([AppDir, "c_src", img]),
+    %%
+    %% You might want to set MAGICK_TMPDIR environment variable
+    %% to the directory, where more space is available.
+    %%
     Env = [{"MAGICK_THREAD_LIMIT", "4"},
 	   {"MAGICK_MEMORY_LIMIT", "20000000"}],
-    %% You might want to set MAGICK_TMPDIR, where more space is available
+    %% Check if port file can be opened
     case file:open(Path, [read]) of
-        {ok, Fd} ->
-            file:close(Fd),
+	{ok, Fd} ->
+	    file:close(Fd),
 	    Port = open_port({spawn, Path}, [{packet, 4}, binary, {env, Env}]),
 	    try
 		link(Port),
@@ -94,9 +94,6 @@ start_port(PortNumber) ->
 	    {undefined, undefined}
     end.
 
-%%%----------------------------------------------------------------------
-%%% Call handling for local modules
-%%%----------------------------------------------------------------------
 
 handle_call(_Request, _From, State) ->
     {noreply, State}.

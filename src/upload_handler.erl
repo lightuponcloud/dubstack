@@ -5,7 +5,7 @@
 
 -export([init/2, resource_exists/2, content_types_accepted/2, handle_post/2,
 	 allowed_methods/2, previously_existed/2, allow_missing_post/2,
-	 content_types_provided/2, is_authorized/2, forbidden/2, to_json/2]).
+	 content_types_provided/2, is_authorized/2, forbidden/2, to_json/2, extract_rfc2231_filename/1]).
 
 -include("riak.hrl").
 -include("user.hrl").
@@ -41,25 +41,6 @@ to_json(Req0, State) ->
 %%
 allowed_methods(Req, State) ->
     {[<<"POST">>], Req, State}.
-
-parse_field_values(Body, Boundary) ->
-    case cow_multipart:parse_headers(Body, Boundary) of
-	{ok, Header, Rest0} ->
-	    FormDatadName = proplists:get_value(<<"content-disposition">>, Header),
-	    FieldName = case FormDatadName of
-		<<"form-data; name=\"etags[]\"">> -> "etags";
-		<<"form-data; name=etags[]">> -> "etags";
-		<<"form-data; name=\"object_name\"">> -> "object_name";
-		<<"form-data; name=object_name">> -> "object_name";
-		<<"form-data; name=\"prefix\"">> -> "prefix";
-		<<"form-data; name=prefix">> -> "prefix";
-		<<"form-data; name=\"modified_utc\"">> -> "modified_utc";
-		<<"form-data; name=modified_utc">> -> "modified_utc"
-	    end,
-	    {done, FieldValue, Rest1} = cow_multipart:parse_body(Rest0, Boundary),
-	    [{FieldName, FieldValue}] ++ parse_field_values(Rest1, Boundary);
-	{done, _} -> []
-    end.
 
 %%
 %% Checks if content-range header matches size of uploaded data
@@ -117,24 +98,61 @@ add_action_log_record(State) ->
 %%
 %% .Net sends UTF-8 filename in "filename*" field, when "filename" contains garbage.
 %%
-extract_rfc2231_filename(#{<<"content-disposition">> := ContentDisposition}) ->
-    {<<"form-data">>, FormDataAttrs} = cow_multipart:parse_content_disposition(ContentDisposition),
-    case proplists:get_value(<<"filename*">>, FormDataAttrs) of
-	undefined ->
-	    undefined;
+%% Params:
+%%
+%% [{<<"name">>,<<"files[]">>},
+%% {<<"filename">>,
+%%  <<"Something.random">>},
+%% {<<"filename*">>,
+%%  <<"utf-8''Something.random">>}]
+%%
+extract_rfc2231_filename(FormDataParams) ->
+    case proplists:get_value(<<"filename*">>, FormDataParams) of
+	undefined -> proplists:get_value(<<"filename">>, FormDataParams);  %% TODO: remove that
 	FileName2 ->
 	    FileNameByteSize = byte_size(FileName2),
-	    if FileNameByteSize < 8 ->
-		    undefined;
+	    if FileNameByteSize < 8 -> undefined;
 		true ->
 		    case binary:part(FileName2, {0, 7}) of
 			<<"utf-8''">> ->
 			    FileName4 = binary:part(FileName2, {7, FileNameByteSize-7}),
 			    unicode:characters_to_list(cow_qs:urldecode(FileName4));
-			_ ->
-			    undefined
+			_ -> undefined
 		    end
 	    end
+    end.
+
+acc_multipart(Req0, Acc) ->
+    case cowboy_req:read_part(Req0) of
+	{ok, Headers0, Req1} ->
+	    {ok, Body, Req2} = stream_body(Req1, <<>>),
+	    Headers1 = maps:to_list(Headers0),
+	    {_, DispositionBin} = lists:keyfind(<<"content-disposition">>, 1, Headers1),
+	    {<<"form-data">>, Params} = cow_multipart:parse_content_disposition(DispositionBin),
+	    {_, FieldName0} = lists:keyfind(<<"name">>, 1, Params),
+	    FieldName1 =
+		case FieldName0 of
+		    <<"object_name">> -> object_name;
+		    <<"modified_utc">> -> modified_utc;
+		    <<"etags[]">> -> etags;
+		    <<"prefix">> -> prefix;
+		    <<"files[]">> -> blob;
+		    _ -> undefined
+		end,
+	    case FieldName1 of
+		blob ->
+		    Filename = extract_rfc2231_filename(Params),
+		    acc_multipart(Req2, [{blob, Body}, {filename, Filename}|Acc]);
+		undefined -> acc_multipart(Req2, Acc);
+		_ -> acc_multipart(Req2, [{FieldName1, Body}|Acc])
+	    end;
+        {done, Req} -> {lists:reverse(Acc), Req}
+    end.
+
+stream_body(Req0, Acc) ->
+    case cowboy_req:read_part_body(Req0, #{length => ?FILE_UPLOAD_CHUNK_SIZE + 5000}) of
+        {more, Data, Req} -> stream_body(Req, << Acc/binary, Data/binary >>);
+        {ok, Data, Req} -> {ok, << Acc/binary, Data/binary >>, Req}
     end.
 
 %%
@@ -143,37 +161,32 @@ extract_rfc2231_filename(#{<<"content-disposition">> := ContentDisposition}) ->
 handle_post(Req0, State) ->
     case cowboy_req:method(Req0) of
 	<<"POST">> ->
-	    {ok, Headers, Req1} = cowboy_req:read_part(Req0),
-	    {ok, Data, Req2} = cowboy_req:read_part_body(Req1,
-		#{length => ?FILE_UPLOAD_CHUNK_SIZE + 5000}),
-
-	    FileName0 = case extract_rfc2231_filename(Headers) of
-		undefined ->
-		    {file, <<"files[]">>, Name, _} = cow_multipart:form_data(Headers),
-                    Name;
-		FileName -> FileName
-	    end,
-	    {ok, {Boundary, Body}} = maps:find(multipart, Req2),
-
-	    FieldValues = parse_field_values(Body, Boundary),
+	    {FieldValues, Req1} = acc_multipart(Req0, []),
+	    FileName0 = proplists:get_value(filename, FieldValues),
 	    ObjectName =
-		case proplists:get_value("object_name", FieldValues) of
+		case proplists:get_value(object_name, FieldValues) of
 		    undefined -> undefined;
 		    ON ->
 			% ObjectName should be an ascii string by now
 			erlang:binary_to_list(ON)
 		end,
-	    Etags = proplists:get_value("etags", FieldValues),
+	    Etags = proplists:get_value(etags, FieldValues),
 
 	    BucketId = proplists:get_value(bucket_id, State),
-	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value("prefix", FieldValues)),
+	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
 	    %% Current server UTC time
 	    %% It is used by desktop client. TODO: use DVV instead
-	    ModifiedTime = validate_modified_time(proplists:get_value("modified_utc", FieldValues)),
-	    DataSizeOK = validate_data_size(size(Data), proplists:get_value(start_byte, State),
-		proplists:get_value(end_byte, State)),
+	    ModifiedTime = validate_modified_time(proplists:get_value(modified_utc, FieldValues)),
+	    Blob = proplists:get_value(blob, FieldValues),
+	    StartByte = proplists:get_value(start_byte, State),
+	    EndByte = proplists:get_value(end_byte, State),
+	    DataSizeOK =
+		case Blob of
+		    undefined -> true;
+		    _ -> validate_data_size(size(Blob), StartByte, EndByte)
+		end,
 	    case lists:keyfind(error, 1, [Prefix0, ModifiedTime, DataSizeOK]) of
-		{error, Number} -> js_handler:bad_request(Req2, Number);
+		{error, Number} -> js_handler:bad_request(Req1, Number);
 		false ->
 		    FileName1 = unicode:characters_to_binary(FileName0),
 		    NewState = [
@@ -183,7 +196,7 @@ handle_post(Req0, State) ->
 			{file_name, FileName1},
 			{modified_utc, ModifiedTime}
 		    ] ++ State,
-		    upload_to_riak(Req2, NewState, Data)
+		    upload_to_riak(Req1, NewState, Blob)
 	    end;
 	_ -> js_handler:bad_request(Req0, 2)
     end.

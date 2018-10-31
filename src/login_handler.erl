@@ -173,9 +173,14 @@ check_session_id(SessionID0) when erlang:is_binary(SessionID0) ->
 	    end
     end.
 
-
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
+
+%%
+%% Called first
+%%
+allowed_methods(Req, State) ->
+    {[<<"POST">>], Req, State}.
 
 content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, handle_post}], Req, State}.
@@ -194,12 +199,6 @@ content_types_provided(Req, State) ->
 %%
 to_json(Req0, State) ->
     {jsx:encode(State), Req0, State}.
-
-%%
-%% Called first
-%%
-allowed_methods(Req, State) ->
-    {[<<"POST">>], Req, State}.
 
 
 handle_post(Req0, _State) ->

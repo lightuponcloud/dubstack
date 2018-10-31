@@ -399,8 +399,7 @@ validate_post(Body) ->
 
 	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0], element(1, F) =:= error],
 	    case length(Errors) > 0 of
-		true ->
-		    {error, Errors};
+		true -> {error, Errors};
 		false ->
 		    {TenantId0, TenantName1} = TenantName0,
 		    #tenant{
@@ -426,8 +425,7 @@ validate_patch(Tenant, Body) ->
 
 	    Errors = [element(2, F) || F <- [TenantName0, Groups0, IsEnabled0], element(1, F) =:= error],
 	    case length(Errors) > 0 of
-		true ->
-		    {error, Errors};
+		true -> {error, Errors};
 		false ->
 		    {_TenantId0, TenantName1} = TenantName0,
 		    TenantName2 =

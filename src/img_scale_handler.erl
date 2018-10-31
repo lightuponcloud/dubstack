@@ -51,7 +51,7 @@ to_scale(Req0, State) ->
 	not_found -> {<<>>, Req0, []};
 	RiakResponse ->
 	    Content = proplists:get_value(content, RiakResponse),
-	    Reply0 = img:lookup([
+	    Reply0 = img:scale([
 		{from, Content},
 		{to, jpeg},
 		{scale_width, Width},
@@ -67,7 +67,7 @@ to_scale(Req0, State) ->
 			    AppDir = filename:dirname(EbinDir),
 			    Path = filename:join([AppDir, "priv", "img_unavailable.png"]),
 			    {ok, Output1} = file:read_file(Path),
-			    {ok, Output2} = img:lookup([
+			    {ok, Output2} = img:scale([
 				{from, Output1},
 				{to, jpeg},
 				{scale_width, Width},
