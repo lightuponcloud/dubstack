@@ -178,7 +178,7 @@ delete(State, BucketId, Prefix, ObjectName0) ->
 		0 ->
 		    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
 		    DstDirectoryName2 = utils:hex(unicode:characters_to_binary(DstDirectoryName1)),
-		    rename_handler:rename_pseudo_directory(BucketId, Prefix, ObjectName1, DstDirectoryName1),
+		    rename_handler:rename_pseudo_directory(BucketId, Prefix, ObjectName1, unicode:characters_to_binary(DstDirectoryName1)),
 		    riak_index:update(BucketId, Prefix, [{to_delete, [{erlang:list_to_binary(DstDirectoryName2++"/"), Timestamp}]}]);
 		_ ->
 		    riak_index:update(BucketId, Prefix, [{to_delete, [{erlang:list_to_binary(ObjectName0), Timestamp}]}])
