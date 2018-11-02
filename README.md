@@ -53,7 +53,7 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
 #### 2. Build DubStack
 
-Execute the following commands.
+Clone this repository and execute the following commands.
 ```sh
 wget https://erlang.mk/erlang.mk
 make fetch-deps

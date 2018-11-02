@@ -38,14 +38,12 @@ scale(Term) when erlang:is_list(Term) ->
 		    {Port, Reply} ->
 			demonitor_port(Port),
 			{ok, Reply};
-		    {'EXIT', Port, _} ->
-			erlang:error(badarg)
+		    {'EXIT', Port, _} -> erlang:error(badarg)
 		after 5000 ->
 		    demonitor_port(Port),
 		    {error, timeout}
 		end;
-	    false ->
-		erlang:error(badarg)
+	    false -> erlang:error(badarg)
 	end
     catch _:badarg ->
 	demonitor_port(Port),

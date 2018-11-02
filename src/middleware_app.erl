@@ -50,7 +50,6 @@ start(_Type, _Args) ->
         #{env => #{dispatch => Dispatch}}
     ),
     img:start_link(0),
-    riak_crypto_app:start(),
     middleware_sup:start_link().
 
 
