@@ -159,6 +159,7 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	false -> {error, 11}
     end.
 
+validate_directory_name(_BucketId, _Prefix, null) -> {error, 12};
 validate_directory_name(_BucketId, _Prefix, undefined) -> {error, 12};
 validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	when erlang:is_list(BucketId),

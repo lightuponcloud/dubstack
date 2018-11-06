@@ -83,7 +83,7 @@ user_to_proplist(User) ->
     ].
 
 %%
-%% Returns JSON list of tenants
+%% Returns JSON list of users
 %%
 to_json(Req0, State) ->
     case proplists:get_value(session_id, State) of
@@ -91,9 +91,18 @@ to_json(Req0, State) ->
 	    %% Token should have been specified
 	    User = proplists:get_value(user, State),
 	    case User#user.staff of
-		true -> {jsx:encode(
-			    [user_to_proplist(U) || U <- get_full_users_list()]),
-			    Req0, State};
+		true ->
+		    case proplists:get_value(path_user, State) of
+			undefined ->
+			    %% Return list of users
+			    {jsx:encode(
+				[user_to_proplist(U) || U <- get_full_users_list(), U =/= not_found]),
+				Req0, State};
+			PathUser0 ->
+			    %% Return only requested one
+			    PathUser1 = user_to_proplist(PathUser0),
+			    {jsx:encode(PathUser1), Req0, State}
+		    end;
 		false ->
 		    %% Only staff is allowed to access this API endpoint
 		    Req1 = cowboy_req:reply(403, #{
@@ -289,13 +298,18 @@ user_from_state(Req0) ->
 %% ( called after 'content_types_provided()' )
 %%
 resource_exists(Req0, State) ->
-    case admin_tenants_handler:tenant_from_state(Req0) of
+    case cowboy_req:binding(tenant_id, Req0) of
 	undefined -> {true, Req0, State};
-	Tenant ->
-	    case user_from_state(Req0) of
-		undefined -> {true, Req0, State ++ [{path_tenant, Tenant}]};
+	TenantId0 ->
+	    TenantId1 = erlang:binary_to_list(TenantId0),
+	    case admin_tenants_handler:get_tenant(TenantId1) of
 		not_found -> {false, Req0, []};
-		User -> {true, Req0, State ++ [{path_tenant, Tenant}, {path_user, User}]}
+		Tenant ->
+		    case user_from_state(Req0) of
+			undefined -> {true, Req0, State ++ [{path_tenant, Tenant}]};
+			not_found -> {false, Req0, []};
+			User -> {true, Req0, State ++ [{path_tenant, Tenant}, {path_user, User}]}
+		    end
 	    end
     end.
 
@@ -351,7 +365,9 @@ new_user(Req0, User0) ->
 	    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User0)), Req0),
 	    {true, Req1, []};
 	_ ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, <<"User exists.">>}]), Req0),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, <<"User exists.">>}]), Req0),
 	    {true, Req1, []}
     end.
 
@@ -390,10 +406,12 @@ edit_user(Req0, User) ->
 %%
 %% Returns { user ID, user name }
 %%
+validate_user_name(null, required) ->
+    {error, {name, <<"User Name should be specified.">>}};
 validate_user_name(undefined, required) ->
     {error, {name, <<"User Name should be specified.">>}};
-validate_user_name(undefined, not_required) ->
-    undefined;
+validate_user_name(null, not_required) -> undefined;
+validate_user_name(undefined, not_required) -> undefined;
 validate_user_name(<<>>, _IsUserNameRequired) ->
     {error, {name, <<"User Name should be specified.">>}};
 validate_user_name(UserName0, _IsUserNameRequired) when erlang:is_binary(UserName0) ->
@@ -411,8 +429,12 @@ validate_user_name(UserName0, _IsUserNameRequired) when erlang:is_binary(UserNam
 %%
 %% Returns User ID and hex representation of provided Login.
 %%
+validate_login(null, required) ->
+    {error, {login, <<"Login must be specified.">>}};
 validate_login(undefined, required) ->
     {error, {login, <<"Login must be specified.">>}};
+validate_login(null, not_required) ->
+    {undefined, undefined};
 validate_login(undefined, not_required) ->
     {undefined, undefined};
 validate_login(<<>>, _IsLoginRequired) ->
@@ -422,8 +444,7 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
     case length(unicode:characters_to_list(Login0)) > 30 of
 	true -> {error, {login, <<"Login is easier to remember when it is less than 30 characters.">>}};
 	false ->
-	    %% User ID is md5(login), as you can see
-	    UserId = utils:hex(erlang:md5(Login0)),
+	    UserId = utils:hex(erlang:md5(Login0)),  %% User ID is md5(login)
 	    PrefixedLogin = utils:prefixed_object_name(?USERS_PREFIX, UserId),
 	    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
 		not_found -> {UserId, utils:hex(Login0)};
@@ -436,6 +457,7 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
 	    end
     end.
 
+validate_password(null) -> {undefined, undefined, undefined};
 validate_password(undefined) -> {undefined, undefined, undefined};
 validate_password(<<>>) -> {undefined, undefined, undefined};
 validate_password(Password0) when erlang:is_binary(Password0) ->
@@ -450,6 +472,7 @@ validate_password(Password0) when erlang:is_binary(Password0) ->
 %%
 %% Checks if group IDs are defined in tenant
 %%
+validate_group_ids(null, _TenantGroups) -> [];
 validate_group_ids(undefined, _TenantGroups) -> [];
 validate_group_ids(<<>>, _TenantGroups) -> {error, {groups, <<"At least one group must be specified.">>}};
 validate_group_ids(GroupIds0, TenantGroups) when erlang:is_binary(GroupIds0) ->
@@ -590,7 +613,9 @@ handle_post(Req0, State) ->
 	PathTenant ->
 	    case validate_post(PathTenant, Body) of
 		{error, Reasons} ->
-		    Req2 = cowboy_req:set_resp_body(jsx:encode([{errors, Reasons}]), Req1),
+		    Req2 = cowboy_req:reply(400, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode([{errors, Reasons}]), Req1),
 		    {true, Req2, []};
 		User -> new_user(Req1, User)
 	    end
@@ -604,14 +629,17 @@ patch_resource(Req0, State) ->
     User0 = proplists:get_value(path_user, State),
     case Tenant0 =:= undefined orelse User0 =:= undefined of
 	true ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
 	    {true, Req1, []};
 	false ->
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
 	    case validate_patch(User0, Tenant0, Body) of
 		{error, Reasons} ->
-		    Req2 = cowboy_req:set_resp_body(jsx:encode([{errors, Reasons}]), Req1),
+		    Req2 = cowboy_req:reply(400, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode([{errors, Reasons}]), Req1),
 		    {true, Req2, []};
 		User1 -> edit_user(Req1, User1)
 	    end
@@ -622,8 +650,9 @@ delete_resource(Req0, State) ->
     User0 = proplists:get_value(path_user, State),
     case Tenant0 =:= undefined orelse User0 =:= undefined of
 	true ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
 	    {true, Req1, []};
 	false ->
 	    PrefixedUserId = utils:prefixed_object_name(?USERS_PREFIX, User0#user.id),

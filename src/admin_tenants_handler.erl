@@ -13,7 +13,7 @@
 %% Other methods
 -export([parse_tenant/1, validate_groups/2, validate_group_id/1,
 	 validate_boolean/3, validate_patch/2, get_tenant/1,
-	 tenant_from_state/1, tenant_to_proplist/1]).
+	 tenant_to_proplist/1]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
@@ -123,8 +123,7 @@ get_tenants_list(TenantList0, Marker0) ->
 	    case Marker1 of
 		undefined -> TenantList0 ++ TenantList1;
 		[] -> TenantList0 ++ TenantList1;
-		NextMarker ->
-		    get_tenants_list(TenantList0 ++ TenantList1, NextMarker)
+		NextMarker -> get_tenants_list(TenantList0 ++ TenantList1, NextMarker)
 	    end
     end.
 
@@ -137,9 +136,18 @@ to_json(Req0, State) ->
 	    %% Token should have been specified
 	    User = proplists:get_value(user, State),
 	    case User#user.staff of
-		true -> {jsx:encode(
-			    [tenant_to_proplist(T) || T <- get_tenants_list([], undefined)]),
-			    Req0, State};
+		true ->
+		    case proplists:get_value(path_tenant, State) of
+			undefined ->
+			    %% Return all tenants
+			    {jsx:encode(
+				[tenant_to_proplist(T) || T <- get_tenants_list([], undefined)]),
+				Req0, State};
+			PathTenant0 ->
+			    %% Return only requested one
+			    PathTenant1 = tenant_to_proplist(PathTenant0),
+			    {jsx:encode(PathTenant1), Req0, State}
+		    end;
 		false ->
 		    %% Only staff is allowed to access this API endpoint
 		    Req1 = cowboy_req:reply(403, #{
@@ -180,19 +188,6 @@ to_html(Req0, State) ->
 			<<"content-type">> => <<"text/html">>
 		    }, Body, Req0),
 		    {ok, Req1, []}
-	    end
-    end.
-
-%%
-%% Returns Tenant record or false
-%%
-tenant_from_state(Req0) ->
-    case cowboy_req:binding(tenant_id, Req0) of
-	undefined -> undefined;
-	TenantId ->
-	    case admin_tenants_handler:get_tenant(erlang:binary_to_list(TenantId)) of
-		not_found -> undefined;
-		Tenant -> Tenant
 	    end
     end.
 
@@ -239,13 +234,18 @@ forbidden(Req0, _State) ->
 %% ( called after 'content_types_provided()' )
 %%
 resource_exists(Req0, State) ->
-    case tenant_from_state(Req0) of
+    case cowboy_req:binding(tenant_id, Req0) of
 	undefined -> {true, Req0, State};
-	Tenant ->
-	    case admin_users_handler:user_from_state(Req0) of
-		undefined -> {true, Req0, State ++ [{path_tenant, Tenant}]};
+	TenantId0 ->
+	    TenantId1 = erlang:binary_to_list(TenantId0),
+	    case get_tenant(TenantId1) of
 		not_found -> {false, Req0, []};
-		User -> {true, Req0, State ++ [{path_tenant, Tenant}, {path_user, User}]}
+		Tenant ->
+		    case admin_users_handler:user_from_state(Req0) of
+			undefined -> {true, Req0, State ++ [{path_tenant, Tenant}]};
+			not_found -> {false, Req0, []};
+			User -> {true, Req0, State ++ [{path_tenant, Tenant}, {path_user, User}]}
+		    end
 	    end
     end.
 
@@ -267,8 +267,12 @@ validate_tenant_id(TenantId0) when erlang:is_list(TenantId0) ->
 	    end
     end.
 
+validate_tenant_name(null, required) ->
+    {error, {name, <<"Tenant Name should be specified.">>}};
 validate_tenant_name(undefined, required) ->
     {error, {name, <<"Tenant Name should be specified.">>}};
+validate_tenant_name(null, not_required) ->
+    {undefined, undefined};
 validate_tenant_name(undefined, not_required) ->
     {undefined, undefined};
 validate_tenant_name(<<>>, _IsTenantRequired) ->
@@ -335,6 +339,7 @@ validate_group_name(GroupName0, TenantGroups)
 %%	  ( those characters that can be used for "slug" )
 %%	- ther'a no duplicate groups
 %%
+validate_groups(null, _TenantGroups) -> [];
 validate_groups(undefined, _TenantGroups) -> [];
 validate_groups(<<>>, _TenantGroups) -> {error, {groups, <<"At least one group must be specified.">>}};
 validate_groups(Groups0, TenantGroups) when erlang:is_binary(Groups0) ->
@@ -362,9 +367,8 @@ validate_groups(Groups0, TenantGroups) when erlang:is_binary(Groups0) ->
 %%
 -spec validate_boolean(binary()|atom()|undefined, atom(), boolean()) -> boolean()|tuple().
 
-validate_boolean(undefined, Field, Default)
-	when erlang:is_atom(Field), erlang:is_boolean(Default) ->
-    Default;
+validate_boolean(null, Field, Default) when erlang:is_atom(Field), erlang:is_boolean(Default) -> Default;
+validate_boolean(undefined, Field, Default) when erlang:is_atom(Field), erlang:is_boolean(Default) -> Default;
 validate_boolean(true, Field, Default)
 	when erlang:is_atom(Field), erlang:is_boolean(Default) -> true;
 validate_boolean(false, Field, Default)
@@ -488,7 +492,9 @@ new_tenant(Req0, Tenant0) ->
 		]), Req0),
 	    {true, Req1, []};
 	_ ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, <<"Tenant exists.">>}]), Req0),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, <<"Tenant exists.">>}]), Req0),
 	    {true, Req1, []}
     end.
 
@@ -538,15 +544,18 @@ handle_post(Req0, _State) ->
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case validate_post(Body) of
 	{error, Reasons} ->
-	    Req2 = cowboy_req:set_resp_body(jsx:encode([{errors, Reasons}]), Req1),
+	    Req2 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{errors, Reasons}]), Req1),
 	    {true, Req2, []};
 	Tenant ->
 	    case get_tenant(Tenant#tenant.id) of
 		not_found ->
 		    new_tenant(Req1, Tenant);
 		_ ->
-		    Req3 = cowboy_req:set_resp_body(jsx:encode([
-			{errors, <<"Tenant with this name exists.">>}]), Req1),
+		    Req3 = cowboy_req:reply(400, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode([{errors, <<"Tenant with this name exists.">>}]), Req1),
 		    {true, Req3, []}
 	    end
     end.
@@ -557,26 +566,30 @@ handle_post(Req0, _State) ->
 patch_resource(Req0, _State) ->
     case cowboy_req:binding(tenant_id, Req0) of
 	undefined ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{error, <<"Tenant ID must be specified in URL.">>}]), Req0),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, <<"Tenant ID must be specified in URL.">>}]), Req0),
 	    {true, Req1, []};
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
 	    case validate_patch(get_tenant(TenantId2), Body) of
 		{error, Reasons} ->
-		    Req2 = cowboy_req:set_resp_body(jsx:encode([{errors, Reasons}]), Req1),
+		    Req2 = cowboy_req:reply(400, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode([{errors, Reasons}]), Req1),
 		    {true, Req2, []};
 		Tenant ->
 		    edit_tenant(Req1, Tenant)
 	    end
     end.
 
-delete_resource(Req, _State) ->
-    case cowboy_req:binding(tenant_id, Req) of
+delete_resource(Req0, _State) ->
+    case cowboy_req:binding(tenant_id, Req0) of
 	undefined ->
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{error, <<"Tenant ID must be specified in URL.">>}]), Req),
+	    Req1 = cowboy_req:reply(400, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, <<"Tenant ID must be specified in URL.">>}]), Req0),
 	    {true, Req1, []};
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),

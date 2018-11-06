@@ -68,6 +68,7 @@ validate_src_object_name(BucketId, SrcPrefix, ObjectKey0)
 %%
 %% Checks if every key in src_object_names exists and ther'a no duplicates
 %%
+validate_src_object_names(_BucketId, _SrcPrefix, null) -> [];
 validate_src_object_names(_BucketId, _SrcPrefix, undefined) -> [];
 validate_src_object_names(_BucketId, _SrcPrefix, <<>>) -> {error, 15};
 validate_src_object_names(BucketId, SrcPrefix, SrcObjectNames0) when erlang:is_binary(SrcObjectNames0),
