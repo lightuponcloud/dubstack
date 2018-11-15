@@ -28,42 +28,33 @@ content_types_provided(Req, State) ->
     ], Req, State}.
 
 to_json(Req0, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
     ObjectName0 = proplists:get_value(object_name, State),
     Prefix0 = proplists:get_value(prefix, State),
-    {Prefix1, ObjectName1} =
-	case Prefix0 of
-	    undefined -> {<<>>, erlang:binary_to_list(ObjectName0)};
-	    Prefix2 -> {Prefix2, utils:prefixed_object_name(Prefix2, erlang:binary_to_list(ObjectName0))}
-	end,
-    case riak_api:head_object(BucketId, ObjectName1) of
-	not_found -> {<<"[]">>, Req0, []};
-	RiakResponse ->
-	    UploadTimestamp = proplists:get_value(last_modified, RiakResponse),
-	    ModifiedTime = proplists:get_value("x-amz-meta-modified-utc", RiakResponse),
-	    ObjectName2 =
-		case proplists:get_value("x-amz-meta-orig-filename", RiakResponse) of
-		    undefined -> [];
-		    ObjectName3 -> unicode:characters_to_binary(ObjectName3)
-		end,
-	    ContentType = erlang:list_to_binary(proplists:get_value(content_type, RiakResponse)),
-	    ContentLength = proplists:get_value(content_length, RiakResponse),
+    case proplists:get_value(object_meta, State) of
+	undefined -> {<<"[]">>, Req0, []};  %% Pseudo-directory
+	ObjectMeta ->
+	    UploadTimestamp = proplists:get_value(upload_time, ObjectMeta),
+	    ModifiedTime = proplists:get_value(last_modified_utc, ObjectMeta),
+	    OrigName = proplists:get_value(orig_name, ObjectMeta),
+	    ContentType = erlang:list_to_binary(proplists:get_value(content_type, ObjectMeta)),
+	    ContentLength = proplists:get_value(bytes, ObjectMeta),
 	    AccessToken =
 		case utils:starts_with(ContentType, <<"image/">>) of
 		    false -> <<>>;
-		    true ->
-			%% Rarely used endpoint
-			List0 = riak_index:get_index(BucketId, Prefix0),
-			ObjectRecord = riak_index:get_object_record(ObjectName0, List0),
-			erlang:list_to_binary(proplists:get_value(access_token, ObjectRecord, ""))
+		    true -> proplists:get_value(access_token, ObjectMeta, <<"">>)
+		end,
+	    Prefix1 =
+		case Prefix0 of
+		    undefined -> <<>>;
+		    _ -> Prefix0
 		end,
 	    {jsx:encode([
 		{prefix, unicode:characters_to_binary(Prefix1)},
-		{key, unicode:characters_to_binary(ObjectName0)},
-		{orig_name, ObjectName2},
-		{last_modified_utc, utils:to_integer(ModifiedTime)},
-		{uploaded, erlang:list_to_binary(UploadTimestamp)},
-		{content_length, utils:to_integer(ContentLength)},
+		{key, ObjectName0},
+		{orig_name, OrigName},
+		{last_modified_utc, ModifiedTime},
+		{uploaded, UploadTimestamp},
+		{content_length, ContentLength},
 		{content_type, ContentType},
 		{access_token, AccessToken}
 	    ]), Req0, []}
@@ -99,12 +90,32 @@ forbidden(Req0, State) ->
 	false -> {true, Req0, []}
     end.
 
+-spec get_object_meta(string(), string(), binary()) -> proplist()|not_found|pseudo_directory.
+
+get_object_meta(BucketId, Prefix0, ObjectKey0) ->
+    List0 = riak_index:get_index(BucketId, Prefix0),
+    case riak_index:get_object_record(ObjectKey0, List0) of
+	[] ->
+	    %% Check if we learned of existence of such pseudo-directory
+	    ObjectKey1 =
+		case utils:ends_with(ObjectKey0, <<"/">>) of
+		    true -> ObjectKey0;
+		    false -> << ObjectKey0/binary, <<"/">>/binary >>
+		end,
+	    ExistingPrefixes = [proplists:get_value(prefix, P) || P <- proplists:get_value(dirs, List0)],
+	    case lists:member(ObjectKey1, ExistingPrefixes) of
+		false -> not_found;
+		true -> pseudo_directory
+	    end;
+	ObjectRecord -> ObjectRecord
+    end.
+
 %%
 %% Validates request parameters
 %% ( called after 'content_types_provided()' )
 %%
-resource_exists(Req0, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
+resource_exists(Req0, State0) ->
+    BucketId = proplists:get_value(bucket_id, State0),
     case cowboy_req:method(Req0) of
 	<<"GET">> ->
 	    ParsedQs = cowboy_req:parse_qs(Req0),
@@ -114,8 +125,13 @@ resource_exists(Req0, State) ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
 		    {false, Req1, []};
 		Prefix1 ->
-		    ObjectName0 = proplists:get_value(<<"object_name">>, ParsedQs),
-		    {true, Req0, State ++ [{prefix, Prefix1}, {object_name, ObjectName0}]}
+		    ObjectKey0 = proplists:get_value(<<"object_name">>, ParsedQs),
+		    State1 = [{prefix, Prefix1}, {object_name, ObjectKey0}],
+		    case get_object_meta(BucketId, Prefix1, ObjectKey0) of
+			not_found -> {false, Req0, []};
+			pseudo_directory -> {true, Req0, State0 ++ State1};
+			ObjectMeta0 -> {true, Req0, State0 ++ State1 ++ [{object_meta, ObjectMeta0}]}
+		    end
 	    end;
 	<<"DELETE">> ->
 	    {ok, Attrs0, Req2} = cowboy_req:read_body(Req0),
@@ -124,12 +140,18 @@ resource_exists(Req0, State) ->
 		{error, Number} ->
 		    Req3 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req2),
 		    {false, Req3, []};
-		Prefix ->
+		Prefix2 ->
 		    case proplists:get_value(<<"object_name">>, Attrs1) of
 			undefined ->
 			    Req4 = cowboy_req:set_resp_body(jsx:encode([{error, 8}]), Req2),
 			    {false, Req4, []};
-			ObjectName0 -> {true, Req2, State ++ [{prefix, Prefix}, {object_name, ObjectName0}]}
+			ObjectKey1 ->
+			    State2 = [{prefix, Prefix2}, {object_name, ObjectKey1}],
+			    case get_object_meta(BucketId, Prefix2, ObjectKey1) of
+				not_found -> {false, Req2, []};
+				pseudo_directory -> {true, Req2, State0 ++ State2};
+				ObjectMeta1 -> {true, Req2, State0 ++ State2 ++ [{object_meta, ObjectMeta1}]}
+			    end
 		    end
 	    end
     end.
@@ -159,15 +181,14 @@ delete(_State, _BucketId, "", "/") -> ok;
 delete(State, BucketId, Prefix, ObjectName0) ->
     User = proplists:get_value(user, State),
     ObjectName1 = erlang:binary_to_list(ObjectName0),
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName1),
     ActionLogRecord0 = #riak_action_log_record{
 	action="delete",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [utils:timestamp()])
     },
-    case utils:ends_with(ObjectName0, <<"/">>) of
-        true ->
+    case proplists:get_value(object_meta, State) of
+	undefined ->
 	    %% Rename directory if ther's no "-deleted-" substring in it.
 	    %%     - mark directory as deleted
 	    %%     - mark all nested objects as deleted
@@ -186,24 +207,19 @@ delete(State, BucketId, Prefix, ObjectName0) ->
 	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
 	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
 	    action_log:add_record(BucketId, Prefix, ActionLogRecord1);
-	false ->
-	    %% Learn original name of object first
-	    ObjectMeta = riak_api:head_object(BucketId, PrefixedObjectName),
+	ObjectMeta ->
 	    %% Mark object as deleted
 	    riak_index:update(BucketId, Prefix, [{to_delete, [{ObjectName0, utils:timestamp()}]}]),
 
 	    %% Leave record in action log using object's original name
 	    case ObjectMeta of
-		not_found -> ok;
+		not_found -> not_found;
 		_ ->
-		    UnicodeObjectName0 =
-			case proplists:get_value("x-amz-meta-orig-filename", ObjectMeta) of
-			    undefined -> ObjectName1;
-			    OrigName -> OrigName
-			end,
-		    UnicodeObjectName1 = unicode:characters_to_list(erlang:list_to_binary(UnicodeObjectName0)),
-		    Summary0 = lists:flatten([["File \""], [UnicodeObjectName1], ["\" was deleted."]]),
+		    UnicodeObjectName0 = proplists:get_value(orig_name, ObjectMeta),
+		    UnicodeObjectName1 = unicode:characters_to_list(UnicodeObjectName0),
+		    Summary0 = lists:flatten([["Delete \""], [UnicodeObjectName1], ["\""]]),
 		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-		    action_log:add_record(BucketId, Prefix, ActionLogRecord1)
+		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+		    ok
 	    end
     end.

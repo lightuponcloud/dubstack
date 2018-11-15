@@ -15,9 +15,9 @@
          abort_multipart/3,
          get_object_url/2,
 	 s3_xml_request/8,
-	 validate_upload_id/4,
+	 validate_upload_id/3,
 	 increment_filename/1,
-	 pick_object_name/3, pick_object_name/5,
+	 pick_object_name/5,
 	 s3_request/8,
 	 request_httpc/5,
 	 recursively_list_pseudo_dir/2
@@ -137,8 +137,7 @@ list_objects(BucketId, Options) when erlang:is_list(BucketId), erlang:is_list(Op
                   {common_prefixes, "CommonPrefixes", fun extract_prefixes/1},
                   {contents, "Contents", fun extract_contents/1}],
 	    erlcloud_xml:decode(Attributes, Doc);
-	not_found ->
-	    not_found
+	not_found -> not_found
     end.
 
 -spec recursively_list_pseudo_dir(string(), string()) -> list().
@@ -254,46 +253,42 @@ increment_filename(FileName) when erlang:is_binary(FileName) ->
     end.
 
 %%
+%% Checks if version of existing object is older than new version.
+%%
+is_new_version(_OldVersion, undefined) -> true;
+is_new_version(undefined, _NewVersion) -> false;
+is_new_version(OldVersion, NewVersion) when OldVersion < NewVersion -> true;
+is_new_version(_, _) -> false.
+
+%%
 %% Returns unique object name for provided bucket/prefix.
 %% It takes into account existing pseudo-directory names.
 %%
-%% Returns { unique object key, unique original name }
+%% Returns { unique object key, unique original name, whether new object is a previous version flag }
 %%
--spec pick_object_name(BucketId, Prefix, FileName) -> {binary(), binary()} when
-    BucketId :: string(),
-    Prefix :: string(),
-    FileName :: binary().
-
-pick_object_name(BucketId, Prefix, FileName0) ->
-    pick_object_name(BucketId, Prefix, FileName0, undefined, undefined).
-
--spec pick_object_name(BucketId, Prefix, FileName, ExistingPrefixes, OrigNamesList) -> {binary(), binary()} when
+-spec pick_object_name(BucketId, Prefix, FileName, ModifiedTime, IndexContent) -> {string(), binary(), boolean()}
+    when
     BucketId :: string(),
     Prefix :: string(),
     FileName :: binary(),
-    ExistingPrefixes :: list()|undefined,
-    OrigNamesList :: list()|undefined.
+    ModifiedTime :: undefined,
+    IndexContent :: list().
 
-pick_object_name(BucketId, Prefix, FileName0, undefined, undefined) ->
-    %% Pick object key and orig name that do not clash with existing keys/dirs.
-    IndexContent = riak_index:get_index(BucketId, Prefix),
+pick_object_name(BucketId, Prefix, FileName, ModifiedTime, IndexContent) ->
     ExistingPrefixes = [proplists:get_value(prefix, P) || P <- proplists:get_value(dirs, IndexContent, [])],
-    ExistingOrigNames = [proplists:get_value(orig_name, O) || O <- proplists:get_value(list, IndexContent, [])],
-    pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, undefined);
+    ExistingList = proplists:get_value(list, IndexContent, []),
+    ExistingOrigNames = [proplists:get_value(orig_name, O) || O <- ExistingList],
+    pick_object_name(BucketId, Prefix, FileName, ModifiedTime,
+		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, false).
 
-%%
-%% The following function accepts pre-fetched list of prefixes and original names
-%% to take into account during selection of object key and orig_name.
-%%
-pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames)
-	when erlang:is_list(ExistingPrefixes), erlang:is_list(ExistingOrigNames) ->
-    pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, undefined).
-
-pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigNames, Uniq1)
-    when erlang:is_list(BucketId), erlang:is_binary(FileName0),
-         erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	 erlang:is_binary(Uniq1) orelse Uniq1 =:= undefined,
-	 erlang:is_list(ExistingPrefixes), erlang:is_list(ExistingOrigNames) ->
+pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+		 ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsPreviousVersion0)
+    when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
+	 erlang:is_binary(FileName0),
+	 erlang:is_integer(ModifiedTime0) orelse ModifiedTime0 =:= undefined,
+	 erlang:is_list(ExistingList), erlang:is_list(ExistingPrefixes),
+	 erlang:is_list(ExistingOrigNames), erlang:is_boolean(IsPreviousVersion0),
+	 erlang:is_binary(Uniq1) orelse Uniq1 =:= undefined ->
     ObjectKey0 =
 	case Uniq1 of
 	    undefined -> FileName0;
@@ -307,29 +302,38 @@ pick_object_name(BucketId, Prefix, FileName0, ExistingPrefixes, ExistingOrigName
 	    ".." -> utils:hex(ObjectKey0);
 	    ON -> ON
 	end,
+    ObjectKey2 = erlang:list_to_binary(ObjectKey1),
     %% Check if key exists
-    PrefixedObjectKey = utils:prefixed_object_name(Prefix, ObjectKey1),
-    case head_object(BucketId, PrefixedObjectKey) of
-	not_found ->
-	    %% Check if pseudo-directory with such name exists
+    ExistingObject =
+	lists:filter(fun(I) -> proplists:get_value(object_name, I) =:= ObjectKey2 end, ExistingList),
+    case ExistingObject of
+	[] ->
+	    %% Check if pseudo-directory with this name exists
 	    HexObjectKey0 = erlang:list_to_binary(utils:hex(ObjectKey0)),
 	    HexObjectKey1 = << HexObjectKey0/binary, <<"/">>/binary >>,
 	    case lists:member(HexObjectKey1, ExistingPrefixes) of
-		true -> pick_object_name(BucketId, Prefix, FileName0,
-					 ExistingPrefixes, ExistingOrigNames,
-					 increment_filename(ObjectKey0));
+		true -> pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+					 ExistingList, ExistingPrefixes, ExistingOrigNames,
+					 increment_filename(ObjectKey0), IsPreviousVersion0);
 		false ->
 		    %% Check if orig_name exists, as object could have been renamed
 		    case lists:member(ObjectKey0, ExistingOrigNames) of
-			true -> pick_object_name(BucketId, Prefix, FileName0,
-						 ExistingPrefixes, ExistingOrigNames,
-						 increment_filename(ObjectKey0));
-			false -> {ObjectKey1, ObjectKey0}
+			true -> pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+						 ExistingList, ExistingPrefixes, ExistingOrigNames,
+						 increment_filename(ObjectKey0), IsPreviousVersion0);
+			false -> {ObjectKey1, ObjectKey0, IsPreviousVersion0}
 		    end
 	    end;
-	_ -> pick_object_name(BucketId, Prefix, FileName0,
-			      ExistingPrefixes, ExistingOrigNames,
-			      increment_filename(ObjectKey0))
+	[ObjectMeta] ->
+	    IsPreviousVersion1 =
+		case proplists:get_value(is_deleted, ObjectMeta) of
+		    true -> false;
+		    false -> is_new_version(proplists:get_value(last_modified_utc, ObjectMeta),
+					    ModifiedTime0) =:= false
+		end,
+	    pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+			     ExistingList, ExistingPrefixes, ExistingOrigNames,
+			     increment_filename(ObjectKey0), IsPreviousVersion1)
     end.
 
 -spec get_object_metadata(string(), string()) -> proplist().
@@ -439,22 +443,19 @@ start_multipart(BucketId, Key, Options, HTTPHeaders)
         {ok, Doc} ->
             Attributes = [{uploadId, "UploadId", text}],
             {ok, erlcloud_xml:decode(Attributes, Doc)};
-        Error ->
-            Error
+        Error -> Error
     end.
 
 %%
 %% Queries Riak CS on a subject of provided upload id.
 %%
--spec validate_upload_id(BucketId, Prefix, ObjectName0, UploadId0) -> {ok, proplist()} | not_found | {error, any()} when
+-spec validate_upload_id(BucketId, ObjectName0, UploadId0) -> {ok, proplist()} | not_found | {error, any()} when
     BucketId :: string(),
-    Prefix :: string(),
     ObjectName0 :: string(),
     UploadId0 :: string().
 
-validate_upload_id(BucketId, Prefix, ObjectName0, UploadId0)
+validate_upload_id(BucketId, ObjectName0, UploadId0)
 	when erlang:is_list(BucketId), erlang:is_list(ObjectName0),
-	     erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	     erlang:is_list(UploadId0) ->
     Config = #riak_api_config{},
     case s3_xml_request2(get, BucketId, [$/|ObjectName0], [], [{"uploadId", UploadId0}], <<>>, [], Config) of
@@ -589,11 +590,10 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
         	    ErrCode = erlcloud_xml:get_text("/Error/Code", XML),
         	    ErrMsg = erlcloud_xml:get_text("/Error/Message", XML),
         	    erlang:error({s3_error, ErrCode, ErrMsg});
-    		_ ->
-        	    {ok, XML}
+    		_ -> {ok, XML}
 	    end;
-	{error, {http_error, 404,_,_,_}} ->
-	    not_found
+	{error, {http_error, 404,_,_,_}} -> not_found;
+	{error, timeout} -> erlang:error({s3_error, timeout, "Timeout"})
     end.
 
 -spec s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config) ->

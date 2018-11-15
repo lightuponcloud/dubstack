@@ -193,6 +193,8 @@ get_index(BucketId, Prefix0)
 %%
 %% Returns record of object from index.
 %%
+-spec get_object_record(string()|binary(), proplist()) -> proplist().
+
 get_object_record(ObjectKey, IndexContent) when erlang:is_list(ObjectKey) ->
     get_object_record(erlang:list_to_binary(ObjectKey), IndexContent);
 get_object_record(ObjectKey, IndexContent) when erlang:is_binary(ObjectKey) ->

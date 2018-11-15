@@ -32,19 +32,16 @@ add_record(BucketId, Prefix, Record0) ->
     PrefixedActionLogFilename = utils:prefixed_object_name(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
 
-    ExistingObject0 = riak_api:head_object(BucketId,
-	PrefixedActionLogFilename),
     Options = [{acl, public_read}],  % TODO: public_read
-    case ExistingObject0 of
+    case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
 	not_found ->
 	    %% Create .riak_action_log.xml
 	    RootElement0 = #xmlElement{name=action_log, content=[Record1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
 	    riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
 		unicode:characters_to_binary(XMLDocument0), Options);
-	_ ->
-	    ExistingObject1 = riak_api:get_object(BucketId, PrefixedActionLogFilename),
-	    XMLDocument1 = utils:to_list(proplists:get_value(content, ExistingObject1)),
+	ExistingObject ->
+	    XMLDocument1 = utils:to_list(proplists:get_value(content, ExistingObject)),
 	    {RootElement1, _} = xmerl_scan:string(XMLDocument1),
 	    #xmlElement{content=Content} = RootElement1,
 	    NewContent = [Record1]++Content,
