@@ -215,7 +215,7 @@ function fetch_file_list(bucket_id, hex_prefix, msgEid, targetE, embedded){
     if($(window).width()<670) {
 	$(".file-link").width($('.file-item').width());
     }
-  }, 'onFailure': function(NaN, NaN, msg){
+  }, 'onFailure': function(msg, s1, s2){
     $('#'+msgEid).empty();
     $('#'+msgEid).append('<span class="err">'+msg+'</span>');
   }});
@@ -365,7 +365,7 @@ function refreshMenu(){
 	    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': root_uri+'object/'+bucket_id+'/', 'onSuccess': function(data){
 		$('#'+lid).remove();
 		$('#id-status').empty();
-	    }, 'onFailure': function(e, xhr, msg){
+	    }, 'onFailure': function(msg, xhr, e){
 	        $('#'+lid).removeClass('inactive');
 	        $('#id-status').empty();
 	        $('#id-status').append('<span class="err">Error: '+msg+'</span>');
@@ -792,6 +792,7 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
     upload_id=upload_ids.shift();
     file = files.shift();
     if(file){
+      stack.setErrorElementID('id-progress_'+upload_id);
       stack.file_upload(file, upload_id, hex_prefix);
     } else {
       $('#id-upload-button').attr('data-uploadDisabled', false);
@@ -814,12 +815,33 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
 	else p = p+'%';
 	$('#id-progress_'+upload_id).empty().append(p);
       }
-  }, 'onFailure': function(xhr, status, msg){
+  }, 'onFailure': function(msg, xhr, status){
     $('#id-upload-button').attr('data-uploadDisabled', false);
     if(msg=='fd_error'){
       $('#id-progress_'+upload_id).empty().append('<span class="err">file read error</span>');
       return;
-    }else if((status=='error'||status=='timeout')&&xhr.readyState==0){
+    }
+    if(status=="notmodified"){
+      $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext("notmodified")+'</span>');
+      if(files){
+        upload_id=upload_ids.shift();
+        file = files.shift();
+	if(file){
+	  stack.setErrorElementID('id-progress_'+upload_id);
+	  stack.file_upload(file, upload_id, hex_prefix);
+	} else {
+	  $('#id-upload-button').attr('data-uploadDisabled', false);
+	  if(hex_prefix){
+	      fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
+	  } else {
+	      $('#id-action-log').attr("disabled","disabled");
+	      fetch_file_list(bucket_id, NaN, 'id-loading-message-text', 'id-objects-list', false);
+	  }
+	};
+      }
+      return;
+    }
+    if((status=='error'||status=='timeout')&&xhr.readyState==0){
 	var attempts=$('#id-progress_'+upload_id).attr('data-attempts');
 	if(attempts==undefined) attempts=5;
 	attempts-=1;
@@ -985,8 +1007,9 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
  var bucket_id = $("body").attr("data-bucket-id");
  var root_uri = $('body').attr('data-root-uri');
 
+ var readable_prefix=unhex(hex_prefix);
  $("#dialog").dialog({
-  title: 'History of directory "'+unhex(hex_prefix)+'"',
+  title: 'History for Directory "'+(readable_prefix==""?"/":readable_prefix)+'"',
   autoOpen: false,
   resizable: false,
   height: 'auto',

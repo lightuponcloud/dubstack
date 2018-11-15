@@ -147,17 +147,13 @@ handle_post(Req0, State0) ->
 -spec do_copy(string(), string(), string(), string(), string(), list()) -> list().
 
 do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, SrcIndexContent, DstIndexContent) ->
-    ExistingPrefixes = [proplists:get_value(prefix, P)
-			|| P <- proplists:get_value(dirs, DstIndexContent, [])],
-    ExistingOrigNames = [proplists:get_value(orig_name, O)
-			 || O <- proplists:get_value(list, DstIndexContent, [])],
     ObjectKey0 = filename:basename(PrefixedObjectKey0),
     ObjectRecord = riak_index:get_object_record(ObjectKey0, SrcIndexContent),
     OrigName0 = proplists:get_value(orig_name, ObjectRecord),
     Bytes = proplists:get_value(bytes, ObjectRecord),
     %% Get object name that do not yet exist in destination pseudo-directory first.
-    {ObjectKey1, OrigName1} = riak_api:pick_object_name(DstBucketId, DstPrefix0, OrigName0,
-	ExistingPrefixes, ExistingOrigNames),
+    {ObjectKey1, OrigName1, _} = riak_api:pick_object_name(DstBucketId, DstPrefix0, OrigName0,
+	undefined, DstIndexContent),
     PrefixedObjectKey1 = utils:prefixed_object_name(DstPrefix0, ObjectKey1),
 
     %% TODO: check if user has access to DST bucket

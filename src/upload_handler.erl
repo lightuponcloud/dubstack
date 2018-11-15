@@ -88,7 +88,6 @@ add_action_log_record(State) ->
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [utils:timestamp()])
 	},
-
     UnicodeObjectName = unicode:characters_to_list(FileName),
     Summary = lists:flatten([["Uploaded \""], [UnicodeObjectName],
 	[io_lib:format("\" ( ~p B )", [TotalBytes])]]),
@@ -125,7 +124,7 @@ extract_rfc2231_filename(FormDataParams) ->
 acc_multipart(Req0, Acc) ->
     case cowboy_req:read_part(Req0) of
 	{ok, Headers0, Req1} ->
-	    {ok, Body, Req2} = stream_body(Req1, <<>>),
+    {ok, Body, Req2} = stream_body(Req1, <<>>),
 	    Headers1 = maps:to_list(Headers0),
 	    {_, DispositionBin} = lists:keyfind(<<"content-disposition">>, 1, Headers1),
 	    {<<"form-data">>, Params} = cow_multipart:parse_content_disposition(DispositionBin),
@@ -167,7 +166,7 @@ handle_post(Req0, State) ->
 		case proplists:get_value(object_name, FieldValues) of
 		    undefined -> undefined;
 		    ON ->
-			% ObjectName should be an ascii string by now
+			%% ObjectName should be an ascii string by now
 			erlang:binary_to_list(ON)
 		end,
 	    Etags = proplists:get_value(etags, FieldValues),
@@ -204,42 +203,55 @@ handle_post(Req0, State) ->
 %%
 %% Picks object name and uploads file to Riak CS
 %%
-upload_to_riak(Req0, State, BinaryData) ->
-    BucketId = proplists:get_value(bucket_id, State),
-    Prefix = proplists:get_value(prefix, State),
-    PartNumber = proplists:get_value(part_number, State),
-    IsBig = proplists:get_value(is_big, State),
-    TotalBytes = proplists:get_value(total_bytes, State),
-    FileName = proplists:get_value(file_name, State),
-
+upload_to_riak(Req0, State0, BinaryData) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    PartNumber = proplists:get_value(part_number, State0),
+    IsBig = proplists:get_value(is_big, State0),
+    _TotalBytes = proplists:get_value(total_bytes, State0),
+    FileName = proplists:get_value(file_name, State0),
+    ModifiedTime0 = proplists:get_value(modified_utc, State0),
     case riak_api:head_bucket(BucketId) of
 	not_found -> riak_api:create_bucket(BucketId);
 	_ -> ok
     end,
-    case IsBig of
+    IndexContent = riak_index:get_index(BucketId, Prefix),
+    {ObjectKey, OrigName, IsPreviousVersion} = riak_api:pick_object_name(BucketId, Prefix, FileName, ModifiedTime0,
+									  IndexContent),
+    %% Check modified time to determine newest object
+    PrefixedObjectKey0 = utils:prefixed_object_name(Prefix, ObjectKey),
+    case IsPreviousVersion of
 	true ->
-	    case (PartNumber > 1) of
-		true -> check_part(Req0, State, BinaryData);
-		false -> start_upload(Req0, State, BinaryData)
-	    end;
+	    Req1 = cowboy_req:reply(304, #{
+		<<"content-type">> => <<"application/json">>
+	    }, <<>>, Req0),
+	    {true, Req1, []};
 	false ->
-	    ModifiedTime = proplists:get_value(modified_utc, State),
-	    {ObjectName, OrigName} = riak_api:pick_object_name(BucketId, Prefix, FileName),
-	    Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
-						   {"modified-utc", utils:to_list(ModifiedTime)}]}],
-	    PrefixedObjectName = riak_api:put_object(BucketId, Prefix, ObjectName, BinaryData, Options),
-	    Req1 = cowboy_req:set_resp_body(jsx:encode([
-		{object_name, unicode:characters_to_binary(PrefixedObjectName)},
-		{modified_utc, ModifiedTime}
-	    ]), Req0),
-	    %% Update index
-	    riak_index:update(BucketId, Prefix),
-	    %% Update Solr index if file supported
-	    gen_server:abcast(solr_api, [{bucket_id, BucketId},
-		{prefix, Prefix}, {object_name, ObjectName},
-		{total_bytes, TotalBytes}]),
-	    add_action_log_record(State),
-	    {true, Req1, []}
+	    State1 = [{prefixed_key, PrefixedObjectKey0}, {orig_name, OrigName}],
+	    case IsBig of
+		true ->
+		    case (PartNumber > 1) of
+			true -> check_part(Req0, State0 ++ State1, BinaryData);
+			false -> start_upload(Req0, State0 ++ State1, BinaryData)
+		    end;
+		false ->
+		    Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
+							   {"modified-utc", utils:to_list(ModifiedTime0)}]}],
+		    PrefixedObjectKey1 = riak_api:put_object(BucketId, Prefix, ObjectKey, BinaryData, Options),
+		    Req1 = cowboy_req:set_resp_body(jsx:encode([
+			{object_name, unicode:characters_to_binary(PrefixedObjectKey1)},
+			{modified_utc, ModifiedTime0}
+		    ]), Req0),
+		    %% Update index
+		    riak_index:update(BucketId, Prefix),
+		    %% Update Solr index if file supported
+		    %% TODO: uncomment the following
+		    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
+		    %%	{prefix, Prefix}, {object_name, ObjectKey},
+		    %%	{total_bytes, TotalBytes}]),
+		    add_action_log_record(State0),
+		    {true, Req1, []}
+	    end
     end.
 
 check_part(Req0, State, BinaryData) ->
@@ -248,13 +260,11 @@ check_part(Req0, State, BinaryData) ->
     %%
     UploadId = proplists:get_value(upload_id, State),
     BucketId = proplists:get_value(bucket_id, State),
-    Prefix = proplists:get_value(prefix, State),
-    ObjectName = proplists:get_value(object_name, State),
-    case (ObjectName =:= undefined) of
-	true -> js_handler:bad_request(Req0, 8);
-	false ->
-	    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-	    case riak_api:validate_upload_id(BucketId, Prefix, PrefixedObjectName, UploadId) of
+    PrefixedObjectKey = proplists:get_value(prefixed_key, State),
+    case proplists:get_value(object_name, State) of
+	undefined -> js_handler:bad_request(Req0, 8);
+	_ ->
+	    case riak_api:validate_upload_id(BucketId, PrefixedObjectKey, UploadId) of
 		not_found -> js_handler:bad_request(Req0, 4);
 		{error, _Reason} -> js_handler:bad_request(Req0, 5);
 		_ -> upload_part(Req0, State, BinaryData)
@@ -299,9 +309,10 @@ upload_part(Req0, State, BinaryData) ->
 			    %% Update index
 			    riak_index:update(BucketId, Prefix),
 			    %% Update Solr index if file supported
-			    gen_server:abcast(solr_api, [{bucket_id, BucketId},
-				{prefix, Prefix}, {object_name, ObjectName},
-				{total_bytes, TotalBytes}]),
+			    %% TODO: uncomment the following
+			    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
+			    %%	{prefix, Prefix}, {object_name, ObjectName},
+			    %%	{total_bytes, TotalBytes}]),
 
 			    add_action_log_record(State),
 			    {true, Req1, []}
@@ -324,26 +335,24 @@ upload_part(Req0, State, BinaryData) ->
 start_upload(Req0, State, BinaryData) ->
     %% Create a bucket if not exist
     BucketId = proplists:get_value(bucket_id, State),
-    Prefix = proplists:get_value(prefix, State),
     EndByte = proplists:get_value(end_byte, State),
-    FileName = proplists:get_value(file_name, State),
+    PrefixedObjectKey = proplists:get_value(prefixed_key, State),
+    OrigName = proplists:get_value(orig_name, State),
     ModifiedTime = proplists:get_value(modified_utc, State),
 
-    {ObjectName, OrigName} = riak_api:pick_object_name(BucketId, Prefix, FileName),
     Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
 					   {"modified-utc", utils:to_list(ModifiedTime)}]}],
-    MimeType = utils:mime_type(ObjectName),
+    ObjectKey = filename:basename(PrefixedObjectKey),
+    MimeType = utils:mime_type(ObjectKey),
     Headers = [{"content-type", MimeType}],
 
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    {ok, [{_, UploadId1}]} = riak_api:start_multipart(BucketId, PrefixedObjectName, Options, Headers),
-    {ok, [{_, Etag0}]} = riak_api:upload_part(BucketId, PrefixedObjectName, UploadId1, 1, BinaryData),
+    {ok, [{_, UploadId1}]} = riak_api:start_multipart(BucketId, PrefixedObjectKey, Options, Headers),
+    {ok, [{_, Etag0}]} = riak_api:upload_part(BucketId, PrefixedObjectKey, UploadId1, 1, BinaryData),
 
     <<_:1/binary, Etag1:32/binary, _:1/binary>> = unicode:characters_to_binary(Etag0),
     Response = [{upload_id, unicode:characters_to_binary(UploadId1)},
-	{object_name, unicode:characters_to_binary(ObjectName)},
+	{object_name, unicode:characters_to_binary(ObjectKey)},
 	{end_byte, EndByte}, {md5, Etag1}],
-
     Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
     {true, Req1, []}.
 

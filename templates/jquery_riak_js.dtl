@@ -38,7 +38,7 @@ $.stack = function(options){
 	    task_timeout: 1000,
 	    attempts: 15,
             onSuccess: function(data, status){ },
-	    onFailure: function(xhr, status, data){ },
+	    onFailure: function(msg, xhr, status){ },
 	    onProgress: function(evt){ },
 	    loadingMsgColor: 'green',
 	    uploaded_bytes: 0,
@@ -85,8 +85,10 @@ $.stack = function(options){
 	headers: headers,
 	success: function(data, status, jqXHR){
 	    if(data&&data.hasOwnProperty('error')){
-		onFailure(NaN, NaN, gettext(data['error']));
+		onFailure(gettext(data['error']), NaN, NaN);
 		return;
+	    }else if(status=="notmodified"){
+		onFailure(gettext(status), jqXHR, status);
 	    }
 	    onSuccess(data, status);
 	},
@@ -167,8 +169,12 @@ $.stack = function(options){
 	  if(multipart_id){ var post_url=RiakAPI.options.rpc_url+multipart_id+'/'+part_num+'/'
 	  } else {var post_url=RiakAPI.options.rpc_url;}
 	  RiakAPI.post_json(post_url, form_data, headers, function(data, status){
+	      if(!data){
+		RiakAPI.options.onFailure(NaN, NaN, status);
+		return;
+	      }
 	      if(data.hasOwnProperty('error')){
-	        $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext(data['error'])+'</span>');
+		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext(data['error'])+'</span>');
 		return;
 	      };
 	      if(file.size-data.end_byte-1==0){
@@ -179,7 +185,7 @@ $.stack = function(options){
 	        RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, data.end_byte+1, umid, oname, etags);
 	      }
 	    },
-	    function(xhr, status, msg){
+	    function(msg, xhr, status){
 	      if(msg=='fd_error'){
 		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('file read error')+'</span>');
 		return;
@@ -202,11 +208,20 @@ $.stack = function(options){
 		return;
 	      } else if(status=='error'){
 		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('error, try later')+'</span>');
+	      } else if(status=="notmodified"){
+		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('notmodified')+'</span>');
 	      }
 	    },
 	    function(evt){ RiakAPI.options.onProgress(evt, offset, file.size);}
 	  );
-	}, function(){RiakAPI.options.onFailure(NaN, NaN, 'fd_error')});
+	}, function(msg, xhr, status){
+	    if(status=="notmodified"){
+		$('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext(status)+'</span>');
+		RiakAPI.options.onSuccess(data, status);
+		return;
+	    }
+	    RiakAPI.options.onFailure(msg, xhr, status)
+	});
 	return etags;
     },
     file_upload: function(file, upload_id, prefix){
@@ -223,7 +238,7 @@ $.stack = function(options){
 	  if(prefix) form_data.append('prefix', prefix);
 	  var headers = {'content-range': 'bytes 0-'+(file_size-1)+'/'+file.size};
 	  RiakAPI.post_json(RiakAPI.options.rpc_url, form_data, headers, RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
-	 }, function(){RiakAPI.options.onFailure(NaN, NaN, 'fd_error')});
+	 }, function(){RiakAPI.options.onFailure('fd_error', NaN, NaN)});
 	}
     },
     reset_defaults: function(){
@@ -242,7 +257,7 @@ $.stack = function(options){
 	   if(RiakAPI.options.onSuccess) RiakAPI.options.onSuccess(data);
       }, function(data){
 	  if(RiakAPI.options.onFailure){
-	    RiakAPI.options.onFailure(NaN, NaN, data);
+	    RiakAPI.options.onFailure(data, NaN, NaN);
 	  } else {
 	    $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext("5")+'</span>');
 	  }
@@ -278,7 +293,7 @@ $.stack = function(options){
 	timeout: 480000,
 	success: function(data, status, jqXHR){
 	    if(data&&(status!='success')){
-		RiakAPI.options.onFailure(NaN, NaN, data);
+		RiakAPI.options.onFailure(data, NaN, NaN);
 		return;
 	    }
 	    RiakAPI.options.onSuccess(data, status);
@@ -336,6 +351,9 @@ $.stack = function(options){
       } else {
        RiakAPI.stack_rpc();
       }
+    },
+    setErrorElementID: function(value){
+      RiakAPI.options.errorElementID = value;
     }
  };
  return {
@@ -349,7 +367,8 @@ $.stack = function(options){
     get_bucket_id: RiakAPI.get_bucket_id,
     get_object_metadata: RiakAPI.get_object_metadata,
     get_action_log: RiakAPI.get_action_log,
-    rename_object: RiakAPI.rename_object
+    rename_object: RiakAPI.rename_object,
+    setErrorElementID: RiakAPI.setErrorElementID
  };
 };
 })(jQuery);
