@@ -420,13 +420,15 @@ curl -v -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/" \
 
 ### Other Response Codes
 
-**Code** : `401 Unauthorized` When token is not provided in headers
+**Code** : `401 Unauthorized` When token is not provided in headers.
 
-**Code** : `403 Forbidden` When user has no access to bucket
+**Code** : `403 Forbidden` When user has no access to bucket.
 
-**Code** : `404 Not Found` When prefix not found
+**Code** : `404 Not Found` When prefix not found.
 
-**Code** : `400 Bad Request` In case of incorrect headers or multipart field values
+**Code** : `400 Bad Request` In case of incorrect headers or multipart field values.
+
+**Code** : `304 Not Modified` When modified_utc is less than or equal to existing object on the server.
 
 
 
