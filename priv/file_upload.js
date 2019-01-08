@@ -130,7 +130,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
     $(data.list).each(function(i,v){
       if(v.is_deleted) return true;
       var date = v.last_modified_utc;
-      var name = v.object_name;
+      var name = v.object_key;
       var orig_name = v.orig_name;
       if(!embedded){
        files.push({'name': name, 'modified': date, 'orig_name': orig_name, 'short_url': v.short_url, 'preview_url': v.preview_url, 'public_url': v.public_url, 'ct': v.content_type, 'bytes': v.bytes, 'token': v.access_token});
@@ -179,7 +179,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      var gid=guid();
      var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name"><a title="'+name+'" class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a></div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.preview_url==undefined?'&nbsp;':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
      if(v.ct.substring(0, 5)=='image'){
-	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_name='+decodeURIComponent(obj_name)+'&w=50&h=50&access_token='+v.token+'")');
+	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50&access_token='+v.token+'")');
      }
     });
 }
@@ -362,13 +362,17 @@ function refreshMenu(){
 	    if($('#'+lid).hasClass('dir')){
 		$('#'+lid).addClass('inactive');
 	    }
-	    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': root_uri+'object/'+bucket_id+'/', 'onSuccess': function(data){
+	    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': root_uri+'list/'+bucket_id+'/', 'onSuccess': function(data){
 		$('#'+lid).remove();
 		$('#id-status').empty();
 	    }, 'onFailure': function(msg, xhr, e){
 	        $('#'+lid).removeClass('inactive');
 	        $('#id-status').empty();
-	        $('#id-status').append('<span class="err">Error: '+msg+'</span>');
+		if(msg&&msg.hasOwnProperty('error')){
+		    $('#id-status').append('<span class="err">'+gettext(msg['error'])+'</span>');
+		} else {
+		    $('#id-status').append('<span class="err">Something\'s went horribly wrong</span>');
+		}
 	    }});
 	    var bits = decodeURIComponent($("#context-menu").attr('data-obj-n'));
 	    if(bits[bits.length-1]=="/"){
@@ -378,7 +382,7 @@ function refreshMenu(){
 	    }else{
 		bits = bits.split("/");
 	    }
-	    stack.delete_object(hex_prefix, bits[bits.length-1]);
+	    stack.delete_object(hex_prefix, [bits[bits.length-1]]);
 	    return false;
 	});
 	$("#cancel-btn").unbind('click').click(function(){
@@ -417,7 +421,7 @@ function refreshMenu(){
 }
 
 
-function copy_dialog(e, from_object_name, orig_name, to_move){
+function copy_dialog(e, from_object_key, orig_name, to_move){
  var bucket_id = $("body").attr("data-bucket-id");
  var copy_form = '<form method="POST" id="id-copy-form" name="copy_form" > \
 <input type="hidden" name="hex_prefix" id="id-dialog-prefix" value="'+$('body').attr('data-hex-prefix')+'"> \
@@ -549,15 +553,15 @@ function copy_dialog(e, from_object_name, orig_name, to_move){
    }
   });
 
-  stack.copy_object(src_bucket_id, src_hex_prefix, from_object_name, src_bucket_id, dst_hex_prefix, from_object_name);
-//  var objects=[[src_hex_prefix, from_object_name]];
+  stack.copy_object(src_bucket_id, src_hex_prefix, from_object_key, src_bucket_id, dst_hex_prefix, from_object_key);
+//  var objects=[[src_hex_prefix, from_object_key]];
 // TODO: to check status of copied objects
   return false;
  });
  return false;
 }
 
-function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
+function submit_rename(bucket_id, hex_prefix, from_object_key, is_dir){
     $('#id-dialog-loading-message-text').empty();
     $('#id_object_name_errors').empty();
     $("#submit_rename").attr("disabled","disabled");
@@ -589,18 +593,18 @@ function submit_rename(bucket_id, hex_prefix, from_object_name, is_dir){
 	$('#id-dialog-loading-message-text').empty().append('<br/><span class="err">'+msg+'</span>');
 	$("#submit_rename").attr("disabled",false);
     }});
-    stack.rename_object(hex_prefix, from_object_name, dst_object_name);
+    stack.rename_object(hex_prefix, from_object_key, dst_object_name);
     // TODO: to check status of renamed object
 }
 
-function rename_dialog(e, from_object_name, orig_name){
+function rename_dialog(e, from_object_key, orig_name){
  var bucket_id = $("body").attr("data-bucket-id");
  var hex_prefix=$('body').attr('data-hex-prefix');
- var is_dir = from_object_name.indexOf('/') == from_object_name.length-1;
+ var is_dir = from_object_key.indexOf('/') == from_object_key.length-1;
  var rename_form = '<form method="POST" id="id-rename-form" name="rename_form" > \
 <input type="hidden" name="hex_prefix" id="id-dialog-prefix" value=""> \
 <h3><span id="id-dialog-block-header"></span></h3> \
-<br/><input name="object_name" id="id_object_name" style="width:558px" value="'+
+<br/><input name="object_key" id="id_object_name" style="width:558px" value="'+
 (orig_name.charAt(orig_name.length-1)=='/'?orig_name.slice(0, orig_name.length-1):orig_name)+'" autofocus/><br/> \
 <div><div style="float:left;margin-top:14px;"><span class="err" id="id_object_name_errors"></span></div> \
 <div style="float:right;padding-top:10px;margin-right:4px;"> \
@@ -657,7 +661,7 @@ function rename_dialog(e, from_object_name, orig_name){
  });
  $('#submit_rename').unbind('click').click(function(e){
     $('#submit_rename').attr("disabled", "disabled");
-    submit_rename(bucket_id, hex_prefix, from_object_name, is_dir);
+    submit_rename(bucket_id, hex_prefix, from_object_key, is_dir);
     return false;
  });
  return false;

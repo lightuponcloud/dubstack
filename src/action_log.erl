@@ -29,7 +29,7 @@ add_record(BucketId, Prefix, Record0) ->
 	{tenant_name, [Record0#riak_action_log_record.tenant_name]},
 	{timestamp, [Record0#riak_action_log_record.timestamp]}
 	]},
-    PrefixedActionLogFilename = utils:prefixed_object_name(
+    PrefixedActionLogFilename = utils:prefixed_object_key(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
 
     Options = [{acl, public_read}],  % TODO: public_read
@@ -82,7 +82,7 @@ to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
 
-    PrefixedActionLogFilename = utils:prefixed_object_name(
+    PrefixedActionLogFilename = utils:prefixed_object_key(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
     ExistingObject0 = riak_api:head_object(BucketId,
 	PrefixedActionLogFilename),

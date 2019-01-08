@@ -17,7 +17,7 @@
 	 s3_xml_request/8,
 	 validate_upload_id/3,
 	 increment_filename/1,
-	 pick_object_name/5,
+	 pick_object_key/5,
 	 s3_request/8,
 	 request_httpc/5,
 	 recursively_list_pseudo_dir/2
@@ -264,25 +264,33 @@ is_new_version(_, _) -> false.
 %% Returns unique object name for provided bucket/prefix.
 %% It takes into account existing pseudo-directory names.
 %%
-%% Returns { unique object key, unique original name, whether new object is a previous version flag }
+%% Returns the following tuple.
+%%	{
+%%	    unique object key,
+%%	    unique original name,
+%%	    whether new object is a previous version flag
+%%	}
 %%
--spec pick_object_name(BucketId, Prefix, FileName, ModifiedTime, IndexContent) -> {string(), binary(), boolean()}
+-spec pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent) -> {string(), binary(), boolean()}
     when
     BucketId :: string(),
     Prefix :: string(),
     FileName :: binary(),
-    ModifiedTime :: undefined,
+    ModifiedTime :: integer()|undefined,
     IndexContent :: list().
 
-pick_object_name(BucketId, Prefix, FileName, ModifiedTime, IndexContent) ->
+pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent)
+    when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
+	 erlang:is_binary(FileName),
+	 erlang:is_integer(ModifiedTime) orelse ModifiedTime =:= undefined ->
     ExistingPrefixes = [proplists:get_value(prefix, P) || P <- proplists:get_value(dirs, IndexContent, [])],
     ExistingList = proplists:get_value(list, IndexContent, []),
     ExistingOrigNames = [proplists:get_value(orig_name, O) || O <- ExistingList],
-    pick_object_name(BucketId, Prefix, FileName, ModifiedTime,
+    pick_object_key(BucketId, Prefix, FileName, ModifiedTime,
 		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, false).
 
-pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
-		 ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsPreviousVersion0)
+pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
+		ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsPreviousVersion0)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	 erlang:is_binary(FileName0),
 	 erlang:is_integer(ModifiedTime0) orelse ModifiedTime0 =:= undefined,
@@ -296,7 +304,7 @@ pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
 	end,
     %% Transliterate filename
     ObjectKey1 =
-	case utils:slugify_object_name(ObjectKey0) of
+	case utils:slugify_object_key(ObjectKey0) of
 	    [] -> utils:hex(ObjectKey0);
 	    "." -> utils:hex(ObjectKey0);
 	    ".." -> utils:hex(ObjectKey0);
@@ -305,35 +313,31 @@ pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
     ObjectKey2 = erlang:list_to_binary(ObjectKey1),
     %% Check if key exists
     ExistingObject =
-	lists:filter(fun(I) -> proplists:get_value(object_name, I) =:= ObjectKey2 end, ExistingList),
+	lists:filter(fun(I) -> proplists:get_value(object_key, I) =:= ObjectKey2 end, ExistingList),
     case ExistingObject of
 	[] ->
 	    %% Check if pseudo-directory with this name exists
 	    HexObjectKey0 = erlang:list_to_binary(utils:hex(ObjectKey0)),
 	    HexObjectKey1 = << HexObjectKey0/binary, <<"/">>/binary >>,
 	    case lists:member(HexObjectKey1, ExistingPrefixes) of
-		true -> pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+		true -> pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 					 ExistingList, ExistingPrefixes, ExistingOrigNames,
 					 increment_filename(ObjectKey0), IsPreviousVersion0);
 		false ->
 		    %% Check if orig_name exists, as object could have been renamed
 		    case lists:member(ObjectKey0, ExistingOrigNames) of
-			true -> pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
+			true -> pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 						 ExistingList, ExistingPrefixes, ExistingOrigNames,
 						 increment_filename(ObjectKey0), IsPreviousVersion0);
 			false -> {ObjectKey1, ObjectKey0, IsPreviousVersion0}
 		    end
 	    end;
 	[ObjectMeta] ->
-	    IsPreviousVersion1 =
-		case proplists:get_value(is_deleted, ObjectMeta) of
-		    true -> false;
-		    false -> is_new_version(proplists:get_value(last_modified_utc, ObjectMeta),
-					    ModifiedTime0) =:= false
-		end,
-	    pick_object_name(BucketId, Prefix, FileName0, ModifiedTime0,
-			     ExistingList, ExistingPrefixes, ExistingOrigNames,
-			     increment_filename(ObjectKey0), IsPreviousVersion1)
+	    IsNewVersion = is_new_version(proplists:get_value(last_modified_utc, ObjectMeta), ModifiedTime0),
+	    case IsNewVersion of
+		true -> {ObjectKey1, ObjectKey0, false};  %% Just replace existing object with its newer version
+		false -> {ObjectKey1, ObjectKey0, true}
+	    end
     end.
 
 -spec get_object_metadata(string(), string()) -> proplist().
@@ -346,7 +350,7 @@ get_object_metadata(BucketId, Key) ->
     Key :: string(),
     Options :: proplist().
 
-get_object_metadata(BucketId, Key, Options) 
+get_object_metadata(BucketId, Key, Options)
 	when erlang:is_list(BucketId), erlang:is_list(Key), erlang:is_list(Options) ->
     RequestHeaders = [{"If-Modified-Since", proplists:get_value(if_modified_since, Options)},
                       {"If-Unmodified-Since", proplists:get_value(if_unmodified_since, Options)},
@@ -374,33 +378,33 @@ extract_metadata(Headers) ->
 %%
 %% put_object function should be used for uploading small objects
 %%
--spec put_object(BucketId, Prefix, ObjectName, BinaryData) -> string() when
+-spec put_object(BucketId, Prefix, ObjectKey, BinaryData) -> string() when
     BucketId :: string(),
     Prefix :: string(),
-    ObjectName :: string(),
+    ObjectKey :: string(),
     BinaryData :: binary().
 
-put_object(BucketId, Prefix, ObjectName, BinaryData)
+put_object(BucketId, Prefix, ObjectKey, BinaryData)
 	when erlang:is_list(BucketId),
 	     erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	     erlang:is_list(ObjectName), erlang:is_binary(BinaryData) ->
+	     erlang:is_list(ObjectKey), erlang:is_binary(BinaryData) ->
     Options = [{acl, public_read}],
-    put_object(BucketId, Prefix, ObjectName, BinaryData, Options).
+    put_object(BucketId, Prefix, ObjectKey, BinaryData, Options).
 
--spec put_object(BucketId, Prefix, ObjectName, BinaryData, Options) -> string() when
+-spec put_object(BucketId, Prefix, ObjectKey, BinaryData, Options) -> string() when
     BucketId :: string(),
     Prefix :: string(),
-    ObjectName :: string(),
+    ObjectKey :: string(),
     BinaryData :: binary(),
     Options :: proplist().
 
-put_object(BucketId, Prefix, ObjectName, BinaryData, Options)
+put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 	when erlang:is_list(BucketId),
 	     erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	     erlang:is_list(ObjectName), erlang:is_binary(BinaryData),
+	     erlang:is_list(ObjectKey), erlang:is_binary(BinaryData),
 	     erlang:is_list(Options) ->
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    MimeType = utils:mime_type(ObjectName),
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    MimeType = utils:mime_type(ObjectKey),
     HTTPHeaders = [{"content-type", MimeType}],
 	       %% TBD: {"x-riak-index-short-url", }
 
@@ -408,9 +412,9 @@ put_object(BucketId, Prefix, ObjectName, BinaryData, Options)
         ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     Config = #riak_api_config{},
-    {ok, {_Status, _Headers, _Body}} = s3_request(put, BucketId, [$/|PrefixedObjectName], "", [],
+    {ok, {_Status, _Headers, _Body}} = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [],
                                   BinaryData, RequestHeaders, Config),
-    PrefixedObjectName.
+    PrefixedObjectKey.
 
 -spec get_object_url(string(), string()) -> string().
 
@@ -449,16 +453,16 @@ start_multipart(BucketId, Key, Options, HTTPHeaders)
 %%
 %% Queries Riak CS on a subject of provided upload id.
 %%
--spec validate_upload_id(BucketId, ObjectName0, UploadId0) -> {ok, proplist()} | not_found | {error, any()} when
+-spec validate_upload_id(BucketId, ObjectKey0, UploadId0) -> {ok, proplist()} | not_found | {error, any()} when
     BucketId :: string(),
-    ObjectName0 :: string(),
+    ObjectKey0 :: string(),
     UploadId0 :: string().
 
-validate_upload_id(BucketId, ObjectName0, UploadId0)
-	when erlang:is_list(BucketId), erlang:is_list(ObjectName0),
+validate_upload_id(BucketId, ObjectKey0, UploadId0)
+	when erlang:is_list(BucketId), erlang:is_list(ObjectKey0),
 	     erlang:is_list(UploadId0) ->
     Config = #riak_api_config{},
-    case s3_xml_request2(get, BucketId, [$/|ObjectName0], [], [{"uploadId", UploadId0}], <<>>, [], Config) of
+    case s3_xml_request2(get, BucketId, [$/|ObjectKey0], [], [{"uploadId", UploadId0}], <<>>, [], Config) of
         {ok, Doc} ->
             Attributes = [{uploadId, "UploadId", text}],
             [{uploadId, UploadId1}] = erlcloud_xml:decode(Attributes, Doc),

@@ -26,26 +26,23 @@ parse_url(RiakURL) ->
 	    false ->
 		undefined
 	    end,
-    ObjectName = string:substr(RiakURL, LastSlashOccurrence+1),
-    [{bucket_id, BucketId}, {prefix, Prefix}, {object_name, ObjectName}].
+    ObjectKey = string:substr(RiakURL, LastSlashOccurrence+1),
+    [{bucket_id, BucketId}, {prefix, Prefix}, {object_key, ObjectKey}].
 
 get_riak_object(RiakURL) ->
     URLInfo = parse_url(RiakURL),
     BucketId = proplists:get_value(bucket_id, URLInfo),
     Prefix = proplists:get_value(prefix, URLInfo),
-    ObjectName = proplists:get_value(object_name, URLInfo),
+    ObjectKey = proplists:get_value(object_key, URLInfo),
 
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    Metadata = riak_api:get_object_metadata(BucketId, PrefixedObjectName),
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    Metadata = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
 
     OrigName =
-	case proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectName) of
-	    undefined -> ObjectName;
+	case proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey) of
+	    undefined -> ObjectKey;
 	    Name -> Name
 	end,
-    LastModified = proplists:get_value(last_modified, Metadata, ""),
-    %% It would be better to parse string date, rather than making another query
-    LastModifiedTimetamp = calendar:datetime_to_gregorian_seconds(ec_date:parse(LastModified)) - 62167219200,
     Bytes =
 	case proplists:get_value(content_length, Metadata, undefined) of
 	    undefined -> 0;
@@ -55,11 +52,10 @@ get_riak_object(RiakURL) ->
     Etag = proplists:get_value(etag, Metadata, ""),
     Md5 = string:strip(Etag, both, $"),
 
-    [{object_name, ObjectName},
+    [{object_key, ObjectKey},
      {orig_name,  unicode:characters_to_list(list_to_binary(OrigName))},
      {bytes, Bytes},
      {content_type, ContentType},
-     {last_modified, LastModifiedTimetamp},
      {md5, Md5}].
 
 content_types_provided(Req, State) ->
@@ -73,6 +69,7 @@ search(BucketId, Term) ->
 %% todo: take into account prefix and bucket name
 search(_BucketId, _Prefix, Term0) ->
     Term1 = erlcloud_http:url_encode_loose(Term0),
+    %% Solr do not scale the same way as Riak CS, -- search query should be made to external URL
     SolrURL = lists:flatten(io_lib:format("http://127.0.0.1:8093/internal_solr/binary_objects/select?q=~s&wt=json&indent=false", [Term1])),
     Config = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
     case riak_api:request_httpc(SolrURL, get, [], <<>>, Config) of

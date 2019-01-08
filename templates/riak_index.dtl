@@ -38,7 +38,7 @@
 {% for o in objects_list %}
 <li>
  {% if o.content_type == "image/jpeg" %}
-  <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/riak/icon/{{ bucket_id }}?object_name={{ o.orig_name|basename }}&prefix={{ prefix }}" title="{{ o.orig_name }}" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+  <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/riak/icon/{{ bucket_id }}?object_key={{ o.orig_name|basename }}&prefix={{ prefix }}" title="{{ o.orig_name }}" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
  {% else %}
    {% if o.content_type|startswith:"video" %}
       <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/{{ bucket_id }}/{{ prefix }}/{{ o.name }}" title="{{ o.orig_name }}"><img src="{{ static_root }}icon_video.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>

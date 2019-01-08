@@ -3,7 +3,7 @@
 %%
 -module(js_handler).
 
--export([init/2, bad_request/2, not_found/1, redirect_to_login/1]).
+-export([init/2, bad_request/2, not_found/1, too_many/1, redirect_to_login/1]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -89,6 +89,12 @@ bad_request(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(400, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),
+    {true, Req1, []}.
+
+too_many(Req0) ->
+    Req1 = cowboy_req:reply(429, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, 33}]), Req0),
     {true, Req1, []}.
 
 not_found(Req0) ->

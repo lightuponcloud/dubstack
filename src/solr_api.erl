@@ -21,15 +21,15 @@ init([]) ->
 handle_cast(Message, State) ->
     BucketId = proplists:get_value(bucket_id, Message),
     Prefix = proplists:get_value(prefix, Message),
-    ObjectName = proplists:get_value(object_name, Message),
+    ObjectKey = proplists:get_value(object_key, Message),
     TotalBytes = proplists:get_value(total_bytes, Message),
-    ContentType = get_content_type(ObjectName),
+    ContentType = get_content_type(ObjectKey),
     case ContentType of
 	undefined -> ok;
 	_ ->
 	    case (TotalBytes =< ?MAXIMUM_FILE_SIZE) of
 		true ->
-		    index(BucketId, Prefix, ObjectName, ContentType);
+		    index(BucketId, Prefix, ObjectKey, ContentType);
 		false -> ok
 	    end
     end,
@@ -51,8 +51,8 @@ terminate(_Reason, _S) ->
 
 -spec get_content_type(string()) -> boolean().
 
-get_content_type(ObjectName) when erlang:is_list(ObjectName) ->
-    case filename:extension(ObjectName) of
+get_content_type(ObjectKey) when erlang:is_list(ObjectKey) ->
+    case filename:extension(ObjectKey) of
 	[] -> undefined;
 	Extension ->
 	    LookupKey = string:substr(Extension, 2),
@@ -65,11 +65,11 @@ get_content_type(ObjectName) when erlang:is_list(ObjectName) ->
 %%
 %% Retrieves file from object storage and submits it to Solr's extractor
 %%
-index(BucketId, Prefix, ObjectName, ContentType) ->
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    EncodedPrefixedObjectName = erlcloud_http:url_encode_loose(PrefixedObjectName),
-    UniqueId = lists:flatten(io_lib:format("~s/~s", [BucketId, EncodedPrefixedObjectName])),
-    ObjectURL = riak_api:get_object_url(BucketId, EncodedPrefixedObjectName),
+index(BucketId, Prefix, ObjectKey, ContentType) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    EncodedPrefixedObjectKey = erlcloud_http:url_encode_loose(PrefixedObjectKey),
+    UniqueId = lists:flatten(io_lib:format("~s/~s", [BucketId, EncodedPrefixedObjectKey])),
+    ObjectURL = riak_api:get_object_url(BucketId, EncodedPrefixedObjectKey),
     Config0 = #riak_api_config{},
     %% Download object from Riak CS
     Response = riak_api:request_httpc(ObjectURL, get, [{"content-type", "*/*"}], <<>>, Config0),
@@ -80,10 +80,10 @@ index(BucketId, Prefix, ObjectName, ContentType) ->
 	    Headers = [{"content-type", ContentType}],
 	    %% Upload object to Solr
 	    Config1 = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
-	    MetaData = riak_api:get_object_metadata(BucketId, PrefixedObjectName),
+	    MetaData = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
 	    OrigName = 
-		case erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", MetaData, ObjectName)) of
-		    undefined -> ObjectName;
+		case erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", MetaData, ObjectKey)) of
+		    undefined -> ObjectKey;
 		    Name -> Name
 		end,
 	    SolrURL = lists:flatten(io_lib:format("http://127.0.0.1:~s~s/~s~s?wt=json&literal._yz_id=~s&literal.bucket_id=~s&literal.orig_name=~s&commit=true&resource.name=~s",

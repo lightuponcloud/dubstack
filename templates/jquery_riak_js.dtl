@@ -164,7 +164,7 @@ $.stack = function(options){
 	    form_data.append('etags[]', etags);
 	  }
 	  if(prefix) form_data.append('prefix', prefix);
-	  if(oname) form_data.append('object_name', oname);
+	  if(oname) form_data.append('object_key', oname);
 	  var headers = {'content-range': 'bytes '+offset+'-'+(offset + blob_size - 1)+'/'+file.size};
 	  if(multipart_id){ var post_url=RiakAPI.options.rpc_url+multipart_id+'/'+part_num+'/'
 	  } else {var post_url=RiakAPI.options.rpc_url;}
@@ -181,7 +181,7 @@ $.stack = function(options){
 	        RiakAPI.options.onSuccess(data, status);
 	      } else {
 		var umid = data.upload_id;
-		var oname = data.object_name;
+		var oname = data.object_key;
 	        RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, data.end_byte+1, umid, oname, etags);
 	      }
 	    },
@@ -202,7 +202,7 @@ $.stack = function(options){
 		 $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('network error, retrying')+'</span>');
 		 setTimeout(function(){
 		    var umid = data.upload_id;
-		    var oname = data.object_name;
+		    var oname = data.object_key;
 		    RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, offset, umid, oname, etags);
 		}, 3000);
 		return;
@@ -278,16 +278,16 @@ $.stack = function(options){
 	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
 	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
     },
-    update_object: function(bucket_id, prefix, object_name, new_name){
-      RiakAPI.stack_rpc({'bucket_id': bucket_id, 'object_name': object_name, 'prefix': prefix, 'new_file_name': new_name});
+    update_object: function(bucket_id, prefix, object_key, new_name){
+      RiakAPI.stack_rpc({'bucket_id': bucket_id, 'object_key': object_key, 'prefix': prefix, 'new_file_name': new_name});
     },
-    delete_object: function(prefix, object_name){
+    delete_object: function(prefix, object_keys){
       $.ajax({
 	url: RiakAPI.options.rpc_url,
 	type: 'DELETE',
 	cache: false,
 	dataType: 'json',
-	data: JSON.stringify({"prefix": prefix, "object_name": object_name}),
+	data: JSON.stringify({"prefix": prefix, "object_keys": object_keys}),
 	processData: false,
 	contentType: 'application/json',
 	timeout: 480000,
@@ -309,26 +309,26 @@ $.stack = function(options){
         RiakAPI.options.onFailure(e, xhr, status);
        });
     },
-    copy_object: function(from_bucket_id, from_prefix, from_object_name, to_bucket_id, to_prefix, to_object_name){
+    copy_object: function(from_bucket_id, from_prefix, from_object_key, to_bucket_id, to_prefix, to_object_key){
 	var form_data = {};
 	form_data['src_bucket_id'] = from_bucket_id;
 	form_data['src_prefix'] = from_prefix;
-	form_data['src_object_names'] = [from_object_name];
+	form_data['src_object_keys'] = [from_object_key];
 	form_data['dst_bucket_id'] = to_bucket_id;
 	form_data['dst_prefix'] = to_prefix;
 	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
 	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
     },
-    rename_object: function(hex_prefix, src_object_name, dst_object_name){
+    rename_object: function(hex_prefix, src_object_key, dst_object_name){
 	var form_data = {};
 	if(hex_prefix!=undefined) form_data['prefix'] = hex_prefix;
-	form_data['src_object_name'] = src_object_name;
+	form_data['src_object_key'] = src_object_key;
 	form_data['dst_object_name'] = dst_object_name;
 	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
 	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
     },
-    get_object_metadata: function(bucket_id, hex_prefix, object_name){
-      RiakAPI.stack_rpc({'object_name': object_name, 'prefix': prefix});
+    get_object_metadata: function(bucket_id, hex_prefix, object_key){
+      RiakAPI.stack_rpc({'object_key': object_key, 'prefix': prefix});
     },
     is_compatible_browser: function(){
      return !!window.FileReader;

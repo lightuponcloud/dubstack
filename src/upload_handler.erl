@@ -78,7 +78,7 @@ add_action_log_record(State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
     %% When you upload a single file, before the stage of parsing POST request,
-    %% object_name is unknown. It becomes available later, so ther'a two object_name
+    %% object_key is unknown. It becomes available later, so ther'a two object_key
     %% entries in State.
     FileName = proplists:get_value(file_name, State),
     TotalBytes = proplists:get_value(total_bytes, State),
@@ -88,8 +88,8 @@ add_action_log_record(State) ->
 	tenant_name=User#user.tenant_name,
 	timestamp=io_lib:format("~p", [utils:timestamp()])
 	},
-    UnicodeObjectName = unicode:characters_to_list(FileName),
-    Summary = lists:flatten([["Uploaded \""], [UnicodeObjectName],
+    UnicodeObjectKey = unicode:characters_to_list(FileName),
+    Summary = lists:flatten([["Uploaded \""], [UnicodeObjectKey],
 	[io_lib:format("\" ( ~p B )", [TotalBytes])]]),
     ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
     action_log:add_record(BucketId, Prefix, ActionLogRecord1).
@@ -131,7 +131,7 @@ acc_multipart(Req0, Acc) ->
 	    {_, FieldName0} = lists:keyfind(<<"name">>, 1, Params),
 	    FieldName1 =
 		case FieldName0 of
-		    <<"object_name">> -> object_name;
+		    <<"object_key">> -> object_key;
 		    <<"modified_utc">> -> modified_utc;
 		    <<"etags[]">> -> etags;
 		    <<"prefix">> -> prefix;
@@ -162,15 +162,14 @@ handle_post(Req0, State) ->
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    FileName0 = proplists:get_value(filename, FieldValues),
-	    ObjectName =
-		case proplists:get_value(object_name, FieldValues) of
+	    ObjectKey =
+		case proplists:get_value(object_key, FieldValues) of
 		    undefined -> undefined;
 		    ON ->
-			%% ObjectName should be an ascii string by now
+			%% ObjectKey should be an ascii string by now
 			erlang:binary_to_list(ON)
 		end,
 	    Etags = proplists:get_value(etags, FieldValues),
-
 	    BucketId = proplists:get_value(bucket_id, State),
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
 	    %% Current server UTC time
@@ -189,7 +188,7 @@ handle_post(Req0, State) ->
 		false ->
 		    FileName1 = unicode:characters_to_binary(FileName0),
 		    NewState = [
-			{object_name, ObjectName},
+			{object_key, ObjectKey},
 			{etags, Etags},
 			{prefix, Prefix0},
 			{file_name, FileName1},
@@ -215,11 +214,11 @@ upload_to_riak(Req0, State0, BinaryData) ->
 	not_found -> riak_api:create_bucket(BucketId);
 	_ -> ok
     end,
-    IndexContent = riak_index:get_index(BucketId, Prefix),
-    {ObjectKey, OrigName, IsPreviousVersion} = riak_api:pick_object_name(BucketId, Prefix, FileName, ModifiedTime0,
-									  IndexContent),
+    IndexContent = indexing:get_index(BucketId, Prefix),
+    {ObjectKey, OrigName, IsPreviousVersion} = riak_api:pick_object_key(BucketId, Prefix, FileName, ModifiedTime0,
+									IndexContent),
     %% Check modified time to determine newest object
-    PrefixedObjectKey0 = utils:prefixed_object_name(Prefix, ObjectKey),
+    PrefixedObjectKey0 = utils:prefixed_object_key(Prefix, ObjectKey),
     case IsPreviousVersion of
 	true ->
 	    Req1 = cowboy_req:reply(304, #{
@@ -239,18 +238,22 @@ upload_to_riak(Req0, State0, BinaryData) ->
 							   {"modified-utc", utils:to_list(ModifiedTime0)}]}],
 		    PrefixedObjectKey1 = riak_api:put_object(BucketId, Prefix, ObjectKey, BinaryData, Options),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([
-			{object_name, unicode:characters_to_binary(PrefixedObjectKey1)},
+			{object_key, unicode:characters_to_binary(PrefixedObjectKey1)},
+			{orig_name, OrigName},
 			{modified_utc, ModifiedTime0}
 		    ]), Req0),
 		    %% Update index
-		    riak_index:update(BucketId, Prefix),
-		    %% Update Solr index if file supported
-		    %% TODO: uncomment the following
-		    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
-		    %%	{prefix, Prefix}, {object_name, ObjectKey},
-		    %%	{total_bytes, TotalBytes}]),
-		    add_action_log_record(State0),
-		    {true, Req1, []}
+		    case indexing:update(BucketId, Prefix) of
+			lock -> js_handler:too_many(Req0);
+			_ ->
+			    %% Update Solr index if file supported
+			    %% TODO: uncomment the following
+			    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
+			    %% {prefix, Prefix}, {object_key, ObjectKey},
+			    %% {total_bytes, TotalBytes}]),
+			    add_action_log_record(State0),
+			    {true, Req1, []}
+		    end
 	    end
     end.
 
@@ -261,7 +264,7 @@ check_part(Req0, State, BinaryData) ->
     UploadId = proplists:get_value(upload_id, State),
     BucketId = proplists:get_value(bucket_id, State),
     PrefixedObjectKey = proplists:get_value(prefixed_key, State),
-    case proplists:get_value(object_name, State) of
+    case proplists:get_value(object_key, State) of
 	undefined -> js_handler:bad_request(Req0, 8);
 	_ ->
 	    case riak_api:validate_upload_id(BucketId, PrefixedObjectKey, UploadId) of
@@ -282,14 +285,16 @@ upload_part(Req0, State, BinaryData) ->
     UploadId = proplists:get_value(upload_id, State),
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
-    ObjectName = proplists:get_value(object_name, State),
+    ObjectKey = proplists:get_value(object_key, State),
     PartNumber = proplists:get_value(part_number, State),
     Etags0 = proplists:get_value(etags, State),
     EndByte = proplists:get_value(end_byte, State),
     TotalBytes = proplists:get_value(total_bytes, State),
+    OrigName = proplists:get_value(orig_name, State),
+    ModifiedTime = proplists:get_value(modified_utc, State),
 
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-    case riak_api:upload_part(BucketId, PrefixedObjectName, UploadId, PartNumber, BinaryData) of
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case riak_api:upload_part(BucketId, PrefixedObjectKey, UploadId, PartNumber, BinaryData) of
 	{ok, [{_, NewEtag0}]} ->
 	    case (EndByte+1 =:= TotalBytes) of
 		true ->
@@ -298,29 +303,35 @@ upload_part(Req0, State, BinaryData) ->
 			false ->
 			    %% parse etags from request to complete upload
 			    Etags1 = parse_etags(binary:split(Etags0, <<$,>>, [global])),
-			    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
-			    riak_api:complete_multipart(BucketId, PrefixedObjectName, UploadId, Etags1),
+			    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+			    riak_api:complete_multipart(BucketId, PrefixedObjectKey, UploadId, Etags1),
 			    <<_:1/binary, NewEtag1:32/binary, _:1/binary>> = unicode:characters_to_binary(NewEtag0),
 			    Response = [{upload_id, unicode:characters_to_binary(UploadId)},
-				{object_name, unicode:characters_to_binary(ObjectName)},
+				{object_key, unicode:characters_to_binary(ObjectKey)},
+				{modified_utc, ModifiedTime},
+				{orig_name, OrigName},
 				{end_byte, EndByte}, {md5, NewEtag1}],
 			    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
 
 			    %% Update index
-			    riak_index:update(BucketId, Prefix),
-			    %% Update Solr index if file supported
-			    %% TODO: uncomment the following
-			    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
-			    %%	{prefix, Prefix}, {object_name, ObjectName},
-			    %%	{total_bytes, TotalBytes}]),
-
-			    add_action_log_record(State),
-			    {true, Req1, []}
+			    case indexing:update(BucketId, Prefix) of
+				lock -> js_handler:too_many(Req0);
+				_ ->
+				    %% Update Solr index if file supported
+				    %% TODO: uncomment the following
+				    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
+				    %% {prefix, Prefix}, {object_key, ObjectKey},
+				    %% {total_bytes, TotalBytes}]),
+				    add_action_log_record(State),
+				    {true, Req1, []}
+			    end
 		    end;
 		false ->
 		    <<_:1/binary, NewEtag1:32/binary, _:1/binary>> = unicode:characters_to_binary(NewEtag0),
 		    Response = [{upload_id, unicode:characters_to_binary(UploadId)},
-			{object_name, unicode:characters_to_binary(ObjectName)},
+			{object_key, unicode:characters_to_binary(ObjectKey)},
+			{orig_name, OrigName},
+			{modified_utc, ModifiedTime},
 			{end_byte, EndByte},
 			{md5, NewEtag1}],
 		    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
@@ -351,8 +362,11 @@ start_upload(Req0, State, BinaryData) ->
 
     <<_:1/binary, Etag1:32/binary, _:1/binary>> = unicode:characters_to_binary(Etag0),
     Response = [{upload_id, unicode:characters_to_binary(UploadId1)},
-	{object_name, unicode:characters_to_binary(ObjectKey)},
-	{end_byte, EndByte}, {md5, Etag1}],
+	{object_key, unicode:characters_to_binary(ObjectKey)},
+	{orig_name, OrigName},
+	{modified_utc, ModifiedTime},
+	{end_byte, EndByte},
+	{md5, Etag1}],
     Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
     {true, Req1, []}.
 

@@ -31,9 +31,9 @@
 }.
 
 -record(general_settings, {
-    brand_name="Brand Name"::string(),
-    admin_email="support@example.com"::string(),
-    domain="example.com"::string(),
+    brand_name="Xentime"::string(),
+    admin_email="support@xentime.com"::string(),
+    domain="xentime.com"::string(),
     session_cookie_name=midsessionid::atom(),
     csrf_cookie_name=midcsrftoken::atom(),
     root_path="/riak/"::string(),

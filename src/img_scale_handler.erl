@@ -27,8 +27,8 @@ allowed_methods(Req, State) ->
 to_scale(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
-    ObjectName = proplists:get_value(object_name, State),
-    PrefixedObjectName = utils:prefixed_object_name(Prefix, ObjectName),
+    ObjectKey = proplists:get_value(object_key, State),
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     Width =
 	case proplists:get_value(width, State) of
 	    undefined -> ?DEFAULT_IMAGE_WIDTH;
@@ -47,7 +47,7 @@ to_scale(Req0, State) ->
 		    false -> H
 		end
 	end,
-    case riak_api:get_object(BucketId, PrefixedObjectName) of
+    case riak_api:get_object(BucketId, PrefixedObjectKey) of
 	not_found -> {<<>>, Req0, []};
 	RiakResponse ->
 	    Content = proplists:get_value(content, RiakResponse),
@@ -93,14 +93,14 @@ check_access_token(_, _, _, undefined) -> false;
 check_access_token(BucketId, Prefix, ObjectKey, AccessToken)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	     erlang:is_list(ObjectKey), erlang:is_list(AccessToken) ->
-    PrefixedIndexFilename = utils:prefixed_object_name(Prefix, ?RIAK_INDEX_FILENAME),
+    PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
     List0 =
 	case riak_api:get_object(BucketId, PrefixedIndexFilename) of
 	    not_found -> [{access_tokens, []}];
 	    C -> erlang:binary_to_term(proplists:get_value(content, C))
 	end,
     AccessTokens = proplists:get_value(access_tokens, List0),
-    case proplists:get_value(ObjectKey, AccessTokens) of
+    case proplists:get_value(utils:prefixed_object_key(Prefix, ObjectKey), AccessTokens) of
 	undefined -> false;
 	V -> V =:= AccessToken
     end.
@@ -125,10 +125,10 @@ forbidden(Req0, State) ->
     BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
     ParsedQs = cowboy_req:parse_qs(Req0),
     Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
-    ObjectName0 =
-	case proplists:get_value(<<"object_name">>, ParsedQs) of
+    ObjectKey0 =
+	case proplists:get_value(<<"object_key">>, ParsedQs) of
 	    undefined -> {error, 8};
-	    ObjectName1 -> unicode:characters_to_list(ObjectName1)
+	    ObjectKey1 -> unicode:characters_to_list(ObjectKey1)
 	end,
     Width =
 	case proplists:get_value(<<"w">>, ParsedQs) of
@@ -147,7 +147,7 @@ forbidden(Req0, State) ->
 	end,
     case proplists:get_value(user, State) of
 	undefined ->
-	    case lists:keyfind(error, 1, [Prefix, ObjectName0]) of
+	    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
 		{error, Number} ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
 		    {true, Req1, []};
@@ -158,7 +158,7 @@ forbidden(Req0, State) ->
 			    undefined -> undefined;
 			    N2 -> utils:to_list(N2)
 			end,
-		    case check_access_token(BucketId, Prefix, ObjectName0, AccessToken) of
+		    case check_access_token(BucketId, Prefix, ObjectKey0, AccessToken) of
 			false ->
 			    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, 28}]), Req0),
 			    {true, Req1, []};
@@ -169,7 +169,7 @@ forbidden(Req0, State) ->
 				{width, Width},
 				{height, Height},
 				{is_dummy, IsDummyReq},
-				{object_name, ObjectName0}
+				{object_key, ObjectKey0}
 			    ]}
 		    end
 	    end;
@@ -179,7 +179,7 @@ forbidden(Req0, State) ->
 		    false -> {error, 27};
 		    true -> ok
 		end,
-	    case lists:keyfind(error, 1, [Prefix, ObjectName0, BucketIdOK]) of
+	    case lists:keyfind(error, 1, [Prefix, ObjectKey0, BucketIdOK]) of
 		{error, Number} ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
 		    {true, Req1, []};
@@ -196,7 +196,7 @@ forbidden(Req0, State) ->
 				{width, Width},
 				{height, Height},
 				{is_dummy, IsDummyReq},
-				{object_name, ObjectName0}
+				{object_key, ObjectKey0}
 			    ]}
 		    end
 	    end

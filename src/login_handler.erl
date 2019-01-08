@@ -99,7 +99,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
     case check_cookie(UUID4) of
 	false -> false;
 	CookieValue ->
-	    PrefixedToken = utils:prefixed_object_name(?CSRF_TOKENS_PREFIX,
+	    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKENS_PREFIX,
 		erlang:binary_to_list(CookieValue)),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 		not_found -> false;
@@ -119,7 +119,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 -spec check_token(string()) -> user()|not_found|expired.
 
 check_token(UUID4) when erlang:is_list(UUID4) ->
-    PrefixedToken = utils:prefixed_object_name(?TOKENS_PREFIX, UUID4),
+    PrefixedToken = utils:prefixed_object_key(?TOKENS_PREFIX, UUID4),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 	not_found -> not_found;
 	TokenObject ->

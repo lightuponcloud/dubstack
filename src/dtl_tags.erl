@@ -16,10 +16,10 @@ inventory(filters) -> [basename, get_value].
 %% @doc Returns filepame without path
 -spec basename(string()|binary()) -> string().
 
-basename(ObjectName) when erlang:is_list(ObjectName) ->
-    filename:basename(ObjectName);
-basename(ObjectName) when erlang:is_binary(ObjectName) ->
-    filename:basename(unicode:characters_to_list(ObjectName)).
+basename(ObjectKey) when erlang:is_list(ObjectKey) ->
+    filename:basename(ObjectKey);
+basename(ObjectKey) when erlang:is_binary(ObjectKey) ->
+    filename:basename(unicode:characters_to_list(ObjectKey)).
 
 %% @doc Returns value of proplist by key
 -spec get_value(proplist(), string()) -> string().

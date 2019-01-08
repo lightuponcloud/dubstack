@@ -15,7 +15,7 @@
 -spec revoke_token(binary()) -> ok.
 
 revoke_token(UUID4) when erlang:is_binary(UUID4) ->
-    PrefixedToken = utils:prefixed_object_name(?TOKENS_PREFIX, erlang:binary_to_list(UUID4)),
+    PrefixedToken = utils:prefixed_object_key(?TOKENS_PREFIX, erlang:binary_to_list(UUID4)),
     riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken).
 
 %%
@@ -24,7 +24,7 @@ revoke_token(UUID4) when erlang:is_binary(UUID4) ->
 -spec revoke_csrf_token(binary()) -> ok.
 
 revoke_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
-    PrefixedToken = utils:prefixed_object_name(?CSRF_TOKENS_PREFIX, erlang:binary_to_list(UUID4)),
+    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKENS_PREFIX, erlang:binary_to_list(UUID4)),
     riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken).
 
 

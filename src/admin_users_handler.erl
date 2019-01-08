@@ -190,14 +190,14 @@ parse_user(RootElement) ->
 -spec get_user(string()) -> user()|not_found.
 
 get_user(UserId) when erlang:is_list(UserId) ->
-    PrefixedUserId = utils:prefixed_object_name(?USERS_PREFIX, UserId),
+    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, UserId),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	not_found -> not_found;
 	UserObject ->
 	    XMLDocument0 = utils:to_list(proplists:get_value(content, UserObject)),
 	    {RootElement0, _} = xmerl_scan:string(XMLDocument0),
             User0 = parse_user(RootElement0),
-	    PrefixedTenantId = utils:prefixed_object_name(?TENANTS_PREFIX, User0#user.tenant_id),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, User0#user.tenant_id),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		not_found -> not_found;
 		TenantObject ->
@@ -334,7 +334,7 @@ resource_exists(Req0, State) ->
 -spec new_user(any(), user()) -> any().
 
 new_user(Req0, User0) ->
-    PrefixedUserId = utils:prefixed_object_name(?USERS_PREFIX, User0#user.id),
+    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, User0#user.id),
     case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	not_found ->
 	    %% Create User
@@ -445,7 +445,7 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
 	true -> {error, {login, <<"Login is easier to remember when it is less than 30 characters.">>}};
 	false ->
 	    UserId = utils:hex(erlang:md5(Login0)),  %% User ID is md5(login)
-	    PrefixedLogin = utils:prefixed_object_name(?USERS_PREFIX, UserId),
+	    PrefixedLogin = utils:prefixed_object_key(?USERS_PREFIX, UserId),
 	    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
 		not_found -> {UserId, utils:hex(Login0)};
 		_ ->
@@ -655,7 +655,7 @@ delete_resource(Req0, State) ->
 	    }, jsx:encode([{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
 	    {true, Req1, []};
 	false ->
-	    PrefixedUserId = utils:prefixed_object_name(?USERS_PREFIX, User0#user.id),
+	    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, User0#user.id),
 	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
 	    {true, Req0, []}
     end.

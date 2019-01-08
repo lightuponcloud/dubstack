@@ -73,7 +73,7 @@ get_tenant(TenantId0) when erlang:is_list(TenantId0) ->
     case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
 	not_found -> not_found;
 	_ ->
-	    PrefixedTenantId = utils:prefixed_object_name(?TENANTS_PREFIX, TenantId0),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, TenantId0),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		not_found -> not_found;
 		Response ->
@@ -284,7 +284,7 @@ validate_tenant_name(TenantName0, _IsTenantRequired) when erlang:is_binary(Tenan
 	true -> {error, {name, erlang:list_to_binary([<<"Tenant name should be not empty. Its length ">>,
 			<<"should not exceed 254 characters.">>])}};
 	false ->
-	    TenantId0 = utils:slugify_object_name(TenantName0),
+	    TenantId0 = utils:slugify_object_key(TenantName0),
 	    case validate_tenant_id(TenantId0) of
 		{error, Reason} -> {error, Reason};
 		TenantId1 -> {TenantId1, utils:hex(utils:trim_spaces(TenantName0))}
@@ -317,7 +317,7 @@ validate_group_id(GroupId0) when erlang:is_binary(GroupId0) ->
 
 validate_group_name(GroupName0, TenantGroups)
 	when erlang:is_binary(GroupName0), erlang:is_list(TenantGroups) ->
-    GroupId0 = utils:slugify_object_name(GroupName0),
+    GroupId0 = utils:slugify_object_key(GroupName0),
     case validate_group_id(utils:alphanumeric(GroupId0)) of
 	{error, Reason} -> {error, Reason};
 	GroupId1 ->
@@ -463,7 +463,7 @@ new_tenant(Req0, Tenant0) ->
 	    riak_api:create_bucket(?SECURITY_BUCKET_NAME);
 	_ -> ok
     end,
-    PrefixedTenantId = utils:prefixed_object_name(?TENANTS_PREFIX, Tenant0#tenant.id),
+    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, Tenant0#tenant.id),
     ExistingTenantObject = riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
     case ExistingTenantObject of
 	not_found ->
@@ -593,7 +593,7 @@ delete_resource(Req0, _State) ->
 	    {true, Req1, []};
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),
-	    PrefixedTenantId = utils:prefixed_object_name(?TENANTS_PREFIX, TenantId2),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, TenantId2),
 	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId)
     end.
 

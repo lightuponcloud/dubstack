@@ -3,8 +3,8 @@
 %%
 -module(utils).
 -export([mime_type/1,
-	 slugify_object_name/1, prefixed_object_name/2, alphanumeric/1, trim_spaces/1,
-	 is_valid_bucket_id/2, is_valid_object_name/1, is_bucket_belongs_to_group/3,
+	 slugify_object_key/1, prefixed_object_key/2, alphanumeric/1, trim_spaces/1,
+	 is_valid_bucket_id/2, is_valid_object_key/1, is_bucket_belongs_to_group/3,
 	 is_bucket_belongs_to_tenant/2, to_integer/1, to_integer/2, to_float/1,
 	 to_float/2, to_number/1, to_list/1, to_binary/1, to_atom/1, to_boolean/1,
 	 is_true/1, is_false/1, even/1, has_duplicates/1, ends_with/2, starts_with/2,
@@ -46,9 +46,9 @@ alphanumeric(String) when erlang:is_binary(String)  ->
 %%
 %% Transliterates binary to ascii.
 %%
--spec slugify_object_name(binary()) -> string().
+-spec slugify_object_key(binary()) -> string().
 
-slugify_object_name(FileName0) when erlang:is_binary(FileName0) ->
+slugify_object_key(FileName0) when erlang:is_binary(FileName0) ->
     FileName1 = filename:rootname(FileName0),
     FileName2 = slughifi:slugify(FileName1),
     %% Not all unicode characters can be transliterated
@@ -73,37 +73,37 @@ trim_spaces(Bin0) ->
     re:replace(Bin0, <<"^\\s+|\\s+$">>, <<"">>, [{return, binary}, global]).
 
 %%
-%% Returns 'prefix/object_name'
-%% or, if prefix is empty just 'object_name'
+%% Returns 'prefix/object_key'
+%% or, if prefix is empty just 'object_key'
 %%
--spec prefixed_object_name(string()|binary()|undefined, string()|binary()) -> string().
+-spec prefixed_object_key(string()|binary()|undefined, string()|binary()) -> string().
 
-prefixed_object_name(undefined, ObjectName) -> ObjectName;
-prefixed_object_name([], ObjectName) -> ObjectName;
-prefixed_object_name(".", ObjectName) -> ObjectName;
-prefixed_object_name(<<>>, ObjectName) -> ObjectName;
-prefixed_object_name(Prefix, ObjectName0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectName0) ->
-    ObjectName1 =
-	case starts_with(ObjectName0, <<"/">>) of
+prefixed_object_key(undefined, ObjectKey) -> ObjectKey;
+prefixed_object_key([], ObjectKey) -> ObjectKey;
+prefixed_object_key(".", ObjectKey) -> ObjectKey;
+prefixed_object_key(<<>>, ObjectKey) -> ObjectKey;
+prefixed_object_key(Prefix, ObjectKey0) when erlang:is_binary(Prefix), erlang:is_binary(ObjectKey0) ->
+    ObjectKey1 =
+	case starts_with(ObjectKey0, <<"/">>) of
 	    true ->
-		<< _:1/binary, N0/binary >> = ObjectName0,
+		<< _:1/binary, N0/binary >> = ObjectKey0,
 		N0;
-	    false -> ObjectName0
+	    false -> ObjectKey0
 	end,
     case ends_with(Prefix, <<"/">>) of
-	true -> << Prefix/binary, ObjectName1/binary >>;
-	false -> << Prefix/binary, <<"/">>/binary, ObjectName1/binary >>
+	true -> << Prefix/binary, ObjectKey1/binary >>;
+	false -> << Prefix/binary, <<"/">>/binary, ObjectKey1/binary >>
     end;
-prefixed_object_name(Prefix, ObjectName0) when erlang:is_list(Prefix), erlang:is_list(ObjectName0) ->
-    ObjectName1 =
-	case string:sub_string(ObjectName0, 1, 1) =:= "/" of
-	    true -> string:sub_string(ObjectName0, 2, length(ObjectName0));
-	    false -> ObjectName0
+prefixed_object_key(Prefix, ObjectKey0) when erlang:is_list(Prefix), erlang:is_list(ObjectKey0) ->
+    ObjectKey1 =
+	case string:sub_string(ObjectKey0, 1, 1) =:= "/" of
+	    true -> string:sub_string(ObjectKey0, 2, length(ObjectKey0));
+	    false -> ObjectKey0
 	end,
     case string:sub_string(Prefix, length(Prefix), length(Prefix)) =:= "/" of
-	%% strip '/' at the end, return 'prefix/object_name'
-	true -> string:concat(Prefix, ObjectName1);
-	_ -> string:concat(Prefix ++ "/", ObjectName1)
+	%% strip '/' at the end, return 'prefix/object_key'
+	true -> string:concat(Prefix, ObjectKey1);
+	_ -> string:concat(Prefix ++ "/", ObjectKey1)
     end.
 
 -spec to_integer(string() | binary() | integer() | float() | undefined) -> integer().
@@ -323,7 +323,7 @@ is_valid_hex_prefix(HexPrefix) when erlang:is_binary(HexPrefix) ->
 	    case even(erlang:byte_size(T)) of
 		true ->
 		    case validate_hex(T, 0) of
-			0 -> is_valid_object_name(unhex(T));
+			0 -> is_valid_object_key(unhex(T));
 			1 -> false
 		    end;
 	    _ ->
@@ -386,21 +386,21 @@ is_bucket_belongs_to_tenant(_,_) -> false.
 %%
 %% Forbidden characters are " < > \ | / : * ?
 %%
-is_valid_object_name(<<>>, State) -> State;
-is_valid_object_name(<< $", _/bits >>, 0) -> 1;
-is_valid_object_name(<< $<, _/bits >>, 0) -> 1;
-is_valid_object_name(<< $>, _/bits >>, 0) -> 1;
-is_valid_object_name(<< "\\", _/bits >>, 0) -> 1;
-is_valid_object_name(<< $|, _/bits >>, 0) -> 1;
-is_valid_object_name(<< $/, _/bits >>, 0) -> 1;
-is_valid_object_name(<< $:, _/bits >>, 0) -> 1;
-is_valid_object_name(<< $*, _/bits >>, 0) -> 1;
-is_valid_object_name(<< $?, _/bits >>, 0) -> 1;
-is_valid_object_name(<< _, Rest/bits >>, 0) -> is_valid_object_name(Rest, 0).
+is_valid_object_key(<<>>, State) -> State;
+is_valid_object_key(<< $", _/bits >>, 0) -> 1;
+is_valid_object_key(<< $<, _/bits >>, 0) -> 1;
+is_valid_object_key(<< $>, _/bits >>, 0) -> 1;
+is_valid_object_key(<< "\\", _/bits >>, 0) -> 1;
+is_valid_object_key(<< $|, _/bits >>, 0) -> 1;
+is_valid_object_key(<< $/, _/bits >>, 0) -> 1;
+is_valid_object_key(<< $:, _/bits >>, 0) -> 1;
+is_valid_object_key(<< $*, _/bits >>, 0) -> 1;
+is_valid_object_key(<< $?, _/bits >>, 0) -> 1;
+is_valid_object_key(<< _, Rest/bits >>, 0) -> is_valid_object_key(Rest, 0).
 
-is_valid_object_name(Prefix) when erlang:is_binary(Prefix) ->
-    (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_name(Prefix, 0) =:= 0);
-is_valid_object_name(_) ->
+is_valid_object_key(Prefix) when erlang:is_binary(Prefix) ->
+    (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_key(Prefix, 0) =:= 0);
+is_valid_object_key(_) ->
     false.
 
 digit(0) -> $0;
@@ -451,10 +451,10 @@ timestamp() ->
 -spec is_hidden_object(proplist()) -> boolean().
 
 is_hidden_object(ObjInfo) ->
-    ObjectName = proplists:get_value(key, ObjInfo),
-    lists:suffix(?RIAK_INDEX_FILENAME, ObjectName) =:= true orelse 
-    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectName) =:= true orelse
-    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectName) =:= true.
+    ObjectKey = proplists:get_value(key, ObjInfo),
+    lists:suffix(?RIAK_INDEX_FILENAME, ObjectKey) =:= true orelse 
+    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
+    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true.
 
 %%
 %% Joins a list of elements adding a separator between each of them.
