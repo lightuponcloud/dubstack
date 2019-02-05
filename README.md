@@ -61,10 +61,11 @@ make deps
 make
 ```
 
-In order to use specific version of erlang, you should execute the following command:
+In order to use specific version of erlang, you should set environment variables 
+*C_INCLUDE_PATH* and *LIBRARY_PATH*. For example:
 ```sh
-export C_INCLUDE_PATH=/path/to/include-dir
-export LIBRARY_PATH=/path/to/include-dir
+export C_INCLUDE_PATH=/path/to/erlang/R1902/usr/include
+export LIBRARY_PATH=/path/to/erlang/R1902/usr/include
 ```
 
 #### 3. Edit configuration files
@@ -156,7 +157,13 @@ Staff user has permission to add other users.
 
 ## Dependencies
 
-Apart from erlang packages, it depends on ``coreutils`` ( ``"/usr/bin/head"`` command ) and ``imagemagick-6.q16``.
+Apart from erlang packages, it depends on the folliwing packages.
+
+* coreutils ( ``"/usr/bin/head"`` command )
+
+* imagemagick-6.q16
+
+* libmagickwand-dev
 
 
 ## API Documentation

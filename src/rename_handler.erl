@@ -51,6 +51,7 @@ validate_src_object_key(BucketId, Prefix0, SrcObjectKey0) ->
 	    end
     end.
 
+
 validate_post(Req, BucketId, FieldValues) ->
     Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
     SrcObjectKey0 = proplists:get_value(<<"src_object_key">>, FieldValues),
@@ -108,30 +109,51 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
 	    ok
     end.
 
-%%
-%% Checks if pseudo-directory exists, by requesting its index object.
-%% Then it checks if requested name is absent.
-%%
-src_dst_checks(BucketId, Prefix, PrefixedSrcDirectoryName, DstDirectoryName0) ->
-    %% Check if pseudo-directory exists
-    PrefixedSrcIndexObjectKey = utils:prefixed_object_key(PrefixedSrcDirectoryName, ?RIAK_INDEX_FILENAME),
-    case riak_api:get_object(BucketId, PrefixedSrcIndexObjectKey) of
+check_src_dir(BucketId, Prefix) ->
+    %% Check if correct source directory provided
+    PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
+    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
 	not_found -> {error, 9};
-	IndexContent0 ->
-	    %% Check if destination name exists already
-	    PrefixedDstDirectoryName =
-		case Prefix of
-		    undefined -> utils:hex(DstDirectoryName0)++"/";
-		    _ ->
-			DstDirectoryName1 = utils:hex(DstDirectoryName0),
-			utils:prefixed_object_key(Prefix, DstDirectoryName1)++"/"
-		end,
-	    IndexContent1 = erlang:binary_to_term(proplists:get_value(content, IndexContent0)),
-	    case indexing:pseudo_directory_exists(IndexContent1, PrefixedDstDirectoryName) of
+	IndexContent0 -> erlang:binary_to_term(proplists:get_value(content, IndexContent0))
+    end.
+
+%%
+%% Checks if pseudo-directory exists, by requesting its index object and
+%% then checking if requested name is present.
+%%
+validate_dst_name(BucketId, Prefix, DstName0, IndexContent)
+	when erlang:is_binary(DstName0) ->
+    %% Remove "/" at the end, if present
+    DstName1 =
+	case utils:ends_with(DstName0, <<"/">>) of
+	    true ->
+		Size0 = byte_size(DstName0)-1,
+		<<DstName3:Size0/binary, _/binary>> = DstName0,
+		DstName3;
+	    false -> DstName0
+	end,
+    case IndexContent of
+	{error, Number} -> {error, Number};
+	IndexContent1 ->
+	    %% Check if object with that name exists already
+	    case indexing:object_exists(IndexContent1, DstName1) of
+		true -> {error, 29};
 		false ->
-		    case indexing:update(BucketId, Prefix, [{uncommitted, true}]) of
-			lock -> lock;
-			_ -> PrefixedDstDirectoryName
+		    %% Check if pseudo-directory with that name exists already
+		    PrefixedName =
+			case Prefix of
+			    undefined -> utils:hex(DstName1);
+			    _ ->
+				DstName2 = utils:hex(DstName1),
+				utils:prefixed_object_key(Prefix, DstName2)
+			end,
+		    case indexing:pseudo_directory_exists(IndexContent1, PrefixedName++"/") of
+			true -> {error, 10};
+			false ->
+			    case indexing:update(BucketId, Prefix, [{uncommitted, true}]) of
+				lock -> lock;
+				_ -> PrefixedName
+			    end
 		    end
 	    end
     end.
@@ -154,12 +176,14 @@ src_dst_checks(BucketId, Prefix, PrefixedSrcDirectoryName, DstDirectoryName0) ->
 rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0, ActionLogRecord0)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
 	     erlang:is_list(PrefixedSrcDirectoryName), erlang:is_binary(DstDirectoryName0) ->
-    case src_dst_checks(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirectoryName0) of
+    IndexContent = check_src_dir(BucketId, Prefix0),
+    case validate_dst_name(BucketId, Prefix0, DstDirectoryName0, IndexContent) of
 	{error, Number} -> {error, Number};
 	lock -> lock;
-	PrefixedDstDirectoryName ->
+	PrefixedDstDirectoryName0 ->
+	    PrefixedDstDirectoryName1 = PrefixedDstDirectoryName0++"/",
 	    List0 = riak_api:recursively_list_pseudo_dir(BucketId, PrefixedSrcDirectoryName),
-	    RenameResult0 = [copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName,
+	    RenameResult0 = [copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName1,
 		PrefixedObjectKey) || PrefixedObjectKey <- List0,
 		lists:suffix(?RIAK_INDEX_FILENAME, PrefixedObjectKey) =/= true],
 	    %% Update indices for nested pseudo-directories
@@ -176,7 +200,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 			    DstKey0 = re:replace(PrefixedObjectKey, "^"++PrefixedSrcDirectoryName,
 						 "", [{return, list}]),
 			    DstPrefix =
-				case utils:prefixed_object_key(PrefixedDstDirectoryName, DstKey0) of
+				case utils:prefixed_object_key(PrefixedDstDirectoryName1, DstKey0) of
 				    "." -> undefined;
 				    P1 ->
 					case filename:dirname(P1) of
@@ -229,60 +253,44 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 		end
     end.
 
-rename_object(Req0, BucketId, Prefix0, SrcObjectKey0, DstObjectName0, ActionLogRecord0) ->
+rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, ActionLogRecord0) ->
     PrefixedSrcObjectKey = utils:prefixed_object_key(Prefix0, SrcObjectKey0),
-    ObjectMetaData = riak_api:head_object(BucketId, PrefixedSrcObjectKey),
-    ContentLength = proplists:get_value(content_length, ObjectMetaData),
-
-    %% Check if object with the same name or pseudo-directory with the same name exist
-    PrefixedIndexFilename = utils:prefixed_object_key(Prefix0, ?RIAK_INDEX_FILENAME),
-    IndexContent =
-	case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-		not_found -> [{dirs, []}, {list, []}, {renamed, []}];
-		Content -> erlang:binary_to_term(proplists:get_value(content, Content))
-	end,
-    ExistingPrefixes = [proplists:get_value(prefix, P)
-			|| P <- proplists:get_value(dirs, IndexContent, [])],
-    DstObjectName2 =
-	case utils:ends_with(DstObjectName0, <<"/">>) of
-	    true ->
-		Size0 = byte_size(DstObjectName0)-1,
-		<<DstObjectName3:Size0/binary, _/binary>> = DstObjectName0,
-		DstObjectName4 = utils:hex(DstObjectName3),
-		<< DstObjectName4/binary, <<"/">>/binary >>;
-	    false ->
-		DstObjectName5 = erlang:list_to_binary(utils:hex(DstObjectName0)),
-		<<  DstObjectName5/binary, <<"/">>/binary >>
-	end,
-    case lists:member(DstObjectName2, ExistingPrefixes) of
-	true -> js_handler:bad_request(Req0, 10);
-	false ->
-	    ExistingObjectNames = [proplists:get_value(orig_name, R)
-		|| R <- proplists:get_value(list, IndexContent, []),
-		proplists:get_value(is_deleted, R) =:= false],
-	    case lists:member(DstObjectName0, ExistingObjectNames) of
-		true -> js_handler:bad_request(Req0, 29);
+    IndexContent = check_src_dir(BucketId, Prefix0),
+    case validate_dst_name(BucketId, Prefix0, DstObjectName0, IndexContent) of
+	{error, Number} -> {error, Number};
+	lock -> lock;
+	_ ->
+	    %% We can't just update index with new name, as next file uploads/renames
+	    %% with the same object names would complain on existing objects.
+	    {DstObjectKey, OrigName0, _} = riak_api:pick_object_key(BucketId, Prefix0, DstObjectName0,
+                                                                    0, IndexContent),
+	    PrefixedDstObjectKey = utils:prefixed_object_key(Prefix0, DstObjectKey),
+	    CopyResult = riak_api:copy_object(BucketId, PrefixedDstObjectKey,
+                                              BucketId, PrefixedSrcObjectKey, [{acl, public_read}]),
+	    case proplists:get_value(content_length, CopyResult, 0) =:= "0" of
+		true -> {error, 35};
 		false ->
-		    %% Update objects index with new name
+		    %% Delete regular object
+		    riak_api:delete_object(BucketId, PrefixedSrcObjectKey),
+		    %% Find original object name for action log record
+		    ObjectRecord = lists:nth(1, [I || I <- proplists:get_value(list, IndexContent),
+			proplists:get_value(object_key, I) =:= erlang:list_to_binary(SrcObjectKey0)]),
+		    PreviousOrigName = unicode:characters_to_list(proplists:get_value(orig_name, ObjectRecord)),
+		    ObjectBytes = proplists:get_value(bytes, ObjectRecord),
+		    %% Update objects index
 		    case indexing:update(BucketId, Prefix0,
-			    [{renamed, [{SrcObjectKey0, [{name, unicode:characters_to_list(DstObjectName0)},
-							 {bytes, utils:to_integer(ContentLength)}]}]}]) of
-			lock -> js_handler:too_many(Req0);
-			List0 ->
-			    %% Find original object name for action log record
-			    ObjectRecord = lists:nth(1, [I || I <- List0,
-				proplists:get_value(object_key, I) =:= erlang:list_to_binary(SrcObjectKey0)]),
-			    OrigName0 = proplists:get_value(orig_name, ObjectRecord),
+					 [{renamed, [{DstObjectKey, [{name, unicode:characters_to_list(OrigName0)},
+								     {bytes, ObjectBytes}]}]}]) of
+			lock -> lock;
+			_ ->
 			    %% Create action log record
 			    OrigName1 = unicode:characters_to_list(OrigName0),
-			    Summary1 = lists:flatten([["Renamed \""], [OrigName1], ["\" to \""],
-						      [unicode:characters_to_list(DstObjectName0)], ["\""]]),
+			    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
+						     [OrigName1], ["\""]]),
 			    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
 			    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
-			    Req1 = cowboy_req:set_resp_body(jsx:encode(
-				[{orig_name, unicode:characters_to_binary(OrigName1)}]), Req0),
-			    {true, Req1, []}
-			end
+			    [{orig_name, unicode:characters_to_binary(OrigName1)}]
+		    end
 	    end
     end.
 
@@ -313,7 +321,14 @@ rename(Req0, BucketId, State) ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
 		    {true, Req1, []}
 	    end;
-	false -> rename_object(Req0, BucketId, Prefix0, SrcObjectKey0, DstObjectName0, ActionLogRecord0)
+	false ->
+	    case rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, ActionLogRecord0) of
+		{error, Number} -> js_handler:bad_request(Req0, Number);
+		lock -> js_handler:too_many(Req0);
+		Body ->
+		    Req1 = cowboy_req:set_resp_body(jsx:encode(Body), Req0),
+		    {true, Req1, []}
+	    end
     end.
 
 %%
@@ -345,7 +360,11 @@ is_authorized(Req0, _State) ->
 %% ( called after 'is_authorized()' )
 %%
 forbidden(Req0, State) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     case utils:is_valid_bucket_id(BucketId, State#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->

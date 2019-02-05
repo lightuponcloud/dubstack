@@ -132,7 +132,7 @@ acc_multipart(Req0, Acc) ->
 	    FieldName1 =
 		case FieldName0 of
 		    <<"object_key">> -> object_key;
-		    <<"modified_utc">> -> modified_utc;
+		    <<"modified_utc">> -> last_modified_utc;
 		    <<"etags[]">> -> etags;
 		    <<"prefix">> -> prefix;
 		    <<"files[]">> -> blob;
@@ -174,7 +174,7 @@ handle_post(Req0, State) ->
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
 	    %% Current server UTC time
 	    %% It is used by desktop client. TODO: use DVV instead
-	    ModifiedTime = validate_modified_time(proplists:get_value(modified_utc, FieldValues)),
+	    ModifiedTime = validate_modified_time(proplists:get_value(last_modified_utc, FieldValues)),
 	    Blob = proplists:get_value(blob, FieldValues),
 	    StartByte = proplists:get_value(start_byte, State),
 	    EndByte = proplists:get_value(end_byte, State),
@@ -192,7 +192,7 @@ handle_post(Req0, State) ->
 			{etags, Etags},
 			{prefix, Prefix0},
 			{file_name, FileName1},
-			{modified_utc, ModifiedTime}
+			{last_modified_utc, ModifiedTime}
 		    ] ++ State,
 		    upload_to_riak(Req1, NewState, Blob)
 	    end;
@@ -209,23 +209,23 @@ upload_to_riak(Req0, State0, BinaryData) ->
     IsBig = proplists:get_value(is_big, State0),
     _TotalBytes = proplists:get_value(total_bytes, State0),
     FileName = proplists:get_value(file_name, State0),
-    ModifiedTime0 = proplists:get_value(modified_utc, State0),
+    ModifiedTime0 = proplists:get_value(last_modified_utc, State0),
     case riak_api:head_bucket(BucketId) of
 	not_found -> riak_api:create_bucket(BucketId);
 	_ -> ok
     end,
     IndexContent = indexing:get_index(BucketId, Prefix),
-    {ObjectKey, OrigName, IsPreviousVersion} = riak_api:pick_object_key(BucketId, Prefix, FileName, ModifiedTime0,
-									IndexContent),
+    {ObjectKey, OrigName, IsNewVersion} = riak_api:pick_object_key(BucketId, Prefix, FileName, ModifiedTime0,
+								   IndexContent),
     %% Check modified time to determine newest object
     PrefixedObjectKey0 = utils:prefixed_object_key(Prefix, ObjectKey),
-    case IsPreviousVersion of
-	true ->
+    case IsNewVersion of
+	false ->
 	    Req1 = cowboy_req:reply(304, #{
 		<<"content-type">> => <<"application/json">>
 	    }, <<>>, Req0),
 	    {true, Req1, []};
-	false ->
+	true ->
 	    State1 = [{prefixed_key, PrefixedObjectKey0}, {orig_name, OrigName}],
 	    case IsBig of
 		true ->
@@ -240,10 +240,10 @@ upload_to_riak(Req0, State0, BinaryData) ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([
 			{object_key, unicode:characters_to_binary(PrefixedObjectKey1)},
 			{orig_name, OrigName},
-			{modified_utc, ModifiedTime0}
+			{last_modified_utc, ModifiedTime0}
 		    ]), Req0),
 		    %% Update index
-		    case indexing:update(BucketId, Prefix) of
+		    case indexing:update(BucketId, Prefix, [{last_modified_map, [{ObjectKey, ModifiedTime0}]}]) of
 			lock -> js_handler:too_many(Req0);
 			_ ->
 			    %% Update Solr index if file supported
@@ -291,7 +291,7 @@ upload_part(Req0, State, BinaryData) ->
     EndByte = proplists:get_value(end_byte, State),
     TotalBytes = proplists:get_value(total_bytes, State),
     OrigName = proplists:get_value(orig_name, State),
-    ModifiedTime = proplists:get_value(modified_utc, State),
+    ModifiedTime = proplists:get_value(last_modified_utc, State),
 
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case riak_api:upload_part(BucketId, PrefixedObjectKey, UploadId, PartNumber, BinaryData) of
@@ -308,13 +308,13 @@ upload_part(Req0, State, BinaryData) ->
 			    <<_:1/binary, NewEtag1:32/binary, _:1/binary>> = unicode:characters_to_binary(NewEtag0),
 			    Response = [{upload_id, unicode:characters_to_binary(UploadId)},
 				{object_key, unicode:characters_to_binary(ObjectKey)},
-				{modified_utc, ModifiedTime},
+				{last_modified_utc, ModifiedTime},
 				{orig_name, OrigName},
 				{end_byte, EndByte}, {md5, NewEtag1}],
 			    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
 
 			    %% Update index
-			    case indexing:update(BucketId, Prefix) of
+			    case indexing:update(BucketId, Prefix, [{last_modified_map, [{ObjectKey, ModifiedTime}]}]) of
 				lock -> js_handler:too_many(Req0);
 				_ ->
 				    %% Update Solr index if file supported
@@ -331,7 +331,7 @@ upload_part(Req0, State, BinaryData) ->
 		    Response = [{upload_id, unicode:characters_to_binary(UploadId)},
 			{object_key, unicode:characters_to_binary(ObjectKey)},
 			{orig_name, OrigName},
-			{modified_utc, ModifiedTime},
+			{last_modified_utc, ModifiedTime},
 			{end_byte, EndByte},
 			{md5, NewEtag1}],
 		    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
@@ -349,7 +349,7 @@ start_upload(Req0, State, BinaryData) ->
     EndByte = proplists:get_value(end_byte, State),
     PrefixedObjectKey = proplists:get_value(prefixed_key, State),
     OrigName = proplists:get_value(orig_name, State),
-    ModifiedTime = proplists:get_value(modified_utc, State),
+    ModifiedTime = proplists:get_value(last_modified_utc, State),
 
     Options = [{acl, public_read}, {meta, [{"orig-filename", OrigName},
 					   {"modified-utc", utils:to_list(ModifiedTime)}]}],
@@ -364,7 +364,7 @@ start_upload(Req0, State, BinaryData) ->
     Response = [{upload_id, unicode:characters_to_binary(UploadId1)},
 	{object_key, unicode:characters_to_binary(ObjectKey)},
 	{orig_name, OrigName},
-	{modified_utc, ModifiedTime},
+	{last_modified_utc, ModifiedTime},
 	{end_byte, EndByte},
 	{md5, Etag1}],
     Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
@@ -432,7 +432,11 @@ validate_content_range(Req) ->
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, State0) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     case utils:is_valid_bucket_id(BucketId, State0#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->

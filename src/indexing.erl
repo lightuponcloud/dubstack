@@ -4,7 +4,7 @@
 %%
 -module(indexing).
 -export([update/2, update/3, get_index/2, get_object_record/2,
-	 pseudo_directory_exists/2]).
+	 object_exists/2, pseudo_directory_exists/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -18,7 +18,7 @@
 %%
 %% ObjectRenameMap -- [{some_object_key: new  name}]
 %%
-prepare_object_record(Record0, ObjectRenameMap, DeletedObjects, AccessTokens, MD5map) ->
+prepare_object_record(Record0, LastModifiedUTCMap, ObjectRenameMap, DeletedObjects, AccessTokens, MD5map) ->
     Metadata = proplists:get_value(metadata, Record0),
     ObjectKey0 = proplists:get_value(key, Record0),
     ObjectKey1 = filename:basename(ObjectKey0),
@@ -28,9 +28,13 @@ prepare_object_record(Record0, ObjectRenameMap, DeletedObjects, AccessTokens, MD
 	    N -> N
 	end,
     ModifiedTime =
-	case proplists:get_value("x-amz-meta-modified-utc", Metadata) of
-	    undefined -> "";
-	    T0 -> utils:to_integer(T0)
+	case proplists:get_value(ObjectKey1, LastModifiedUTCMap) of
+	    undefined ->
+		case proplists:get_value("x-amz-meta-modified-utc", Metadata) of
+		    undefined -> "";
+		    T0 -> utils:to_integer(T0)
+		end;
+	    T1 -> T1
 	end,
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
     UploadTimestamp1 = calendar:datetime_to_gregorian_seconds(UploadTimestamp0) - 62167219200,
@@ -69,7 +73,7 @@ prepare_object_record(Record0, ObjectRenameMap, DeletedObjects, AccessTokens, MD
     Token =
 	case proplists:get_value(ObjectKey0, AccessTokens) of
 	    undefined -> undefined;
-	    T1 -> unicode:characters_to_binary(T1)
+	    T2 -> unicode:characters_to_binary(T2)
 	end,
     [{object_key, erlang:list_to_binary(ObjectKey1)},
      {orig_name, unicode:characters_to_binary(OrigName1)},
@@ -89,20 +93,21 @@ prepare_object_record(Record0, ObjectRenameMap, DeletedObjects, AccessTokens, MD
 %% Returns aggregated list of objects with metadata,
 %% as well as list of deleted and renamed objects.
 %%
--spec get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, AccessTokens0, MD5map0,
+-spec get_diff_list(BucketId, Prefix0, List0, LastModifiedUTCMap, ObjectRenameMap0, DeletedObjects0, AccessTokens0, MD5map0,
 	    IsUncommitted) -> proplist() when
 	BucketId :: string(),
 	Prefix0 :: string(),
 	List0 :: list(),
-	ObjectRenameMap0 :: proplist(),  %% Stored map of keys and new names
-	DeletedObjects0 :: proplist(),   %% list of objects, marked as deleted
-	AccessTokens0 :: proplist(),     %% list of secret tokens, used to check if user can read object by URL
-	MD5map0 :: proplist(),           %% since COPY operation destroys MD5, it has to be saved
+	LastModifiedUTCMap :: proplist(),  %% Map of object keys and their last_modified_utc values
+	ObjectRenameMap0 :: proplist(),    %% Stored map of keys and new names
+	DeletedObjects0 :: proplist(),     %% list of objects, marked as deleted
+	AccessTokens0 :: proplist(),       %% list of secret tokens, used to check if user can read object by URL
+	MD5map0 :: proplist(),             %% since COPY operation destroys MD5, it has to be saved
 	IsUncommitted :: boolean().
 
-get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, AccessTokens0, MD5map0, IsUncommitted)
+get_diff_list(BucketId, Prefix0, List0, LastModifiedUTCMap0, ObjectRenameMap0, DeletedObjects0, AccessTokens0, MD5map0, IsUncommitted)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined,
-	     erlang:is_list(List0), erlang:is_list(ObjectRenameMap0),
+	     erlang:is_list(List0), erlang:is_list(ObjectRenameMap0), erlang:is_list(LastModifiedUTCMap0),
 	     erlang:is_list(DeletedObjects0), erlang:is_list(AccessTokens0), erlang:is_boolean(IsUncommitted) ->
     Prefix1 =
 	case Prefix0 of
@@ -114,7 +119,15 @@ get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, Acces
     ActualListContents = proplists:get_value(list, List1),
     PrefixList0 = proplists:get_value(dirs, List1),
 
-    % Exclude non-existent objects from rename map
+    %% Exclude non-existent objects from lastModified map
+    LastModifiedUTCMap1 =
+	case length(LastModifiedUTCMap0) of
+	    0 -> [];
+	    _ -> [{K, proplists:get_value(K, LastModifiedUTCMap0)}
+		  || K <- proplists:get_keys(LastModifiedUTCMap0),
+		  proplists:is_defined(utils:prefixed_object_key(Prefix0, K), ActualListContents)]
+	end,
+    %% Exclude non-existent objects from rename map
     ObjectRenameMap1 =
 	case length(ObjectRenameMap0) of
 	    0 -> [];
@@ -122,7 +135,7 @@ get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, Acces
 		  || K <- proplists:get_keys(ObjectRenameMap0),
 		  proplists:is_defined(utils:prefixed_object_key(Prefix0, K), ActualListContents)]
 	end,
-    % Exclude non-existent objects from deleted list
+    %% Exclude non-existent objects from deleted list
     DeletedObjects1 =
 	case length(DeletedObjects0) of
 	    0 -> [];
@@ -138,17 +151,20 @@ get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, Acces
 			|| K <- proplists:get_keys(DeletedObjects0),
 			lists:member(utils:prefixed_object_key(Prefix0, erlang:binary_to_list(K)), PrefixList0)]
 	end,
-    %% Filter out non-existent records
-    List2 = [R || R <- IndexListContents,
-	     proplists:is_defined(
-		erlang:binary_to_list(utils:prefixed_object_key(Prefix1, proplists:get_value(object_key, R))),
-		ActualListContents) andalso
-	     proplists:is_defined(
-		erlang:binary_to_list(proplists:get_value(object_key, R)),
-		ObjectRenameMap1) =:= false andalso
-	     proplists:is_defined(proplists:get_value(object_key, R),
-		DeletedObjects1) =:= false
-	    ],
+    %% Filter out non-existent records, those that were renamed and marked as deleted
+    List2 = lists:filter(
+	fun(R) ->
+	    ObjectKey0 = proplists:get_value(object_key, R),
+	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
+	    IsExist = proplists:is_defined(
+		erlang:binary_to_list(utils:prefixed_object_key(Prefix1, ObjectKey0)),
+		ActualListContents),
+	    IsRenamed = proplists:is_defined(ObjectKey1, ObjectRenameMap1),
+	    IsDeleted = proplists:is_defined(ObjectKey1, DeletedObjects1),
+	    IsModified = proplists:is_defined(ObjectKey1, LastModifiedUTCMap1),
+	    IsExist andalso IsRenamed =:= false andalso IsDeleted =:= false andalso IsModified =:=  false
+	end, IndexListContents),
+
     %% Add access tokens to those objects that do not have them assigned yet.
     %% Those tokens are stored in index file, as they can be changed by user.
     %% Exclude tokens for non-existent objects.
@@ -158,14 +174,27 @@ get_diff_list(BucketId, Prefix0, List0, ObjectRenameMap0, DeletedObjects0, Acces
 	utils:is_hidden_object([{key, K}]) =:= false
 	] ++ [I || I <- AccessTokens0, proplists:is_defined(element(1, I), ActualListContents)],
 
-    %% Fetch the missing and renamed records
-    IndexKeys = [utils:prefixed_object_key(Prefix1, proplists:get_value(object_key, R)) || R <- List2],
-    List3 = [prepare_object_record([
-		{metadata, riak_api:get_object_metadata(BucketId, element(1, R))},
-		{upload_timestamp, element(2, R)},
-		{key, element(1, R)}], ObjectRenameMap1, DeletedObjects1, AccessTokens1, MD5map0)
-	     || R <- ActualListContents,
-	     lists:member(erlang:list_to_binary(element(1, R)), IndexKeys) =:= false],
+    %% Fetch the missing and modified records ( renamed or updated ones )
+    IndexKeys = lists:map(
+	fun(R0) ->
+	    R1 = utils:prefixed_object_key(Prefix1, proplists:get_value(object_key, R0)),
+	    erlang:binary_to_list(R1)
+	end, List2),
+
+    %% List3 is the list of objects that should be fetched from Riak CS
+    List3 = lists:filtermap(
+	fun(R) ->
+	    case lists:member(element(1, R), IndexKeys) of
+		true -> false;
+		false ->
+		    Metadata = [
+			{metadata, riak_api:get_object_metadata(BucketId, element(1, R))},
+			{upload_timestamp, element(2, R)},
+			{key, element(1, R)}],
+		    {true, prepare_object_record(Metadata, LastModifiedUTCMap1, ObjectRenameMap1,
+						 DeletedObjects1, AccessTokens1, MD5map0)}
+	    end
+	end, ActualListContents),
     [{dirs, [[{prefix, unicode:characters_to_binary(I)},
 	      {bytes, 0},
 	      {is_deleted, proplists:is_defined(erlang:list_to_binary(filename:basename(I)++"/"), DeletedObjects1)}]
@@ -246,6 +275,22 @@ get_object_record(IndexContent, ObjectKey) when erlang:is_binary(ObjectKey) ->
     end.
 
 %%
+%% Checks if object with specified original name exists
+%%
+-spec object_exists(proplist(), binary()) -> true|false.
+
+object_exists(IndexContent, OrigName0)
+	when erlang:is_list(IndexContent), erlang:is_binary(OrigName0) ->
+    ExistingNames = lists:map(
+	fun(I) ->
+	    OrigName1 = proplists:get_value(orig_name, I),
+	    OrigName2 = unicode:characters_to_list(OrigName1),
+	    ux_string:to_lower(OrigName2)
+	end, proplists:get_value(list, IndexContent, [])),
+    OrigName3 = ux_string:to_lower(unicode:characters_to_list(OrigName0)),
+    lists:member(OrigName3, ExistingNames).
+    
+%%
 %% Checks if pseudo-directory exists.
 %%
 -spec pseudo_directory_exists(proplist(), list()|binary()) -> true|false.
@@ -267,9 +312,8 @@ pseudo_directory_exists(IndexContent, DirectoryName0)
     lists:member(DirectoryName1, ExistingPrefixes).
 
 %%
-%% Creates list of objects for bucket and prefix,
-%% checks for renamed and marked as "deleted" ones.
-%% Then stores list in ETF format.
+%% Creates list of objects
+%% Stores list in ETF format in bucket/prefix.
 %%
 %% RiakOptions can include ACL for index object, as well as other Riak CS options
 %%
@@ -301,6 +345,8 @@ pseudo_directory_exists(IndexContent, DirectoryName0)
 %%	]}
 %%   ]}
 %%   ``copied_names`` is optional.
+%%
+%% - {last_modified_map, [{"blah.png", 1547059658}]}
 %%
 %% - {to_delete, [{"blah.png", 1532357691}]}
 %%
@@ -338,6 +384,16 @@ update(BucketId, Prefix0, Options, RiakOptions)
 
 	    %% Retrieve existing index object first
 	    List0 = get_index(BucketId, Prefix0),
+
+	    %% Existing object could have been modified. If time is different, it should be updated.
+	    LastModifiedUTCMap0 = proplists:get_value(last_modified_map, Options, []),
+	    LastModifiedUTCMap1 = proplists:get_value(last_modified_map, List0, []),
+	    LastModifiedUTCMap2 = LastModifiedUTCMap0 ++ [
+		{K, proplists:get_value(K, LastModifiedUTCMap1)}
+		|| K <- proplists:get_keys(LastModifiedUTCMap1),
+		(proplists:is_defined(K, LastModifiedUTCMap0) =/= true)
+	    ],
+
 	    %% Take renamed object list from options and the retrieved one
 	    ObjectRenameMap0 = proplists:get_value(renamed, Options, []),
 	    ObjectRenameMap1 = proplists:get_value(renamed, List0, []),
@@ -359,9 +415,9 @@ update(BucketId, Prefix0, Options, RiakOptions)
 		 lists:member(K, UndeleteList) =:= false)
 	    ],
 	    %% Add renamed/deleted object maps from source index ( Used in COPY and MOVE ).
-	    [ObjectRenameMap3, DeletedObjects3, MD5map0] =
+	    [LastModifiedUTCMap3, ObjectRenameMap3, DeletedObjects3, MD5map0] =
 		case proplists:get_value(copy_from, Options) of
-		    undefined -> [[], [], []];
+		    undefined -> [[], [], [], []];
 		    CopyFrom ->
 			SrcBucketId = proplists:get_value(bucket_id, CopyFrom),
 			SrcPrefix = proplists:get_value(prefix, CopyFrom),
@@ -369,7 +425,7 @@ update(BucketId, Prefix0, Options, RiakOptions)
 			DstKeys = [proplists:get_value(new_key, I) || I <- CopiedNames1],
 			PrefixedSrcIndexFilename = utils:prefixed_object_key(SrcPrefix, ?RIAK_INDEX_FILENAME),
 			case riak_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
-			    not_found -> [[], [], []];
+			    not_found -> [[], [], [], []];
 			    Content ->
 				SrcList = erlang:binary_to_term(proplists:get_value(content, Content)),
 				%% Add new renamed AND copied objects to rename map.
@@ -385,6 +441,13 @@ update(BucketId, Prefix0, Options, RiakOptions)
 				ObjectRenameMap6 = lists:filter(
 				    fun({K, _}) -> proplists:is_defined(K, ObjectRenameMap5) =:= false end,
 				    ObjectRenameMap4),
+				UTCMap = lists:map(
+				    fun(I) ->
+					NewKey = proplists:get_value(new_key, I),
+					DstPrefix = proplists:get_value(dst_prefix, I),
+					PrefixedNewKey = utils:prefixed_object_key(DstPrefix, NewKey),
+					{PrefixedNewKey, proplists:get_value(last_modified_utc, I)}
+				    end, CopiedNames1),
 				MD5map1 = lists:map(
 				    fun(I) ->
 					NewKey = proplists:get_value(new_key, I),
@@ -392,13 +455,13 @@ update(BucketId, Prefix0, Options, RiakOptions)
 					PrefixedNewKey = utils:prefixed_object_key(DstPrefix, NewKey),
 					{PrefixedNewKey, proplists:get_value(md5, I)}
 				    end, CopiedNames1),
-				[ObjectRenameMap5 ++ ObjectRenameMap6,
+				[UTCMap, ObjectRenameMap5 ++ ObjectRenameMap6,
 				 proplists:get_value(to_delete, SrcList, []),
 				 MD5map1]
 			end
 		end,
 	    IsUncommitted = proplists:get_value(uncommitted, Options, false),
-	    List1 = get_diff_list(BucketId, Prefix0, List0,
+	    List1 = get_diff_list(BucketId, Prefix0, List0, LastModifiedUTCMap2 ++ LastModifiedUTCMap3,
 		ObjectRenameMap2 ++ ObjectRenameMap3, DeletedObjects2 ++ DeletedObjects3,
 		proplists:get_value(access_tokens, List0, []), MD5map0, IsUncommitted),
 	    riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List1), RiakOptions),

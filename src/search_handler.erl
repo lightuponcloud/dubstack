@@ -133,7 +133,11 @@ is_authorized(Req0, _State) ->
 %% ( called after 'is_authorized()' )
 %%
 forbidden(Req0, State) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     case utils:is_valid_bucket_id(BucketId, State#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->

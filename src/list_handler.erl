@@ -99,7 +99,11 @@ is_authorized(Req0, _State) ->
 %% ( called after 'is_authorized()' )
 %%
 forbidden(Req0, State) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     case utils:is_valid_bucket_id(BucketId, State#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->
@@ -147,7 +151,8 @@ patch_resource(Req0, State) ->
 %%
 -spec validate_prefix(undefined|list(), undefined|list()) -> list()|{error, integer}.
 
-validate_prefix(undefined, undefined) -> undefined;
+validate_prefix(undefined, _Prefix) -> undefined;
+validate_prefix(_BucketId, undefined) -> undefined;
 validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined ->
     case utils:is_valid_hex_prefix(Prefix0) of
@@ -173,6 +178,7 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	     erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined,
 	     erlang:is_binary(DirectoryName0) ->
     case utils:is_valid_object_key(DirectoryName0) of
+	false -> {error, 12};
 	true ->
 	    case validate_prefix(BucketId, Prefix0) of
 		{error, Number} -> {error, Number};
@@ -181,12 +187,15 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 		    case indexing:pseudo_directory_exists(IndexContent, DirectoryName0) of
 			true -> {error, 10};
 			false ->
-			    HexDirectoryName = utils:hex(DirectoryName0),
-			    PrefixedDirectoryName = utils:prefixed_object_key(Prefix1, HexDirectoryName),
-			    {PrefixedDirectoryName, Prefix1, DirectoryName0}
+			    case indexing:object_exists(IndexContent, DirectoryName0) of
+				true -> {error, 29};
+				false ->
+				    HexDirectoryName = utils:hex(DirectoryName0),
+				    PrefixedDirectoryName = utils:prefixed_object_key(Prefix1, HexDirectoryName),
+				    {PrefixedDirectoryName, Prefix1, DirectoryName0}
+			    end
 		    end
-	    end;
-	false -> {error, 12}
+	    end
     end.
 
 %%

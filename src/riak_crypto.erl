@@ -176,10 +176,10 @@ random_string() ->
     AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
     lists:foldl(
 	fun(_, Acc) ->
-	    try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
+	    try [lists:nth(crypto:rand_uniform(1), AllowedChars)] of
 		Value -> Value ++ Acc
 	    catch error:low_entropy ->
 		riak_crypto:seed(),
-		[lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
+		[lists:nth(crypto:rand_uniform(1), AllowedChars)] ++ Acc
 	    end
 	end, [], lists:seq(1, Length)).

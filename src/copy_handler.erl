@@ -75,8 +75,8 @@ validate_src_object_keys(BucketId, SrcPrefix, SrcObjectKeys0) when erlang:is_bin
 	erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
     SrcObjectKeys1 = [K || K <- binary:split(SrcObjectKeys0, <<",">>, [global]), erlang:byte_size(K) > 0],
     validate_src_object_keys(BucketId, SrcPrefix, SrcObjectKeys1);
-validate_src_object_keys(BucketId, SrcPrefix, SrcObjectKeys0) when erlang:is_list(SrcObjectKeys0),
-	erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
+validate_src_object_keys(BucketId, SrcPrefix, SrcObjectKeys0)
+	when erlang:is_list(SrcObjectKeys0), erlang:is_list(SrcPrefix) orelse SrcPrefix =:= undefined ->
     SrcObjectKeys1 = [validate_src_object_key(BucketId, SrcPrefix, K) || K <- SrcObjectKeys0],
     Error = lists:keyfind(error, 1, SrcObjectKeys1),
     case Error of
@@ -379,7 +379,11 @@ is_authorized(Req0, _State) ->
     end.
 
 copy_forbidden(Req0, State) ->
-    SrcBucketId = erlang:binary_to_list(cowboy_req:binding(src_bucket_id, Req0)),
+    SrcBucketId =
+	case cowboy_req:binding(src_bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     User = proplists:get_value(user, State),
     TenantId = User#user.tenant_id,
     UserBelongsToGroup =

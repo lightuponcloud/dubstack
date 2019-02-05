@@ -122,7 +122,11 @@ is_authorized(Req0, _State) ->
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, State) ->
-    BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
     ParsedQs = cowboy_req:parse_qs(Req0),
     Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
     ObjectKey0 =

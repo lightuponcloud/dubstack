@@ -295,6 +295,7 @@ validate_hex(_, _) -> 1.
 %%
 -spec is_valid_bucket_id(string(), string()) -> boolean().
 
+is_valid_bucket_id(undefined, _TenantName) -> false;
 is_valid_bucket_id(BucketId, TenantName)
 	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
     Bits = string:tokens(BucketId, "-"),
@@ -498,6 +499,7 @@ has_duplicates([]) -> false.
 %%
 -spec ends_with(binary()|list()|undefined, binary()) -> boolean().
 
+ends_with(null, _Smth) -> false;
 ends_with(undefined, _Smth) -> false;
 ends_with(Name, Characters)
 	when erlang:is_list(Name), erlang:is_binary(Characters) ->

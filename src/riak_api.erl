@@ -264,6 +264,21 @@ is_new_version(_, _) -> false.
 %% Returns unique object name for provided bucket/prefix.
 %% It takes into account existing pseudo-directory names.
 %%
+%% It works the following way.
+%%
+%% 1. It slugifies name of object and checks
+%%    if object with that name exists in storage.
+%%
+%% 3. If object do not exist, checks if pseudo-directory 
+%%    with that name exists. If case pseudo-directory exists
+%%    it RENAMES object, -- adds -N, where N is incremented integer.
+%%
+%%    If object exists, it compares last_modified_utc of existing
+%%    object with new one. In existing object is older, that the
+%%    new one, returns unchanged name, so upload function rewrites
+%%    old object with contents of new one.
+%%
+%%
 %% Returns the following tuple.
 %%	{
 %%	    unique object key,
@@ -283,19 +298,31 @@ pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	 erlang:is_binary(FileName),
 	 erlang:is_integer(ModifiedTime) orelse ModifiedTime =:= undefined ->
-    ExistingPrefixes = [proplists:get_value(prefix, P) || P <- proplists:get_value(dirs, IndexContent, [])],
+    %% Lowercase directory names, used for comparision
+    ExistingPrefixes = lists:map(
+	fun(P0) ->
+	    P1 = filename:basename(proplists:get_value(prefix, P0)),
+	    P2 = unicode:characters_to_list(utils:unhex_path(erlang:binary_to_list(P1))),
+	    ux_string:to_lower(P2)
+	end, proplists:get_value(dirs, IndexContent, [])),
     ExistingList = proplists:get_value(list, IndexContent, []),
-    ExistingOrigNames = [proplists:get_value(orig_name, O) || O <- ExistingList],
+    %% Lowercase original object names, used for comparison
+    ExistingOrigNames = lists:map(
+	fun(I) ->
+	    OrigName1 = proplists:get_value(orig_name, I),
+	    OrigName2 = unicode:characters_to_list(erlang:binary_to_list(OrigName1)),
+	    ux_string:to_lower(OrigName2)
+	end, ExistingList),
     pick_object_key(BucketId, Prefix, FileName, ModifiedTime,
-		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, false).
+		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, true).
 
 pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-		ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsPreviousVersion0)
+		ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsNewVersion0)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	 erlang:is_binary(FileName0),
 	 erlang:is_integer(ModifiedTime0) orelse ModifiedTime0 =:= undefined,
 	 erlang:is_list(ExistingList), erlang:is_list(ExistingPrefixes),
-	 erlang:is_list(ExistingOrigNames), erlang:is_boolean(IsPreviousVersion0),
+	 erlang:is_list(ExistingOrigNames), erlang:is_boolean(IsNewVersion0),
 	 erlang:is_binary(Uniq1) orelse Uniq1 =:= undefined ->
     ObjectKey0 =
 	case Uniq1 of
@@ -312,32 +339,34 @@ pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 	end,
     ObjectKey2 = erlang:list_to_binary(ObjectKey1),
     %% Check if key exists
-    ExistingObject =
-	lists:filter(fun(I) -> proplists:get_value(object_key, I) =:= ObjectKey2 end, ExistingList),
+    ExistingObject = lists:filter(
+	fun(I) -> proplists:get_value(object_key, I) =:= ObjectKey2 end,
+	ExistingList),
     case ExistingObject of
 	[] ->
 	    %% Check if pseudo-directory with this name exists
-	    HexObjectKey0 = erlang:list_to_binary(utils:hex(ObjectKey0)),
-	    HexObjectKey1 = << HexObjectKey0/binary, <<"/">>/binary >>,
-	    case lists:member(HexObjectKey1, ExistingPrefixes) of
+	    DirectoryName = ux_string:to_lower(unicode:characters_to_list(ObjectKey0)),
+	    case lists:member(DirectoryName, ExistingPrefixes) of
 		true -> pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 					 ExistingList, ExistingPrefixes, ExistingOrigNames,
-					 increment_filename(ObjectKey0), IsPreviousVersion0);
+					 increment_filename(ObjectKey0), IsNewVersion0);
 		false ->
 		    %% Check if orig_name exists, as object could have been renamed
-		    case lists:member(ObjectKey0, ExistingOrigNames) of
-			true -> pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-						 ExistingList, ExistingPrefixes, ExistingOrigNames,
-						 increment_filename(ObjectKey0), IsPreviousVersion0);
-			false -> {ObjectKey1, ObjectKey0, IsPreviousVersion0}
+		    ObjectKey3 = ux_string:to_lower(unicode:characters_to_list(ObjectKey0)),
+		    case lists:member(ObjectKey3, ExistingOrigNames) of
+			true ->
+			    RenamedOneModifiedTime = lists:nth(1, [proplists:get_value(last_modified_utc, I)
+					  || I <- ExistingList,
+					  proplists:get_value(orig_name, I) =:= ObjectKey0]),
+			    IsNewVersion = is_new_version(RenamedOneModifiedTime, ModifiedTime0),
+			    {ObjectKey1, ObjectKey0, IsNewVersion};
+			false -> {ObjectKey1, ObjectKey0, IsNewVersion0}
 		    end
 	    end;
 	[ObjectMeta] ->
 	    IsNewVersion = is_new_version(proplists:get_value(last_modified_utc, ObjectMeta), ModifiedTime0),
-	    case IsNewVersion of
-		true -> {ObjectKey1, ObjectKey0, false};  %% Just replace existing object with its newer version
-		false -> {ObjectKey1, ObjectKey0, true}
-	    end
+            %% If stored object is older, replace it with newer version
+	    {ObjectKey1, ObjectKey0, IsNewVersion}
     end.
 
 -spec get_object_metadata(string(), string()) -> proplist().
