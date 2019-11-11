@@ -30,7 +30,7 @@ typedef struct transform {
     size_t watermark_size;
     unsigned long scale_width;
     unsigned long scale_height;
-    unsigned char *tag;
+    unsigned char *tag; // PID
     size_t tag_size;
 } transform_se;
 
@@ -61,10 +61,13 @@ static ssize_t write_cmd(ei_x_buff * buff) {
     return write_exact((unsigned char *) buff->buff, buff->index);
 }
 
-static int encode_error(ei_x_buff * result, char * atom_name) {
-    fprintf(stderr, "%s\n", atom_name);
-
-    if (ei_x_encode_atom(result, atom_name))
+static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name) {
+  char error_key[6] = "error\0";
+  if (ei_x_new_with_version(result) || ei_x_encode_tuple_header(result, 2)
+	|| ei_x_encode_binary(result, se->tag, se->tag_size)
+	|| ei_x_encode_tuple_header(result, 2)
+        || ei_x_encode_atom(result, error_key)
+        || ei_x_encode_atom(result, atom_name))
         return -1;
     return 0;
 }
@@ -76,7 +79,7 @@ static int encode_error(ei_x_buff * result, char * atom_name) {
 int process_image(transform_se *se, ei_x_buff *result){
   int encode_stat = 0;
   if(se->from_size == 0){
-    encode_stat = encode_error(result, "no_src_img_error");
+    encode_stat = encode_error(se, result, "no_src_img_error");
     return encode_stat;
   }
   MagickBooleanType status;
@@ -87,8 +90,8 @@ int process_image(transform_se *se, ei_x_buff *result){
 
   status = MagickReadImageBlob(magick_wand, se->from, se->from_size);
   if (status == MagickFalse){
-    encode_stat = encode_error(result, "blob_src_imagemagick_error");
-     (void)DestroyMagickWand(magick_wand);
+    encode_stat = encode_error(se, result, "blob_src_imagemagick_error");
+    (void)DestroyMagickWand(magick_wand);
     return encode_stat;
   }
   if(se->watermark_size > 0){
@@ -98,7 +101,7 @@ int process_image(transform_se *se, ei_x_buff *result){
     magick_wand_watermark = NewMagickWand();
     status = MagickReadImageBlob(magick_wand_watermark, se->watermark, se->watermark_size);
     if (status == MagickFalse){
-      encode_stat = encode_error(result, "watermark_blob_imagemagick_error");
+      encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
       return encode_stat;
@@ -106,7 +109,7 @@ int process_image(transform_se *se, ei_x_buff *result){
 
     status = MagickEvaluateImageChannel(magick_wand_watermark, AlphaChannel, MultiplyEvaluateOperator, 0.4);
     if (status == MagickFalse){
-      encode_stat = encode_error(result, "alpha_imagemagick_error");
+      encode_stat = encode_error(se, result, "alpha_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
       return encode_stat;
@@ -114,7 +117,7 @@ int process_image(transform_se *se, ei_x_buff *result){
 
     status = MagickCompositeImage(magick_wand, magick_wand_watermark, DissolveCompositeOp, 896, 671);
     if (status == MagickFalse){
-      encode_stat = encode_error(result, "composite_imagemagick_error");
+      encode_stat = encode_error(se, result, "composite_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
       return encode_stat;
@@ -160,7 +163,7 @@ int process_image(transform_se *se, ei_x_buff *result){
   if (ei_x_new_with_version(result) || ei_x_encode_tuple_header(result, 2)
 	|| ei_x_encode_binary(result, se->tag, se->tag_size)
 	|| ei_x_encode_binary(result, output, output_len))
-    encode_stat = encode_error(result, "binary_encoding_error");
+    encode_stat = encode_error(se, result, "binary_encoding_error");
 
   (void)DestroyMagickWand(magick_wand);
   MagickWandTerminus();
@@ -207,25 +210,25 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
   for (i = 0; i < arity; i++){
     (void)ei_get_type((char *) buf, &offset, &type, (int *) &tmp_arity);
     if(ERL_SMALL_TUPLE_EXT != type){
-	encode_stat = encode_error(&result, "unexpected_type");
+	encode_stat = encode_error(se, &result, "unexpected_type");
 	break;
     }
     if (OK != ei_decode_tuple_header((const char *) buf, &offset, &tmp_arity)){
-	encode_stat = encode_error(&result, "tuple_decode_error");
+	encode_stat = encode_error(se, &result, "tuple_decode_error");
 	break;
     }
     if(tmp_arity != 2){
-	encode_stat = encode_error(&result, "tuple_value_decode_error");
+	encode_stat = encode_error(se, &result, "tuple_value_decode_error");
 	break;
     }
     if (ei_decode_atom((const char *) buf, &offset, last_atom)){
-	encode_stat = encode_error(&result, "atom_decode_error");
+	encode_stat = encode_error(se, &result, "atom_decode_error");
 	break;
     }
     if(strncmp("from", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->from_size));
 	if(ERL_BINARY_EXT != type){
-	    encode_stat = encode_error(&result, "binary_decode_error");
+	    encode_stat = encode_error(se, &result, "binary_decode_error");
 	    break;
 	}
 	se->from = malloc(se->from_size);
@@ -233,22 +236,22 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    return -1;
 	memset(se->from, 0, se->from_size);
 	if (OK != ei_decode_binary((const char *) buf, &offset, se->from, (long *) &(se->from_size))){
-	    encode_stat = encode_error(&result, "binary_decode_error");
+	    encode_stat = encode_error(se, &result, "binary_decode_error");
 	    break;
 	}
     } else if(strncmp("to", last_atom, strlen(last_atom)) == 0){
 	if (ei_decode_atom((const char *) buf, &offset, last_atom)){
-	    encode_stat = encode_error(&result, "atom_decode_error");
+	    encode_stat = encode_error(se, &result, "atom_decode_error");
 	    break;
 	}
 	if(strlen(last_atom)>4){
-	    encode_stat = encode_error(&result, "unk_dst_format");
+	    encode_stat = encode_error(se, &result, "unk_dst_format");
 	    break;
 	}
     } else if(strncmp("watermark", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->watermark_size));
 	if(ERL_BINARY_EXT != type){
-	    encode_stat = encode_error(&result, "watermark_binary_decode_error");
+	    encode_stat = encode_error(se, &result, "watermark_binary_decode_error");
 	    break;
 	}
 	se->watermark = malloc(se->watermark_size);
@@ -256,7 +259,7 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    return -1;
 	memset(se->watermark, 0, se->watermark_size);
 	if (OK != ei_decode_binary((const char *) buf, &offset, se->watermark, (long *) &(se->watermark_size))){
-	    encode_stat = encode_error(&result, "watermark_binary_decode_error");
+	    encode_stat = encode_error(se, &result, "watermark_binary_decode_error");
 	    break;
 	}
     } else if(strncmp("scale_width", last_atom, strlen(last_atom)) == 0){
@@ -266,7 +269,7 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
     } else if(strncmp("tag", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->tag_size));
 	if(ERL_BINARY_EXT != type){
-	    encode_stat = encode_error(&result, "tag_binary_decode_error");
+	    encode_stat = encode_error(se, &result, "tag_binary_decode_error");
 	    break;
 	}
 	se->tag = malloc(se->tag_size);
@@ -274,7 +277,7 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	    return -1;
 	memset(se->tag, 0, se->tag_size);
 	if (OK != ei_decode_binary((const char *) buf, &offset, se->tag, (long *) &(se->tag_size))){
-	    encode_stat = encode_error(&result, "tag_binary_decode_error");
+	    encode_stat = encode_error(se, &result, "tag_binary_decode_error");
 	    break;
 	}
     };
@@ -330,14 +333,18 @@ int main(void) {
   result.buffsz = MAXATOMLEN+10;
   result.buff = malloc(result.buffsz);
   result.index = 0;
-  if (NULL == result.buff)
+  if (NULL == result.buff){
+    fprintf(stderr, "Memory allocation error.\n");
     return -1;
+  }
   memset(result.buff, 0, result.buffsz);
 
   unsigned char * buf;
   buf = (unsigned char *) malloc(sizeof(char) * BUF_SIZE);
-  if (NULL == buf)
+  if (NULL == buf){
+    fprintf(stderr, "Memory allocation error.\n");
     return -1;
+  }
   memset(buf, 0, sizeof(char) * BUF_SIZE);
 
   transform_se se;
@@ -347,7 +354,8 @@ int main(void) {
     if (OK != ei_decode_version((const char *) buf, &offset, &version)){
       continue;
     } else if (OK != ei_decode_list_header((const char *) buf, &offset, &arity)){
-      encode_stat = encode_error(&result, "list_decode_error");
+      fprintf(stderr, "Failed to decode list.\n");
+      continue;
     } else {
       encode_stat = parse_transform(buf, offset, arity, &se, result);
       if(OK == encode_stat)

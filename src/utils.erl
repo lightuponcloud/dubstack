@@ -2,15 +2,19 @@
 %% This module contains common utilities.
 %%
 -module(utils).
--export([mime_type/1,
-	 slugify_object_key/1, prefixed_object_key/2, alphanumeric/1, trim_spaces/1,
-	 is_valid_bucket_id/2, is_valid_object_key/1, is_bucket_belongs_to_group/3,
-	 is_bucket_belongs_to_tenant/2, to_integer/1, to_integer/2, to_float/1,
-	 to_float/2, to_number/1, to_list/1, to_binary/1, to_atom/1, to_boolean/1,
-	 is_true/1, is_false/1, even/1, has_duplicates/1, ends_with/2, starts_with/2,
-	 hex/1, unhex/1, unhex_path/1, validate_utf8/2, is_valid_hex_prefix/1,
-	 is_hidden_object/1, join_list_with_separator/3, check_token/1,
-	 to_lower/1, timestamp/0]).
+%% Validations
+-export([is_valid_bucket_id/2, is_valid_object_key/1, is_bucket_belongs_to_group/3,
+	 is_bucket_belongs_to_tenant/2, is_true/1, is_false/1, 
+	 has_duplicates/1, ends_with/2, starts_with/2, even/1, 
+	 validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
+	 check_token/1, is_authorized/1]).
+%% Conversions
+-export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
+	 to_binary/1, to_atom/1, to_boolean/1]).
+%% Ancillary
+-export([mime_type/1, slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
+	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
+	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1]).
 
 -include("riak.hrl").
 -include("general.hrl").
@@ -25,11 +29,11 @@ mime_types() ->
 
 mime_type(FileName) when erlang:is_list(FileName) ->
     case filename:extension(FileName) of
-	[] ->
-	    "application/octet_stream";
-	Extension ->
+	[] -> "application/octet_stream";
+	Extension0 ->
+	    Extension1 = ux_string:to_lower(unicode:characters_to_list(Extension0)),
 	    MimeTypes = mime_types(),
-	    LookupKey = string:substr(Extension, 2),
+	    LookupKey = string:substr(Extension1, 2),
 	    proplists:get_value(LookupKey, MimeTypes, "application/octet_stream")
     end.
 
@@ -334,27 +338,7 @@ is_valid_hex_prefix(HexPrefix) when erlang:is_binary(HexPrefix) ->
     lists:all(
 	F0, [T || T <- binary:split(HexPrefix, <<"/">>, [global]), erlang:byte_size(T) > 0]
     );
-is_valid_hex_prefix(undefined) ->
-    true.
-
-%%
-%% - Converts binary to string.
-%% - Appends "/" at the end if absent.
-%% - Make lowercase.
-%%
--spec to_lower(binary()) -> list()|undefined.
-
-to_lower(Data0) when erlang:is_binary(Data0) ->
-    case Data0 of
-	<<>> -> undefined;
-	Data1 ->
-	    Data2 = string:to_lower(lists:flatten(erlang:binary_to_list(Data1))),
-	    case ends_with(Data1, <<"/">>) of
-		true -> Data2;
-		false -> Data2++"/"
-	    end
-    end;
-to_lower(undefined) -> undefined.
+is_valid_hex_prefix(undefined) -> true.
 
 %%
 %% Returns true, if "tenant id" and "group name", that are encoded
@@ -399,10 +383,11 @@ is_valid_object_key(<< $*, _/bits >>, 0) -> 1;
 is_valid_object_key(<< $?, _/bits >>, 0) -> 1;
 is_valid_object_key(<< _, Rest/bits >>, 0) -> is_valid_object_key(Rest, 0).
 
+-spec is_valid_object_key(binary()) -> true|false.
+
 is_valid_object_key(Prefix) when erlang:is_binary(Prefix) ->
     (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_key(Prefix, 0) =:= 0);
-is_valid_object_key(_) ->
-    false.
+is_valid_object_key(_) -> false.
 
 digit(0) -> $0;
 digit(1) -> $1;
@@ -442,12 +427,28 @@ unhex_path(Path) when erlang:is_list(Path) ->
     join_list_with_separator(Bits2, "/", []).
 
 %%
-%% Returns UNIX timestamp by taking the number of gregorian seconds
-%% and subtracting the unix time in gregorian seconds (62167219200).
+%% Returns UNIX timestamp. Precision: microseconds
 %%
 timestamp() ->
-    {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:now_to_datetime(os:timestamp()),
-    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}}) - 62167219200.
+    {Mega, Sec, Micro} = erlang:timestamp(),
+    (Mega*1000000 + Sec)*1000 + (Micro div 1000).
+
+%%
+%% Converts timestamp to datetime.
+%%
+timestamp_to_datetime(TimeStamp) ->
+    UnixEpochGS = calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}}),
+    GregorianSeconds = (TimeStamp div 1000) + UnixEpochGS,
+    calendar:universal_time_to_local_time(calendar:gregorian_seconds_to_datetime(GregorianSeconds)).
+
+%%
+%% Converts timestamp to string "YYYY-mm-dd".
+%%
+format_timestamp(ModifiedTime0) when erlang:is_integer(ModifiedTime0) ->
+    ModifiedTime1 = timestamp_to_datetime(ModifiedTime0*1000),
+    {{Year, Month, Day}, {_H, _M, _S}} = ModifiedTime1,
+    lists:flatten(
+	io_lib:format("~4.10.0b-~2.10.0b-~2.10.0b", [Year, Month, Day])).
 
 -spec is_hidden_object(proplist()) -> boolean().
 
@@ -533,4 +534,21 @@ starts_with(Name, Characters)
 	false ->
 	    <<Beginning:Size0/binary, _/binary>> = Name,
 	    Beginning =:= Characters
+    end.
+
+%%
+%% Returns the first item matching condition.
+%%
+firstmatch(L, Condition) ->
+  case lists:dropwhile(fun(E) -> not Condition(E) end, L) of
+    [] -> [];
+    [F | _] -> F
+  end.
+
+is_authorized(Req0) ->
+    case check_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	not_found -> js_handler:unauthorized(Req0, 28);
+	expired -> js_handler:unauthorized(Req0, 38);
+	User -> {true, Req0, User}
     end.

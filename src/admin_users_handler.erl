@@ -71,6 +71,7 @@ user_to_proplist(User) ->
 	{tenant_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tenant_name)))},
 	{tenant_enabled, utils:to_binary(User#user.tenant_enabled)},
 	{login, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.login)))},
+	{tel, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))},
 	{enabled, utils:to_binary(User#user.enabled)},
 	{staff, utils:to_binary(User#user.staff)},
 	{groups, [
@@ -123,6 +124,7 @@ to_html(Req0, State0) ->
     SessionId = proplists:get_value(session_id, State0),
     case login_handler:check_session_id(SessionId) of
 	false -> js_handler:redirect_to_login(Req0);
+	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    case User#user.staff of
 		false -> js_handler:redirect_to_login(Req0);
@@ -133,8 +135,12 @@ to_html(Req0, State0) ->
 			    undefined -> undefined;
 			    _ -> admin_tenants_handler:tenant_to_proplist(PathTenant0)
 			end,
-		    UsersList = [user_to_proplist(U) || U <- get_full_users_list(PathTenant0),
-			U =/= not_found],  %% tenant might be deleted
+		    Users = get_full_users_list(PathTenant0),
+		    UsersList = [user_to_proplist(U) || U <- Users, U =/= not_found], %% tenant might be deleted
+
+		    TenantIDs = sets:to_list(sets:from_list([U#user.tenant_id || U <- Users])),
+		    Tenants = admin_tenants_handler:get_tenants_by_ids(TenantIDs),
+
 		    State1 = admin_users_handler:user_to_proplist(User),
 		    {ok, Body} = admin_users_dtl:render([
 			{brand_name, Settings#general_settings.brand_name},
@@ -143,7 +149,8 @@ to_html(Req0, State0) ->
 			{token, SessionId},
 			{users_list, UsersList},
 			{users_count, length(UsersList)},
-			{path_tenant, PathTenant1}
+			{path_tenant, PathTenant1},
+			{tenants, Tenants}
 		    ] ++ State1),
 		    Req1 = cowboy_req:reply(200, #{
 			<<"content-type">> => <<"text/html">>
@@ -160,6 +167,7 @@ parse_user(RootElement) ->
     IsEnabled = erlcloud_xml:get_bool("/user/record/enabled", RootElement),
     IsStaff = erlcloud_xml:get_bool("/user/record/staff", RootElement),
     Login = erlcloud_xml:get_text("/user/record/login", RootElement),
+    Tel = erlcloud_xml:get_text("/user/record/tel", RootElement),
     HashedPassword = erlcloud_xml:get_text("/user/record/password", RootElement),
     HashType = erlcloud_xml:get_text("/user/record/hash_type", RootElement),
     GetGroupAttrs = fun(N) ->
@@ -174,6 +182,7 @@ parse_user(RootElement) ->
 	tenant_id = TenantId,
 	tenant_name = TenantName,
 	login = Login,
+	tel = Tel,
 	password = HashedPassword,
 	salt = Salt,
 	hash_type = HashType,
@@ -262,14 +271,15 @@ forbidden(Req0, _State) ->
 		tenant_name = "Non-existent",
 		tenant_enabled = true,
 		login = Settings#general_settings.admin_email,
+		tel = "",
 		enabled = true,
 		staff = true
 	    },
 	    {false, Req0, [{user, User0}]};
 	false ->
 	    case utils:check_token(Req0) of
-		not_found -> {true, Req0, []};
-		expired -> {true, Req0, []};
+		not_found -> js_handler:forbidden(Req0, 28);
+		expired -> js_handler:forbidden(Req0, 38);
 		undefined ->
 		    SessionCookieName = Settings#general_settings.session_cookie_name,
 		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
@@ -278,7 +288,7 @@ forbidden(Req0, _State) ->
 		User1 ->
 		    case User1#user.staff of
 			true -> {false, Req0, [{user, User1}]};
-			false -> {true, Req0, []}
+			false -> js_handler:forbidden(Req0, 39)
 		    end
 	    end
     end.
@@ -352,6 +362,7 @@ new_user(Req0, User0) ->
 			{password, [utils:to_list(User0#user.password)]},
 			{salt, [utils:to_list(User0#user.salt)]},
 			{login, [User0#user.login]},
+			{tel, [User0#user.tel]},
 			{enabled, [utils:to_list(User0#user.enabled)]},
 			{staff, [utils:to_list(User0#user.staff)]},
 			{date_updated, Timestamp},
@@ -391,6 +402,7 @@ edit_user(Req0, User) ->
 	    {password, [utils:to_list(User#user.password)]},
 	    {salt, [utils:to_list(User#user.salt)]},
 	    {login, [User#user.login]},
+	    {tel, [User#user.tel]},
 	    {enabled, [utils:to_list(User#user.enabled)]},
 	    {staff, [utils:to_list(User#user.staff)]},
 	    {date_updated, Timestamp},
@@ -503,6 +515,11 @@ validate_post(Tenant, Body) ->
 	true ->
 	    FieldValues = jsx:decode(Body),
 	    Login0 = validate_login(proplists:get_value(<<"login">>, FieldValues), required),
+	    Tel =
+		case proplists:get_value(<<"tel">>, FieldValues) of
+		    undefined -> "";
+		    V -> utils:hex(V)
+		end,
 	    Password0 = validate_password(proplists:get_value(<<"password">>, FieldValues)),
 	    UserName0 = validate_user_name(proplists:get_value(<<"name">>, FieldValues), required),
 	    Groups0 = validate_group_ids(proplists:get_value(<<"groups">>, FieldValues), Tenant#tenant.groups),
@@ -524,6 +541,7 @@ validate_post(Tenant, Body) ->
 			tenant_name = Tenant#tenant.name,
 			tenant_enabled = Tenant#tenant.enabled,
 			login = Login1,
+			tel = Tel,
 			salt = Salt,
 			password = Password1,
 			hash_type = HashType,
@@ -544,6 +562,7 @@ validate_patch(User, Tenant, Body) ->
 	    FieldValues = jsx:decode(Body),
 	    UserName0 = validate_user_name(proplists:get_value(<<"name">>, FieldValues), not_required),
 	    Login0 = validate_login(proplists:get_value(<<"login">>, FieldValues), not_required),
+	    Tel0 = proplists:get_value(<<"tel">>, FieldValues, ""),
 	    Password0 = validate_password(proplists:get_value(<<"password">>, FieldValues)),
 	    Groups0 = validate_group_ids(proplists:get_value(<<"groups">>, FieldValues), Tenant#tenant.groups),
 	    IsEnabled0 = admin_tenants_handler:validate_boolean(
@@ -563,6 +582,7 @@ validate_patch(User, Tenant, Body) ->
 			    undefined -> User#user.login;
 			    _ -> Login1
 			end,
+		    Tel1 = case Tel0 of undefined -> User#user.tel; _ -> utils:hex(Tel0) end,
 		    {HashType0, Salt0, Password1} = Password0,
 		    {HashType1, Salt1, Password2} =
 			case Password1 of
@@ -577,6 +597,7 @@ validate_patch(User, Tenant, Body) ->
 			tenant_name = User#user.tenant_name,
 			tenant_enabled = User#user.tenant_enabled,
 			login = Login2,
+			tel = Tel1,
 			salt = Salt1,
 			password = Password2,
 			hash_type = HashType1,

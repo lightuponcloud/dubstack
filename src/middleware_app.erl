@@ -20,6 +20,8 @@ start(_Type, _Args) ->
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
 	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},
 
+	    {"/riak/download/[...]", download_handler, []},
+
 	    {"/riak/copy/[:src_bucket_id]/", copy_handler, []},
 	    {"/riak/move/[:src_bucket_id]/", move_handler, []},
 	    {"/riak/rename/[:bucket_id]/", rename_handler, []},
@@ -46,12 +48,12 @@ start(_Type, _Args) ->
     ]),
     Settings = #general_settings{},
     {ok, _} = cowboy:start_clear(middleware_http_listener,
-        [{port, Settings#general_settings.listen_port}],
-        #{env => #{dispatch => Dispatch}}
-    ),
+	[{port, Settings#general_settings.http_listen_port}],
+	#{env => #{
+	    dispatch => Dispatch,
+	    idle_timeout => 43200000 %% 12 hours
+	}}),
     img:start_link(0),
     middleware_sup:start_link().
 
-
-stop(_State) ->
-    ok.
+stop(_State) -> ok.

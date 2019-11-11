@@ -9,9 +9,14 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-init(_) ->
-    ImgSpec = {img,
-                   {img, start_link, []},
-                   permanent, brutal_kill, worker, [img]},
 
-    {ok, {{one_for_one, 5, 1}, [ImgSpec]}}.
+init(_) ->
+    SupFlags = #{strategy => one_for_one, intensity => 1, period => 5},
+    ChildSpecs = [#{id => img,
+		    start => {img, start_link, []},
+		    restart => permanent,
+		    shutdown => brutal_kill,
+		    type => worker,
+		    modules => []}
+		],
+    {ok, {SupFlags, ChildSpecs}}.

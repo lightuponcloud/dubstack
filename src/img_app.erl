@@ -12,7 +12,6 @@ start() ->
 stop() ->
     application:stop(img_app).
 
-
 start(_Type, _Args) ->
     img_sup:start_link().
 

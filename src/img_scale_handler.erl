@@ -47,62 +47,30 @@ to_scale(Req0, State) ->
 		    false -> H
 		end
 	end,
-    case riak_api:get_object(BucketId, PrefixedObjectKey) of
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> {<<>>, Req0, []};
-	RiakResponse ->
-	    Content = proplists:get_value(content, RiakResponse),
-	    Reply0 = img:scale([
-		{from, Content},
-		{to, jpeg},
-		{scale_width, Width},
-		{scale_height, Height}
-	    ]),
-	    case Reply0 of
-		{ok, Output0} -> {Output0, Req0, []};
-		_ ->
-		    case proplists:get_value(is_dummy_required, State) of
-			true ->
-			    %% return dummy image instead
-			    EbinDir = filename:dirname(code:which(img_scale_handler)),
-			    AppDir = filename:dirname(EbinDir),
-			    Path = filename:join([AppDir, "priv", "img_unavailable.png"]),
-			    {ok, Output1} = file:read_file(Path),
-			    {ok, Output2} = img:scale([
-				{from, Output1},
-				{to, jpeg},
-				{scale_width, Width},
-				{scale_height, Height}
-			    ]),
-			    {Output2, Req0, []};
-			false -> {<<>>, Req0, []}
+	RiakResponse0 ->
+	    ModifiedTime = proplists:get_value("x-amz-meta-modified-utc", RiakResponse0),
+	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
+	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    RealKey = utils:format_timestamp(utils:to_integer(ModifiedTime)),
+	    RealPath = utils:prefixed_object_key(RealPrefix, RealKey),
+
+	    case riak_api:get_object(BucketId, RealPath) of
+		not_found -> {<<>>, Req0, []};
+		RiakResponse1 ->
+		    Content = proplists:get_value(content, RiakResponse1),
+		    Reply0 = img:scale([
+			{from, Content},
+			{to, jpeg},
+			{scale_width, Width},
+			{scale_height, Height}
+		    ]),
+		    case Reply0 of
+			{error, Reason} -> js_handler:bad_request(Req0, Reason);
+			Output0 -> {Output0, Req0, []}
 		    end
 	    end
-    end.
-
-%%
-%% Looks up Access Token in riak index object for object with specified key.
-%% Returns true if token is found. Otherwise returns false.
-%%
--spec check_access_token(BucketId, Prefix, ObjectKey, AccessToken) -> boolean() when
-    BucketId :: string(),
-    Prefix :: string()|atom(),
-    ObjectKey :: string(),
-    AccessToken :: string()|atom().
-
-check_access_token(_, _, _, undefined) -> false;
-check_access_token(BucketId, Prefix, ObjectKey, AccessToken)
-	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	     erlang:is_list(ObjectKey), erlang:is_list(AccessToken) ->
-    PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
-    List0 =
-	case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-	    not_found -> [{access_tokens, []}];
-	    C -> erlang:binary_to_term(proplists:get_value(content, C))
-	end,
-    AccessTokens = proplists:get_value(access_tokens, List0),
-    case proplists:get_value(utils:prefixed_object_key(Prefix, ObjectKey), AccessTokens) of
-	undefined -> false;
-	V -> V =:= AccessToken
     end.
 
 %%
@@ -152,30 +120,16 @@ forbidden(Req0, State) ->
     case proplists:get_value(user, State) of
 	undefined ->
 	    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
-		{error, Number} ->
-		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
-		    {true, Req1, []};
+		{error, Number} -> js_handler:forbidden(Req0, Number);
 		false ->
-		    %% Check access token if bearer token is not specified
-		    AccessToken =
-			case proplists:get_value(<<"access_token">>, ParsedQs) of
-			    undefined -> undefined;
-			    N2 -> utils:to_list(N2)
-			end,
-		    case check_access_token(BucketId, Prefix, ObjectKey0, AccessToken) of
-			false ->
-			    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, 28}]), Req0),
-			    {true, Req1, []};
-			true ->
-			    {false, Req0, [
-				{bucket_id, BucketId},
-				{prefix, Prefix},
-				{width, Width},
-				{height, Height},
-				{is_dummy, IsDummyReq},
-				{object_key, ObjectKey0}
-			    ]}
-		    end
+		    {false, Req0, [
+			{bucket_id, BucketId},
+			{prefix, Prefix},
+			{width, Width},
+			{height, Height},
+			{is_dummy, IsDummyReq},
+			{object_key, ObjectKey0}
+		    ]}
 	    end;
 	User ->
 	    BucketIdOK =
@@ -184,15 +138,13 @@ forbidden(Req0, State) ->
 		    true -> ok
 		end,
 	    case lists:keyfind(error, 1, [Prefix, ObjectKey0, BucketIdOK]) of
-		{error, Number} ->
-		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
-		    {true, Req1, []};
+		{error, Number} -> js_handler:forbidden(Req0, Number);
 		false ->
 		    UserBelongsToGroup = lists:any(fun(Group) ->
 			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
 			User#user.groups),
 		    case UserBelongsToGroup of
-			false -> {true, Req0, []};
+			false -> js_handler:forbidden(Req0, 37);
 			true ->
 			    {false, Req0, [
 				{bucket_id, BucketId},

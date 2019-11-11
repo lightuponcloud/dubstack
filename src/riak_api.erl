@@ -5,8 +5,8 @@
          head_bucket/1,
          list_objects/1, list_objects/2,
          copy_object/4, copy_object/5,
-         delete_object/2,
-         get_object/2, head_object/2,
+         delete_object/2, head_object/2,
+         get_object/2, get_object/3,
          get_object_metadata/2, get_object_metadata/3,
          put_object/4, put_object/5,
          start_multipart/2, start_multipart/4,
@@ -19,7 +19,7 @@
 	 increment_filename/1,
 	 pick_object_key/5,
 	 s3_request/8,
-	 request_httpc/5,
+	 request_httpc/6,
 	 recursively_list_pseudo_dir/2
         ]).
 
@@ -194,28 +194,53 @@ head_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) ->
 get_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) ->
     fetch_object(get, BucketId, Key, []).
 
+%%
+%% Download object by chunks, sending them to PID
+%%
+-spec get_object(string(), string(), list()) -> proplist().
+
+get_object(BucketId, Key, stream)
+	when erlang:is_list(BucketId), erlang:is_list(Key) ->
+    fetch_object(get, BucketId, Key, [{stream, true}]).
+
 -spec fetch_object(MethodName, BucketId, Key, Options) -> proplist()|not_found when
     MethodName :: atom(),
     BucketId :: string(),
     Key :: string(),
     Options :: proplist().
 
-fetch_object(MethodName, BucketId, Key, Options)
+fetch_object(MethodName, BucketId, Key, Options0)
 	when erlang:is_atom(MethodName), erlang:is_list(BucketId), erlang:is_list(Key) ->
-    RequestHeaders = [{"Range", proplists:get_value(range, Options)},
-                      {"If-Modified-Since", proplists:get_value(if_modified_since, Options)},
-                      {"If-Unmodified-Since", proplists:get_value(if_unmodified_since, Options)},
-                      {"If-Match", proplists:get_value(if_match, Options)},
-                      {"If-None-Match", proplists:get_value(if_none_match, Options)},
-                      {"x-amz-server-side-encryption-customer-algorithm", proplists:get_value(server_side_encryption_customer_algorithm, Options)},
-                      {"x-amz-server-side-encryption-customer-key", proplists:get_value(server_side_encryption_customer_key, Options)},
-                      {"x-amz-server-side-encryption-customer-key-md5", proplists:get_value(server_side_encryption_customer_key_md5, Options)}],
-    Subresource = case proplists:get_value(version_id, Options) of
+    RequestHeaders = [{"Range", proplists:get_value(range, Options0)},
+                      {"If-Modified-Since", proplists:get_value(if_modified_since, Options0)},
+                      {"If-Unmodified-Since", proplists:get_value(if_unmodified_since, Options0)},
+                      {"If-Match", proplists:get_value(if_match, Options0)},
+                      {"If-None-Match", proplists:get_value(if_none_match, Options0)},
+                      {"x-amz-server-side-encryption-customer-algorithm",
+		       proplists:get_value(server_side_encryption_customer_algorithm, Options0)},
+                      {"x-amz-server-side-encryption-customer-key",
+		       proplists:get_value(server_side_encryption_customer_key, Options0)},
+                      {"x-amz-server-side-encryption-customer-key-md5",
+		       proplists:get_value(server_side_encryption_customer_key_md5, Options0)}],
+    Subresource = case proplists:get_value(version_id, Options0) of
                       undefined -> "";
                       Version   -> ["versionId=", Version]
                   end,
     Config = #riak_api_config{},
-    case s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config) of
+    Response =
+	case proplists:get_value(stream, Options0) of
+	    undefined ->
+		s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config);
+	    true ->
+		Options1 = [{socket_opts, [
+				{recbuf, 16#FFFFFF},
+				{sndbuf, 16#1FFFFFF}]},
+				{body_format, binary},
+				{sync, false},
+				{stream, {self, once}}],
+		s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config, Options1)
+	end,
+    case Response of
 	{ok, {_Status, Headers, Body}} ->
 	    [{last_modified, proplists:get_value("last-modified", Headers)},
 	     {etag, proplists:get_value("etag", Headers)},
@@ -226,6 +251,7 @@ fetch_object(MethodName, BucketId, Key, Options)
 	     {content, Body},
 	     {version_id, proplists:get_value("x-amz-version-id", Headers, "null")}|extract_metadata(Headers)
 	    ];
+	{ok, RequestId} -> {ok, RequestId};
 	{error, _} -> not_found
     end.
 
@@ -261,23 +287,20 @@ is_new_version(OldVersion, NewVersion) when OldVersion < NewVersion -> true;
 is_new_version(_, _) -> false.
 
 %%
-%% Returns unique object name for provided bucket/prefix.
+%% Returns unique object name for provided bucket/prefix/object name.
 %% It takes into account existing pseudo-directory names.
-%%
-%% It works the following way.
 %%
 %% 1. It slugifies name of object and checks
 %%    if object with that name exists in storage.
 %%
-%% 3. If object do not exist, checks if pseudo-directory 
-%%    with that name exists. If case pseudo-directory exists
+%% 3. If object do not exist, it checks if pseudo-directory
+%%    with that name exists. In case pseudo-directory exists
 %%    it RENAMES object, -- adds -N, where N is incremented integer.
 %%
 %%    If object exists, it compares last_modified_utc of existing
-%%    object with new one. In existing object is older, that the
-%%    new one, returns unchanged name, so upload function rewrites
-%%    old object with contents of new one.
-%%
+%%    object with a new one. If an existing object is older than
+%%    a new one, returns unchanged name, so upload function rewrites
+%%    old object with contents of the new one.
 %%
 %% Returns the following tuple.
 %%	{
@@ -307,12 +330,13 @@ pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent)
 	end, proplists:get_value(dirs, IndexContent, [])),
     ExistingList = proplists:get_value(list, IndexContent, []),
     %% Lowercase original object names, used for comparison
-    ExistingOrigNames = lists:map(
-	fun(I) ->
+    ExistingOrigNames = [
+	begin
 	    OrigName1 = proplists:get_value(orig_name, I),
 	    OrigName2 = unicode:characters_to_list(erlang:binary_to_list(OrigName1)),
 	    ux_string:to_lower(OrigName2)
-	end, ExistingList),
+	end || I <- ExistingList,
+	proplists:get_value(is_deleted, I) =:= false],
     pick_object_key(BucketId, Prefix, FileName, ModifiedTime,
 		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, true).
 
@@ -338,11 +362,19 @@ pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 	    ON -> ON
 	end,
     ObjectKey2 = erlang:list_to_binary(ObjectKey1),
-    %% Check if key exists
-    ExistingObject = lists:filter(
-	fun(I) -> proplists:get_value(object_key, I) =:= ObjectKey2 end,
-	ExistingList),
-    case ExistingObject of
+    %% Check if key exists. Deleted records are not taken into account
+    ExistingObjectRecord = utils:firstmatch(ExistingList,
+	fun(ObjectRecord) ->
+	    case proplists:get_value(object_key, ObjectRecord) =:= ObjectKey2 of
+		true ->
+		    case proplists:get_value(is_deleted, ObjectRecord) of
+			true -> false;
+			false -> true
+		    end;
+		false -> false
+	    end
+	end),
+    case ExistingObjectRecord of
 	[] ->
 	    %% Check if pseudo-directory with this name exists
 	    DirectoryName = ux_string:to_lower(unicode:characters_to_list(ObjectKey0)),
@@ -363,9 +395,9 @@ pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
 			false -> {ObjectKey1, ObjectKey0, IsNewVersion0}
 		    end
 	    end;
-	[ObjectMeta] ->
+	ObjectMeta ->
 	    IsNewVersion = is_new_version(proplists:get_value(last_modified_utc, ObjectMeta), ModifiedTime0),
-            %% If stored object is older, replace it with newer version
+	    %% If stored object is older, replace it with newer version
 	    {ObjectKey1, ObjectKey0, IsNewVersion}
     end.
 
@@ -435,7 +467,6 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     MimeType = utils:mime_type(ObjectKey),
     HTTPHeaders = [{"content-type", MimeType}],
-	       %% TBD: {"x-riak-index-short-url", }
 
     RequestHeaders = [{"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}|HTTPHeaders]
         ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
@@ -443,7 +474,7 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
     Config = #riak_api_config{},
     {ok, {_Status, _Headers, _Body}} = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [],
                                   BinaryData, RequestHeaders, Config),
-    PrefixedObjectKey.
+    ok.
 
 -spec get_object_url(string(), string()) -> string().
 
@@ -531,8 +562,7 @@ upload_part(BucketId, Key, UploadId, PartNumber, Value, HTTPHeaders)
                     POSTData, HTTPHeaders, Config) of
         {ok, {_Status, Headers, _Body}} ->
             {ok, [{etag, proplists:get_value("etag", Headers)}]};
-        Error ->
-            Error
+        Error -> Error
     end.
 
 -spec complete_multipart(BucketId, Key, UploadId, ETags) -> {ok, proplist()} | {error, any()} when
@@ -616,7 +646,6 @@ s3_simple_request(Method, Host, Path, Subresource, Params, POSTData, Headers) ->
 s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Config) ->
     case s3_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Config) of
 	{ok, {_Status, _Headers, Body}} ->
-	    file:write_file("/tmp/.xml", Body),
 	    XML = element(1,xmerl_scan:string(binary_to_list(Body))),
 	    case XML of
     		#xmlElement{name='Error'} ->
@@ -626,6 +655,7 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
     		_ -> {ok, XML}
 	    end;
 	{error, {http_error, 404,_,_,_}} -> not_found;
+        {error, {failed_connect,_}} -> erlang:error({s3_error, failed_connect, "Connection Failed"});
 	{error, timeout} -> erlang:error({s3_error, timeout, "Timeout"})
     end.
 
@@ -641,19 +671,19 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
     Config :: riak_api_config().
 
 s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config) ->
-    %% s3_request returns {ok, Body} or {error, Reason}
+    Options = [{body_format, binary}],
+    s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config, Options).
 
+s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config, Options) ->
+    %% s3_request returns {ok, Body} or {error, Reason}
     ContentType = proplists:get_value("content-type", Headers, ""),
     FParams = [Param || {_, Value} = Param <- Params, Value =/= undefined],
     FHeaders = [Header || {_, Val} = Header <- Headers, Val =/= undefined],
 
     QueryParams = case Subresource of
-        "" ->
-            FParams;
-        _ ->
-            [{Subresource, ""} | FParams]
+        "" -> FParams;
+        _ -> [{Subresource, ""} | FParams]
     end,
-
     S3Host = Config#riak_api_config.s3_host,
     EscapedPath = erlcloud_http:url_encode_loose(Path),
     HostName = lists:flatten(
@@ -691,7 +721,7 @@ s3_request(Method, Bucket, Path, Subresource, Params, POSTData, Headers, Config)
                                                         end,
                                              {Headers2, POSTData}
                                      end,
-    request_httpc(RequestURI, Method, RequestHeaders2, RequestBody, Config).
+    request_httpc(RequestURI, Method, RequestHeaders2, RequestBody, Config, Options).
 
 
 s3_xml_request2(Method, Host, Path, Subresource, Params, POSTData, Headers, Config) ->
@@ -717,7 +747,7 @@ port_spec(#riak_api_config{s3_port=Port}) ->
 
 %% Guard clause protects against empty bodied requests from being
 %% unable to find a matching httpc:request call.
-request_httpc(URL, Method, Hdrs, <<>>, Config)
+request_httpc(URL, Method, Hdrs, <<>>, Config, Options)
     when (Method =:= options) orelse 
          (Method =:= get) orelse 
          (Method =:= head) orelse 
@@ -728,9 +758,9 @@ request_httpc(URL, Method, Hdrs, <<>>, Config)
     Timeout = get_timeout(Config),
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method, {URL, HdrsStr},
-	[{timeout, Timeout}], [{body_format, binary}]));
+	[{timeout, Timeout}], Options));
 
-request_httpc(URL, Method, Hdrs0, Body, Config) ->
+request_httpc(URL, Method, Hdrs0, Body, Config, Options) ->
     Hdrs1 =
 	case lists:keyfind("content-type", 1, Hdrs0) of
             false ->
@@ -745,10 +775,8 @@ request_httpc(URL, Method, Hdrs0, Body, Config) ->
     Timeout = get_timeout(Config),
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method,
-                                 {URL, Hdrs3,
-                                  ContentType, Body},
-                                 [{timeout, Timeout}],
-                                 [{body_format, binary}])).
+                                 {URL, Hdrs3, ContentType, Body},
+                                 [{timeout, Timeout}], Options)).
 
 response_httpc({ok, {{_HTTPVer, Status, StatusLine}, Headers, Body}}) ->
     case Status of
@@ -761,6 +789,7 @@ response_httpc({ok, {{_HTTPVer, Status, StatusLine}, Headers, Body}}) ->
 	_ ->
 	    {ok, {{Status, StatusLine}, [{string:to_lower(H), V} || {H, V} <- Headers], Body}}
     end;
+response_httpc({ok, PID}) -> {ok, PID};  %% In case stream was requested
 response_httpc({error, _} = Error) ->
     Error.
 
@@ -776,13 +805,10 @@ maybe_set_proxy(Config) ->
     ProxyHost = Config#riak_api_config.s3_proxy_host,
     ProxyPort = Config#riak_api_config.s3_proxy_port,
     case ProxyHost of
-	undefined ->
-	    httpc_reset_proxy();
+	undefined -> httpc_reset_proxy();
 	_ ->
 	    case ProxyPort of
-		undefined ->
-		    httpc_reset_proxy();
-		_ ->
-		    httpc:set_options([{proxy, {{ProxyHost, ProxyPort}, ["localhost"]}}])
+		undefined -> httpc_reset_proxy();
+		_ -> httpc:set_options([{proxy, {{ProxyHost, ProxyPort}, ["localhost"]}}])
 	    end
     end.

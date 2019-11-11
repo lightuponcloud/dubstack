@@ -13,22 +13,19 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
     You don't have to implement complex ``vN`` AWS signing algorithms.
 
-2. **HTTP/2 support**
-
-    Cowboy framework supports HTTP/2 and allows you to serve static files
-    in a more efficient way. In order to use HTTP/2, you would need to
-    generate SSL certificates and then change [middleware_app.erl](src/middleware_app.erl).
-    See [example](https://github.com/ninenines/cowboy/blob/master/examples/ssl_hello_world/src/ssl_hello_world_app.erl).
-
-3. **Readable URLs**
-    It transliterates UTF8 object names. For example pseudo-directory
-    ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
-    file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
-
-4. **Action log**
+2. **Action log**
 
     It records history of upload, copy, move, rename and delete operations.
     History is stored in ``.riak_action_log.xml`` object by default.
+
+3. **Provides web interface, Android application and synchronization client for Windows**
+
+    You can manage objects, users, their groups and tenants using browser or Android App.
+
+4. **Readable URLs**
+    It transliterates UTF8 object names. For example pseudo-directory
+    ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
+    file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
 
 5. **Search**
 
@@ -40,9 +37,6 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
     Thumbnails are generated on demand by dedicated gen_server process.
 
-7. **Provides web interface, Android application and synchronization client for Windows**
-
-    You can manage objects, users, their groups and tenants using browser or Android App.
 
 
 ## Installation
@@ -55,7 +49,6 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
 Clone this repository and execute the following commands.
 ```sh
-wget https://erlang.mk/erlang.mk
 make fetch-deps
 make deps
 make
@@ -64,20 +57,20 @@ make
 In order to use specific version of erlang, you should set environment variables 
 *C_INCLUDE_PATH* and *LIBRARY_PATH*. For example:
 ```sh
-export C_INCLUDE_PATH=/path/to/erlang/R1902/usr/include
-export LIBRARY_PATH=/path/to/erlang/R1902/usr/include
+export C_INCLUDE_PATH=/usr/lib/erlang/usr/include
+export LIBRARY_PATH=/usr/lib/erlang/usr/lib
 ```
 
 #### 3. Edit configuration files
 
 You need to change ``riak_api_config`` in ``include/riak.hrl``.
-Find ``riak-cs.conf`` in Riak CS directory, take ``admin.key`` value from ``riak-cs.conf``
-and place it to ``access_key_id`` in ``include/riak.hrl``.
+Locate ``riak-cs.conf`` in Riak CS directory. Copy ``admin.key`` value from ``riak-cs.conf``
+and paste it to ``access_key_id`` in ``riak_api_config``.
 
-Then find riak.conf in Riak directory and place value of ``riak_control.auth.user.admin.password``
+Then locate ``riak.conf`` in Riak directory and place value of ``riak_control.auth.user.admin.password``
 to ``include/riak.hrl``, to the ``secret_access_key`` option.
 
-In order to add first user, authentication should be disabled temporary.
+In order to add first user, authentication should be temporary disabled.
 
 Edit file ``include/riak.hrl`` and set ``ANONYMOUS_USER_CREATION`` to ``true``.
 
@@ -150,8 +143,14 @@ curl -X POST "http://127.0.0.1/riak/admin/mybrand/users/" \
 }
 ```
 
-Now you can disable ``ANONYMOUS_USER_CREATION``, restart DubStack and login
-using credentials of staff user that you have just created.
+Now you should change ``general_settings`` in ``include/general.hrl`` and set
+``domain`` option to IP address or domain name that you use.
+Otherwise login won't work.
+
+Finally you should set ``ANONYMOUS_USER_CREATION`` to ``false``
+and restart DubStack. 
+
+You can login now using credentials of staff user that you have just created.
 Staff user has permission to add other users.
 
 

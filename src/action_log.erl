@@ -4,8 +4,10 @@
 -module(action_log).
 -behavior(cowboy_handler).
 
--export([init/2, content_types_provided/2, to_json/2, allowed_methods/2, forbidden/2,
-    resource_exists/2, previously_existed/2, add_record/3, strip_hidden_part/1]).
+-export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
+         content_types_accepted/2,  forbidden/2, resource_exists/2,
+	 previously_existed/2]).
+-export([add_record/3, strip_hidden_part/1, fetch_full_object_history/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -55,10 +57,23 @@ add_record(BucketId, Prefix, Record0) ->
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
 
+%%
+%% Called first
+%%
+allowed_methods(Req, State) ->
+    {[<<"GET">>, <<"POST">>], Req, State}.
+
+
 content_types_provided(Req, State) ->
     {[
-	{{<<"application">>, <<"json">>, []}, to_json}
+	{{<<"application">>, <<"json">>, '*'}, to_json}
     ], Req, State}.
+
+content_types_accepted(Req, State) ->
+    case cowboy_req:method(Req) of
+	<<"POST">> ->
+	    {[{{<<"application">>, <<"json">>, '*'}, handle_post}], Req, State}
+    end.
 
 %%
 %% Helps to transform action log record from XML to JSON
@@ -78,17 +93,16 @@ template(E = #xmlElement{name=record}) ->
     ];
 template(E) -> built_in_rules(fun template/1, E).
 
-to_json(Req0, State) ->
-    BucketId = proplists:get_value(bucket_id, State),
-    Prefix = proplists:get_value(prefix, State),
-
+%%
+%% Returns pseudo-directory action log
+%%
+get_action_log(Req0, State, BucketId, Prefix) ->
     PrefixedActionLogFilename = utils:prefixed_object_key(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
     ExistingObject0 = riak_api:head_object(BucketId,
 	PrefixedActionLogFilename),
     case ExistingObject0 of
-	not_found ->
-	    {["[]"], Req0, State};
+	not_found -> js_handler:not_found(Req0);
 	_ ->
 	    ExistingObject1 = riak_api:get_object(BucketId, PrefixedActionLogFilename),
 	    XMLContent0 = utils:to_list(proplists:get_value(content, ExistingObject1)),
@@ -101,10 +115,66 @@ to_json(Req0, State) ->
     end.
 
 %%
-%% Called first
+%% Retrieves list of objects from Riak CS (all pages).
 %%
-allowed_methods(Req, State) ->
-    {[<<"GET">>], Req, State}.
+fetch_full_object_history(BucketId, GUID)
+	when erlang:is_list(BucketId), erlang:is_list(GUID) ->
+    fetch_full_object_history(BucketId, GUID, [], undefined).
+
+fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
+	when erlang:is_list(BucketId), erlang:is_list(ObjectList0), erlang:is_list(GUID) ->
+    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+    RiakResponse = riak_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, Marker0}]),
+    case RiakResponse of
+	not_found -> [];
+	_ ->
+	    ObjectList1 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
+	    Marker1 = proplists:get_value(next_marker, RiakResponse),
+	    case Marker1 of
+		undefined -> ObjectList0 ++ ObjectList1;
+		[] -> ObjectList0 ++ ObjectList1;
+		NextMarker ->
+		    NextPart = fetch_full_object_history(BucketId, GUID, ObjectList0 ++ ObjectList1, NextMarker),
+		    ObjectList0 ++ NextPart
+	    end
+    end.
+
+%%
+%% Returns the list of available versions of object.
+%%
+get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	not_found -> js_handler:not_found(Req0);
+	RiakResponse0 ->
+	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
+	    ObjectList0 = [list_handler:parse_object_record(riak_api:head_object(BucketId, I), [])
+			   || I <- fetch_full_object_history(BucketId, GUID)],
+	    ObjectList1 = lists:map(
+		fun(I) ->
+		    AuthorId = utils:to_binary(proplists:get_value(author_id, I)),
+		    AuthorName = utils:unhex(utils:to_binary(proplists:get_value(author_name, I))),
+		    AuthorTel = utils:to_binary(proplists:get_value(author_tel, I)),
+		    [{author_id, AuthorId},
+		     {author_name, AuthorName},
+		     {author_tel, AuthorTel},
+		     {last_modified_utc, proplists:get_value(last_modified_utc, I)}]
+		end, ObjectList0),
+	    Output = jsx:encode(ObjectList1),
+	    {Output, Req0, State}
+    end.
+
+to_json(Req0, State) ->
+    BucketId = proplists:get_value(bucket_id, State),
+    Prefix = proplists:get_value(prefix, State),
+
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    case proplists:get_value(<<"object_key">>, ParsedQs) of
+        undefined -> get_action_log(Req0, State, BucketId, Prefix);
+        ObjectKey0 ->
+	    ObjectKey1 = unicode:characters_to_list(ObjectKey0),
+	    get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey1)
+    end.
 
 %%
 %% Checks if provided token is correct.
@@ -112,9 +182,9 @@ allowed_methods(Req, State) ->
 %%
 forbidden(Req0, _State) ->
     case utils:check_token(Req0) of
-	not_found -> {true, Req0, []};
-	expired -> {true, Req0, []};
-	User -> {false, Req0, User}
+	not_found -> js_handler:forbidden(Req0, 28);
+	expired -> js_handler:forbidden(Req0, 38);
+	User -> {false, Req0, [{user,User}]}
     end.
 
 %%
@@ -123,11 +193,18 @@ forbidden(Req0, _State) ->
 %%
 resource_exists(Req0, State) ->
     BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
-    Groups = State#user.groups,
-    TenantId = State#user.tenant_id,
-    UserBelongsToGroup = lists:any(fun(Group) ->
-	utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
-	Groups),
+    User = proplists:get_value(user, State),
+    UserBelongsToGroup =
+	case User of
+	    undefined -> false;
+	    _ ->
+		Groups = User#user.groups,
+		TenantId = User#user.tenant_id,
+		lists:any(
+		    fun(Group) ->
+			utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id)
+		    end, Groups)
+	end,
     case UserBelongsToGroup of
 	true ->
 	    ParsedQs = cowboy_req:parse_qs(Req0),
@@ -136,12 +213,11 @@ resource_exists(Req0, State) ->
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
 		    {false, Req1, []};
 		Prefix ->
-		    {true, Req0, [{user, State},
+		    {true, Req0, [{user, User},
 			  {bucket_id, BucketId},
 			  {prefix, Prefix}]}
 	    end;
-	false ->
-	    {false, Req0, []}
+	false -> {false, Req0, []}
     end.
 
 previously_existed(Req0, _State) ->
@@ -149,7 +225,7 @@ previously_existed(Req0, _State) ->
 
 
 %%
-%% Removes stuff user is not supposed to see.
+%% Removes stuff, regular user is not supposed to see.
 %%
 -spec strip_hidden_part(string()) -> string()|undefined.
 

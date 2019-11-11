@@ -17,13 +17,14 @@ var isMobile = {
     any: function() {
         return (isMobile.Android() || isMobile.BlackBerry() || isMobile.iOS() || isMobile.Opera() || isMobile.Windows());
     }
-};
+}
 
 function pad(number,length) {
     var str = '' + number;
     while (str.length < length) str = '0' + str;
     return str;
 }
+
 function unhex(obj_name){
  var bits = obj_name.split('/');
  for (var i=0, l=bits.length; i < l; i+=1){
@@ -133,7 +134,18 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
       var name = v.object_key;
       var orig_name = v.orig_name;
       if(!embedded){
-       files.push({'name': name, 'modified': date, 'orig_name': orig_name, 'short_url': v.short_url, 'preview_url': v.preview_url, 'public_url': v.public_url, 'ct': v.content_type, 'bytes': v.bytes, 'token': v.access_token});
+       files.push({
+	'name': name,
+	'modified': date,
+	'orig_name': orig_name,
+	'short_url': v.short_url,
+	'preview_url': v.preview_url,
+	'public_url': v.public_url,
+	'ct': v.content_type,
+	'bytes': v.bytes,
+	'token': v.access_token,
+	'guid': v.guid,
+       });
       }
     });
     directories.sort();
@@ -161,22 +173,21 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
       flink='<div class="dialog-file-name" data-prefix="'+eff_prefix+'"><a title="'+name+'" class="dialog-file-link folder" href="#" data-prefix="'+eff_prefix+'"><i class="folder-icon"></i>'+name+'</a></div>';
       fsize='';
      }
-     $(lstEl).append('<div class="file-item dir '+(name=='..'?'parent-dir ':'')+'" style="display:block;" id="'+guid()+'">'+flink+fsize+'<div class="file-modified">&nbsp;</div><div class="file-preview-url"></div><div class="file-url"></div>'+(name=='..'?'<div class="file-menu"></div>':button)+'</div>');
+     $(lstEl).append('<div class="file-item dir '+(name=='..'?'parent-dir ':'')+'" style="display:block;" id="'+v.guid+'">'+flink+fsize+'<div class="file-modified">&nbsp;</div><div class="file-preview-url"></div><div class="file-url"></div>'+(name=='..'?'<div class="file-menu"></div>':button)+'</div>');
     });
     files.sort();
     $(files).each(function(i,v){
      var name = v.orig_name;
      var obj_name = v.name;
      var fsize = filesize(v.bytes);
-     var url = '/'+bucket_id+'/'+obj_name;
-     if(hex_prefix) url = '/'+bucket_id+'/'+(hex_prefix.charAt(hex_prefix.length-1)=="/"?hex_prefix:hex_prefix+"/")+obj_name;
+     var url = stack.get_download_url(root_uri, bucket_id, hex_prefix, obj_name);
      if(prefix) name = name.replace(prefix, '');
      var button='<div class="file-menu"><a class="menu-link" href="#" data-obj-n="'+encodeURIComponent(obj_name)+'" data-obj-url="'+url+'" data-obj-preview-url="'+v.preview_url+'" data-obj-pub-url="'+url+'">Action<span>&#9660;</span></a></div>';
      var input='';
      var d=new Date(v.modified*1000);
      var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + "." + pad(d.getMinutes(), 2);
      if(embedded) button='';
-     var gid=guid();
+     var gid=v.guid;
      var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name"><a title="'+name+'" class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a></div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.preview_url==undefined?'&nbsp;':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
      if(v.ct.substring(0, 5)=='image'){
 	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50&access_token='+v.token+'")');
@@ -338,6 +349,8 @@ function refreshMenu(){
 	return false;
     } else if(op=='menu-rename'){
 	rename_dialog(this, on, orig_name);
+    } else if(op=='menu-changelog'){
+	changelog_dialog(this, on, orig_name);
     } else if(op=='menu-move'){
 	copy_dialog(this, on, orig_name, true);
 	return false;
@@ -531,6 +544,7 @@ function copy_dialog(e, from_object_key, orig_name, to_move){
  $('#id-dialog-submit-copy').unbind('click').click(function(){
   if($("#id-dialog-submit-copy")=="disabled") return false;
   $("#id-dialog-submit-copy").attr("disabled","disabled");
+  $('#id-dialog-loading-message-text').empty();
   var root_uri=$('body').attr('data-root-uri');
   var src_bucket_id=$('body').attr('data-bucket-id');
   var src_hex_prefix=$('body').attr('data-hex-prefix');
@@ -576,7 +590,6 @@ function submit_rename(bucket_id, hex_prefix, from_object_key, is_dir){
       }
     }
     var root_uri=$('body').attr('data-root-uri');
-    var hex_prefix=$('body').attr('data-hex-prefix');
     var dst_object_name = $('#id_object_name').val();
     var rpc_url = root_uri+'rename/'+bucket_id+'/';
     var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
@@ -662,6 +675,97 @@ function rename_dialog(e, from_object_key, orig_name){
  $('#submit_rename').unbind('click').click(function(e){
     $('#submit_rename').attr("disabled", "disabled");
     submit_rename(bucket_id, hex_prefix, from_object_key, is_dir);
+    return false;
+ });
+ return false;
+}
+
+
+function submit_restore(bucket_id, hex_prefix, object_key, last_modified_utc){
+    $('#id-dialog-loading-message-text').empty();
+    if(isMobile.any() || $(window).width()<670){$("#shadow").append('<span>Two moments please...</span>').css('z-index','1003').show();}
+    disable_menu_item('menu-changelog');
+
+    var root_uri=$('body').attr('data-root-uri');
+    var rpc_url = root_uri+'action-log/'+bucket_id+'/';
+    var stack = $.stack({'errorElementID': 'id-status', 'rpc_url': rpc_url, 'onSuccess': function(data){
+	$('#id-status').empty();
+	$("#shadow").empty().css('z-index', 9).hide();
+	$('#id-restore_'+last_modified_utc).attr("disabled", false);
+	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
+	enable_menu_item('menu-changelog');
+	$('.ui-dialog-titlebar-close').click();
+	$('#id-status').empty();
+	$('#id-restore_'+last_modified_utc).attr("disabled", false);
+	fetch_file_list(bucket_id, hex_prefix, 'id-loading-message-text', 'id-objects-list', false);
+    }, 'onFailure': function(msg, xhr, status){
+	$('#id-dialog-loading-message-text').empty().append('<br/><span class="err">'+msg+'</span>');
+	$('#id-restore_'+last_modified_utc).attr("disabled", false);
+    }});
+    stack.restore_object(hex_prefix, object_key, last_modified_utc);
+    // TODO: to check status
+}
+
+function changelog_dialog(e, object_key, orig_name){
+ var bucket_id = $("body").attr("data-bucket-id");
+ var root_uri=$('body').attr('data-root-uri');
+ var hex_prefix=$("body").attr("data-hex-prefix");
+ $("#dialog").dialog({
+  title: '"'+object_key+'" changelog',
+  autoOpen: false,
+  resizable: false,
+  height: 'auto',
+  width:'600',
+  position: [($(window).width() / 2) - (600 / 2), 150],
+  modal: true,
+  draggable: false,
+  open: function (event, ui) {
+    $(this).empty().append('<br/><div><span id="id-dialog-loading-message-text"></span><div id="id-dialog-changelog-records"></div>');
+    var stack = $.stack({
+       'errorElementID': "id-dialog-loading-message-text",
+       'loadingMsgColor': 'black',
+       'rpc_url': root_uri+'action-log/'+bucket_id+'/?object_key='+object_key,
+       'onSuccess': function(data, status){
+           $('#id-dialog-changelog-records').append('<div class="dry-data-container"><table class="dry-data-table" cellpadding="0" cellspacing="0"><thead><tr class="first-row"><th class="first-col" style="width:33%;">Date</th><th class="last-col" style="width:33%;">User</th><th class="last-col" style="width:33%;">&nbsp;</th></tr></thead><tbody id="id-dialog-changelog-records-tbody"></tbody></table></div>');
+           for(var i=0;i!=data.length;i++){
+               var author=data[i].author_name;
+	       var tel=data[i].author_tel;
+               var dt=data[i].last_modified_utc;
+               var d=new Date(dt*1000);
+               var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2);
+	       var button="<button id='id-restore_"+dt+"'>Restore</button>";
+               $('#id-dialog-changelog-records-tbody').append('<tr><td>'+modified+'</td><td>'+author+(tel==undefined?"":"<br/>Tel: "+tel)+'</td><td>'+button+'</td></tr>');
+           };
+           $('#id-dialog-loading-message-text').hide();
+        }
+    });
+    stack.get_action_log(hex_prefix, object_key);
+    if($(window).width()<670){
+     $("#dialog").dialog("option", "width", 300);
+     $("#dialog").dialog("option", "position", { my: "center", at: "center", of: window});
+    }
+    $(window).resize(function(){
+       if($(window).width()<670){
+       $("#dialog").dialog( "option", "width", 300 );
+      }else{
+       $("#dialog").dialog( "option", "width", 600 );
+      }
+      $("#dialog").dialog( "option", "position", { my: "center", at: "center", of: window });
+    });
+  },
+  close: function (event, ui) {
+    event.stopPropagation();
+    event.preventDefault();
+    $("#shadow").hide();
+    $(this).dialog("close");
+  }
+ });
+ $("#dialog").dialog('open');
+
+ $('button[id^=id_restore_]').unbind('click').click(function(e){
+    var the_id=this.id.split('_')[1];
+    $('button[id=button_'+the_id+']').attr("disabled", "disabled");
+    submit_restore(bucket_id, hex_prefix, object_key, the_id);
     return false;
  });
  return false;
@@ -847,14 +951,14 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
     }
     if((status=='error'||status=='timeout')&&xhr.readyState==0){
 	var attempts=$('#id-progress_'+upload_id).attr('data-attempts');
-	if(attempts==undefined) attempts=5;
+	if(attempts==undefined) attempts=401; // 20 minutes with 3 seconds interval
 	attempts-=1;
 	$('#id-progress_'+upload_id).empty().attr('data-attempts', attempts);
-	if(attempts<0){
+	if(attempts<1){
 	  $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext("connection timeout")+'</span>');
 	  return;
 	}
-	$('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext('network error, retrying')+'</span>');
+	$('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext('retrying..')+'</span>');
 	setTimeout(function(){
 	    $('#id-progress_'+upload_id).empty().append('queueing');
 	    upload_files(bucket_id, hex_prefix, [file], [upload_id]);
@@ -1034,7 +1138,7 @@ $('span.pushbutton').on('click', '#id-action-log', function(){
                var user_name=data[i].user_name;
                var dt=data[i].timestamp;
                var d=new Date(dt*1000);
-               var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + "." + pad(d.getMinutes(), 2)
+               var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + ":" + pad(d.getMinutes(), 2)
                $('#id-dialog-action-log-records-tbody').append('<tr><td>'+details+'</td><td>'+user_name+'</td><td>'+modified+'</td></tr>');
            };
            $('#id-dialog-loading-message-text').hide();

@@ -133,7 +133,7 @@ move(Req0, State) ->
 	action="copy",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [utils:timestamp()])
+	timestamp=io_lib:format("~p", [utils:timestamp()/1000])
     },
     SrcPrefix1 =
 	case SrcPrefix0 of
@@ -175,12 +175,7 @@ allowed_methods(Req, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:check_token(Req0) of
-	undefined -> {{false, <<"Token">>}, Req0, []};
-	not_found -> {{false, <<"Token">>}, Req0, []};
-	expired -> {{false, <<"Token">>}, Req0, []};
-	User -> {true, Req0, [{user, User}]}
-    end.
+    utils:is_authorized(Req0).
 
 %%
 %% Checks if user has access

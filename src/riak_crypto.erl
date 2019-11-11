@@ -1,6 +1,6 @@
 -module(riak_crypto).
 
--export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0, random_string/0]).
+-export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0, random_string/0, md5/1]).
 
 -include("riak.hrl").
 
@@ -176,10 +176,16 @@ random_string() ->
     AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
     lists:foldl(
 	fun(_, Acc) ->
-	    try [lists:nth(crypto:rand_uniform(1), AllowedChars)] of
+            try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
 		Value -> Value ++ Acc
 	    catch error:low_entropy ->
 		riak_crypto:seed(),
-		[lists:nth(crypto:rand_uniform(1), AllowedChars)] ++ Acc
+                [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
 	    end
 	end, [], lists:seq(1, Length)).
+
+
+-spec md5(iodata()) -> binary().
+
+md5(IOData) ->
+    crypto:hash(md5, IOData).

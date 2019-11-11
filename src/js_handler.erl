@@ -3,7 +3,8 @@
 %%
 -module(js_handler).
 
--export([init/2, bad_request/2, not_found/1, too_many/1, redirect_to_login/1]).
+-export([init/2, bad_request/2, forbidden/2, unauthorized/2, not_found/1, too_many/1,
+	 redirect_to_login/1, incorrect_configuration/2]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -25,6 +26,7 @@ parse_language_tag(Code0) when erlang:is_binary(Code0) ->
 	_ ->
 	    Bits1 = binary:split(lists:nth(1, Bits0), <<"-">>, [global]),
 	    case length(Bits1) =:= 2 of
+		false -> ?DEFAULT_LANGUAGE_TAG;
 		true ->
 		    Code1 = lists:nth(1, Bits1),
 		    case byte_size(Code1) =:= 2 of
@@ -65,6 +67,7 @@ init(Req0, Opts) ->
     Token =
 	case login_handler:check_session_id(SessionID0) of
 	    false -> <<>>;
+	    {error, _} -> <<>>;
 	    _User -> SessionID0
 	end,
     %% Since ther's no way to detect browser language preference, Accept-Language should be used instead
@@ -85,11 +88,23 @@ init(Req0, Opts) ->
     Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, Body, Req0),
     {ok, Req1, Opts}.
 
-bad_request(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
+bad_request(Req0, MsgCode) when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) ->
     Req1 = cowboy_req:reply(400, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),
     {true, Req1, []}.
+
+forbidden(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
+    Req1 = cowboy_req:reply(403, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, MsgCode}]), Req0),
+    {true, Req1, []}.
+
+unauthorized(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
+    Req1 = cowboy_req:reply(401, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, MsgCode}]), Req0),
+    {{false, <<"Token">>}, Req1, []}.
 
 too_many(Req0) ->
     Req1 = cowboy_req:reply(429, #{
@@ -101,6 +116,12 @@ not_found(Req0) ->
     Req1 = cowboy_req:reply(404, #{
 	<<"content-type">> => <<"application/json">>
     }, <<>>, Req0),
+    {true, Req1, []}.
+
+incorrect_configuration(Req0, MsgCode) when erlang:is_list(MsgCode) ->
+    Req1 = cowboy_req:reply(500, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, erlang:list_to_binary(MsgCode)}]), Req0),
     {true, Req1, []}.
 
 redirect_to_login(Req0) ->

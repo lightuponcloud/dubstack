@@ -11,9 +11,9 @@
 	 resource_exists/2]).
 
 %% Other methods
--export([parse_tenant/1, validate_groups/2, validate_group_id/1,
-	 validate_boolean/3, validate_patch/2, get_tenant/1,
-	 tenant_to_proplist/1]).
+-export([get_tenants_by_ids/1, parse_tenant/1, validate_groups/2,
+	 validate_group_id/1, validate_boolean/3, validate_patch/2,
+	 get_tenant/1, tenant_to_proplist/1]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
@@ -82,6 +82,13 @@ get_tenant(TenantId0) when erlang:is_list(TenantId0) ->
 		    parse_tenant(RootElement0)
 	    end
     end.
+
+%%
+%% Returns details of tenants with provided tenant IDs
+%%
+get_tenants_by_ids(TenantIDs) when erlang:is_list(TenantIDs) ->
+    TenantRecords = [get_tenant(I) || I <- TenantIDs],
+    [tenant_to_proplist(I) || I <- TenantRecords, I =/= not_found].
 
 %%
 %% Returns callback, corresponding to method
@@ -171,6 +178,7 @@ to_html(Req0, State) ->
     SessionId = proplists:get_value(session_id, State),
     case login_handler:check_session_id(SessionId) of
 	false -> js_handler:redirect_to_login(Req0);
+	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    case User#user.staff of
 		false -> js_handler:redirect_to_login(Req0);
@@ -214,8 +222,8 @@ forbidden(Req0, _State) ->
 	    {false, Req0, [{user, User0}]};
 	false ->
 	    case utils:check_token(Req0) of
-		not_found -> {true, Req0, []};
-		expired -> {true, Req0, []};
+		not_found -> js_handler:forbidden(Req0, 28);
+		expired -> js_handler:forbidden(Req0, 38);
 		undefined ->
 		    SessionCookieName = Settings#general_settings.session_cookie_name,
 		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
@@ -224,7 +232,7 @@ forbidden(Req0, _State) ->
 		User1 ->
 		    case User1#user.staff of
 			true -> {false, Req0, [{user, User1}]};
-			false -> {true, Req0, []}
+			false -> js_handler:forbidden(Req0, 39)
 		    end
 	    end
     end.
@@ -310,8 +318,8 @@ validate_group_id(GroupId0) when erlang:is_binary(GroupId0) ->
     end.
 
 %%
-%% Checks if length of group do not exceed certain length,
-%% generates ID and returns: {ID, trimmed group name}
+%% Checks if length of group do not exceed certain length.
+%% Generates ID and returns {ID, trimmed group name}
 %%
 -spec validate_group_name(binary(), list()) -> tuple().
 

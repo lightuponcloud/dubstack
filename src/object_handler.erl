@@ -64,12 +64,7 @@ to_json(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:check_token(Req0) of
-	undefined -> {{false, <<"Token">>}, Req0, []};
-	not_found -> {{false, <<"Token">>}, Req0, []};
-	expired -> {{false, <<"Token">>}, Req0, []};
-	User -> {true, Req0, User}
-    end.
+    utils:is_authorized(Req0).
 
 %%
 %% Checks if user has access
@@ -87,10 +82,10 @@ forbidden(Req0, State) ->
 		utils:is_bucket_belongs_to_group(BucketId, State#user.tenant_id, Group#group.id) end,
 		State#user.groups),
 	    case UserBelongsToGroup of
-		false -> {true, Req0, []};
+		false -> js_handler:forbidden(Req0, 37);
 		true -> {false, Req0, [{user, State}, {bucket_id, BucketId}]}
 	    end;
-	false -> {true, Req0, []}
+	false -> js_handler:forbidden(Req0, 7)
     end.
 
 -spec get_object_meta(string(), string(), binary()) -> proplist()|not_found|pseudo_directory.

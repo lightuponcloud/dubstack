@@ -9,6 +9,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
 
+-include("log.hrl").
+
 -record(state, {port :: undefined | port(),
 		links = sets:new() :: sets:set(),
 		os_pid :: undefined | pos_integer(),
@@ -30,14 +32,13 @@ scale(Term) when erlang:is_list(Term) ->
     %% TODO: to use a random port number
     Port = whereis(img_port_0),
     Data = erlang:term_to_binary(Term++[{tag, Tag}]),
-    monitor_port(Port),
     try
 	case port_command(Port, Data) of
 	    true ->
 		receive
 		    {Port, Reply} ->
 			demonitor_port(Port),
-			{ok, Reply};
+			Reply;
 		    {'EXIT', Port, _} -> erlang:error(badarg)
 		after 5000 ->
 		    demonitor_port(Port),
@@ -75,6 +76,7 @@ start_port(PortNumber) ->
 		register(PortName, Port),
 		case erlang:port_info(Port, os_pid) of
 		    {os_pid, OSPid} ->
+			monitor_port(Port),
 			{Port, OSPid};
 		    undefined ->
 			{Port, undefined}
@@ -86,12 +88,11 @@ start_port(PortNumber) ->
 		{undefined, undefined}
 	    end;
         {error, _} ->
-            error_logger:error_msg("Failed to read ~s", [Path]),
+	    ?ERROR("Failed to read ~s", [Path]),
 	    %% Restart
 	    erlang:send_after(1000, self(), start_port),
 	    {undefined, undefined}
     end.
-
 
 handle_call(_Request, _From, State) ->
     {noreply, State}.
@@ -99,12 +100,16 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Msg, State) ->  {noreply, State}.
 
 handle_info({Port, {data, Term0}}, #state{port=Port}=State) ->
-    {Tag, Term1} = binary_to_term(Term0),
-
-    Pid = binary_to_term(Tag),
-
-    Pid ! {Port, Term1},
-    {noreply, State};
+    {Tag, Term1} = erlang:binary_to_term(Term0),
+    case Tag of
+	error ->
+	    ?WARN("[img] ~p~n", [Term1]),
+	    {noreply, State};
+	_ ->
+	    Pid = erlang:binary_to_term(Tag),
+	    Pid ! {Port, Term1},
+	    {noreply, State}
+    end;
 handle_info({monitor_port, Port, Pid}, State) ->
     if State#state.port =:= Port ->
 	    Links = sets:add_element(Pid, State#state.links),
@@ -121,8 +126,8 @@ handle_info({demonitor_port, Port, Pid}, State) ->
 	    {noreply, State}
     end;
 handle_info({'EXIT', Port, Reason}, #state{port = Port} = State) ->
-    error_logger:error_msg("External img process (pid=~w) has terminated unexpectedly",
-	[State#state.os_pid]),
+    ?ERROR("[img] External img process (pid=~w) has terminated unexpectedly",
+	    [State#state.os_pid]),
     Links = sets:filter(
 	      fun(Pid) ->
 		      Pid ! {'EXIT', Port, Reason},
@@ -131,16 +136,18 @@ handle_info({'EXIT', Port, Reason}, #state{port = Port} = State) ->
     State1 = State#state{port = undefined,
 			 os_pid = undefined,
 			 links = Links},
+    demonitor_port(Port),
     erlang:send_after(200, self(), start_port),
     {noreply, State1};
 handle_info(start_port, #state{port = undefined, num = PortNumber} = State) ->
     {Port, OSPid} = start_port(PortNumber),
     {noreply, State#state{port = Port, os_pid = OSPid}};
 handle_info(Info, State) ->
-    error_logger:error_msg("got unexpected info: ~p", [Info]),
+    ?ERROR("[img] got unexpected info: ~p", [Info]),
     {noreply, State}.
 
 -spec monitor_port(port() | undefined) -> ok.
+
 monitor_port(Port) ->
     case erlang:port_info(Port, connected) of
 	{connected, Pid} ->
@@ -151,6 +158,7 @@ monitor_port(Port) ->
     ok.
 
 -spec demonitor_port(port() | undefined) -> ok.
+
 demonitor_port(Port) ->
     case erlang:port_info(Port, connected) of
 	{connected, Pid} ->
@@ -161,6 +169,7 @@ demonitor_port(Port) ->
     flush_queue(Port).
 
 -spec flush_queue(port() | undefined) -> ok.
+
 flush_queue(Port) when erlang:is_port(Port) ->
     receive {'EXIT', Port, _} -> ok
     after 0 -> ok
@@ -168,7 +177,8 @@ flush_queue(Port) when erlang:is_port(Port) ->
 flush_queue(_) ->
     ok.
 
-terminate(_Reason, #state{port = Port} = State) ->
+terminate(Reason, #state{port = Port} = State) ->
+    ?WARN("[img] terminating port. Reason: ~p~n", [Reason]),
     if erlang:is_port(Port) ->
 	    catch port_close(Port),
 	    sets:filter(

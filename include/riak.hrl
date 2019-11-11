@@ -12,8 +12,8 @@
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="XOXANNNI3SSBFYUKVD_T"::string(),
-          secret_access_key="5a_RP2vpoOITZQSR9HPxFN-IJ6kJVAoyFDHGMA"::string(),
+          access_key_id="Replace With Riak CS key"::string(),
+          secret_access_key="Replace with Riak CS access key"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
@@ -83,6 +83,12 @@
 %%
 -define(RIAK_ACTION_LOG_FILENAME, ".riak_action_log.xml").
 %%
+%% All objects are stored by the following prefix ( list response contains links to the real path ).
+%%
+%% Default: "~object"
+%%
+-define(RIAK_REAL_OBJECT_PREFIX, "~object").
+%%
 %% Name of bucket prefix
 %%
 %% Assumption: Riak is configured with the following option
@@ -106,7 +112,7 @@
 %%
 %% Default: "security"
 %%
--define(SECURITY_BUCKET_NAME, "security").
+-define(SECURITY_BUCKET_NAME, "security2").
 %%
 %% Prefix to object, that stores User session
 %% in security bucket.

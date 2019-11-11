@@ -1,7 +1,8 @@
 -export_type([tenant/0, group/0, user/0, token/0, csrf_token/0, app_token/0]).
 
--define(CSRF_TOKEN_EXPIRATION_TIME, 31449600). % 60 * 60 * 24 * 7 * 52
--define(SESSION_EXPIRATION_TIME, 31449600).
+%% Time in miliseconds
+-define(CSRF_TOKEN_EXPIRATION_TIME, 31449600000). % 1000 * 60 * 60 * 24 * 7 * 52
+-define(SESSION_EXPIRATION_TIME, 31449600000).
 
 -type tenant() :: #{
     id          => string(),
@@ -22,6 +23,7 @@
     tenant_id   => string(),
     tenant_name => string(),
     login       => string(),
+    tel         => string(),
     enabled     => boolean(),
     staff       => boolean(),
     groups      => list()
@@ -67,6 +69,7 @@
     tenant_name    = ""::string(),
     tenant_enabled = true::boolean(),
     login          = ""::string(),
+    tel            = ""::string(),
     salt           = ""::string(),
     password	   = ""::string(),
     hash_type      = ""::string(),

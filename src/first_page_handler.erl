@@ -17,8 +17,8 @@ init(Req0, _Opts) ->
     SessionCookieName = Settings#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
     case login_handler:check_session_id(SessionID0) of
-	false ->
-	    login(Req0, Settings);
+	false -> login(Req0, Settings);
+	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    State = admin_users_handler:user_to_proplist(User) ++ [{token, SessionID0}],
 	    first_page(Req0, Settings, State)

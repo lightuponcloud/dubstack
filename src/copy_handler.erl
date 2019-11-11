@@ -172,7 +172,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, SrcIndexConten
 	true -> undefined;
 	undefined -> undefined;
 	false ->
-	    %% Determine destination object name
+	    %% Determine destination object name, as directory with the same name might exist
 	    ModifiedTime = proplists:get_value(last_modified_utc, ObjectRecord),
 	    MD5 = proplists:get_value(md5, ObjectRecord),
 	    {ObjectKey1, OrigName1, _} = riak_api:pick_object_key(DstBucketId, DstPrefix0,
@@ -321,7 +321,7 @@ copy(Req0, State) ->
 	action="copy",
 	user_name=User#user.name,
 	tenant_name=User#user.tenant_name,
-	timestamp=io_lib:format("~p", [utils:timestamp()])
+	timestamp=io_lib:format("~p", [utils:timestamp()/1000])
     },
     SrcPrefix1 =
 	case SrcPrefix0 of
@@ -371,20 +371,14 @@ allowed_methods(Req, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:check_token(Req0) of
-	undefined -> {{false, <<"Token">>}, Req0, []};
-	not_found -> {{false, <<"Token">>}, Req0, []};
-	expired -> {{false, <<"Token">>}, Req0, []};
-	User -> {true, Req0, [{user, User}]}
-    end.
+    utils:is_authorized(Req0).
 
-copy_forbidden(Req0, State) ->
+copy_forbidden(Req0, User) ->
     SrcBucketId =
 	case cowboy_req:binding(src_bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    User = proplists:get_value(user, State),
     TenantId = User#user.tenant_id,
     UserBelongsToGroup =
 	case utils:is_valid_bucket_id(SrcBucketId, TenantId) of
@@ -406,7 +400,6 @@ copy_forbidden(Req0, State) ->
 			    undefined -> undefined;
 			    DstBucketId1 -> unicode:characters_to_list(DstBucketId1)
 			end,
-		    User = proplists:get_value(user, State),
 		    TenantId = User#user.tenant_id,
 		    DstBucketCanBeModified =
 			case utils:is_valid_bucket_id(DstBucketId0, TenantId) of
@@ -417,9 +410,7 @@ copy_forbidden(Req0, State) ->
 			    false -> false
 			end,
 		    case DstBucketCanBeModified of
-			false ->
-			    Req2 = cowboy_req:set_resp_body(jsx:encode([{error, 26}]), Req1),
-			    {true, Req2, []};
+			false -> js_handler:forbidden(Req1, 26);
 			true -> {false, Req1, [
 				    {user, User},
 				    {src_bucket_id, SrcBucketId},
@@ -430,9 +421,7 @@ copy_forbidden(Req0, State) ->
 				]}
 		    end
 	    end;
-	false ->
-	    Req3 = cowboy_req:set_resp_body(jsx:encode([{error, 27}]), Req0),
-	    {true, Req3, []}
+	false -> js_handler:forbidden(Req0, 27)
     end.
 
 %%

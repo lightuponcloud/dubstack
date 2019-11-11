@@ -34,6 +34,7 @@ init(Req0, _Opts) ->
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
     case login_handler:check_session_id(SessionID0) of
 	false -> js_handler:redirect_to_login(Req0);
+	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	_User ->
 	    CSRFCookieName = Settings#general_settings.csrf_cookie_name,
 	    Req1 = cowboy_req:set_resp_cookie(utils:to_binary(SessionCookieName),

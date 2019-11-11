@@ -21,6 +21,7 @@
 -spec check_credentials(binary(), binary()) -> boolean()|not_found|blocked.
 
 check_credentials(<<>>, _Password) -> false;
+check_credentials(null, _Password) -> false;
 check_credentials(undefined, _Password) -> false;
 check_credentials(_Login, <<>>) -> false;
 check_credentials(_Login, undefined) -> false;
@@ -123,16 +124,24 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 	not_found -> not_found;
 	TokenObject ->
+	    %% Check for error in response first
 	    XMLDocument0 = utils:to_list(proplists:get_value(content, TokenObject)),
 	    {RootElement0, _} = xmerl_scan:string(XMLDocument0),
-	    ExpirationTime0 = erlcloud_xml:get_text("/auth/token/expires", RootElement0),
-	    ExpirationTime1 = utils:to_integer(ExpirationTime0),
-	    case utils:timestamp() - ExpirationTime1 < 0 of
-		false -> expired;
-		true ->
-		    UserId = erlcloud_xml:get_text("/auth/token/user_id", RootElement0),
-		    admin_users_handler:get_user(UserId)
+	    case string:str(XMLDocument0, "<Error><Code>") of
+		0 ->
+		    ExpirationTime0 = erlcloud_xml:get_text("/auth/token/expires", RootElement0),
+		    ExpirationTime1 = utils:to_integer(ExpirationTime0),
+		    case utils:timestamp() - ExpirationTime1 < 0 of
+			false -> expired;
+			true ->
+			    UserId = erlcloud_xml:get_text("/auth/token/user_id", RootElement0),
+			    admin_users_handler:get_user(UserId)
+		    end;
+		_ ->
+		    ErrorCode = erlcloud_xml:get_text("/Error/Code", RootElement0),
+		    {error, ErrorCode}
 	    end
+
     end.
 
 %%
@@ -169,6 +178,7 @@ check_session_id(SessionID0) when erlang:is_binary(SessionID0) ->
 	    case check_token(erlang:binary_to_list(CookieValue)) of
 		not_found -> false;
 		expired -> false;
+		{error, Code} -> {error, Code};
 		User -> User
 	    end
     end.
@@ -213,9 +223,9 @@ handle_post(Req0, _State) ->
 		    Login = proplists:get_value(<<"login">>, FieldValues),
 		    Password = proplists:get_value(<<"password">>, FieldValues),
 		    case check_credentials(Login, Password) of
-			false -> js_handler:bad_request(Req0, 18);
-			not_found -> js_handler:bad_request(Req0, 17);
-			blocked -> js_handler:bad_request(Req0, 19);
+			false -> js_handler:forbidden(Req0, 18);
+			not_found -> js_handler:forbidden(Req0, 17);
+			blocked -> js_handler:forbidden(Req0, 19);
 			User0 ->
 			    UUID4 = new_token(Req0, User0#user.id, User0#user.tenant_id),
 			    Req1 = cowboy_req:set_resp_body(jsx:encode(

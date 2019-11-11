@@ -5,7 +5,9 @@
 %%	Returns contetnts of index.etf
 %%
 %% PATCH
-%%	Allows to mark objects as undeleted
+%%	Allows to change state of object:
+%%		-- undelete
+%%		-- lock / unlock
 %%
 %% POST
 %%	Create directory
@@ -17,7 +19,7 @@
     to_json/2, allowed_methods/2, forbidden/2, is_authorized/2,
     resource_exists/2, previously_existed/2, patch_resource/2,
     validate_post/3, create_pseudo_directory/2, handle_post/2,
-    validate_prefix/2]).
+    validate_prefix/2, parse_object_record/2]).
 
 -export([validate_delete/2, get_pseudo_directories/3,
     get_objects/2, format_delete_results/3, delete_resource/2,
@@ -27,7 +29,7 @@
 -include("user.hrl").
 -include("general.hrl").
 -include("action_log.hrl").
-
+-include("log.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -64,17 +66,14 @@ to_json(Req0, State) ->
 	    riak_api:create_bucket(BucketId),
 	    {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp}]), Req0, []};
 	_ ->
-	    Prefix1 = utils:to_lower(Prefix0),
+	    Prefix1 = prefix_lowercase(Prefix0),
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-		not_found ->
-		    case Prefix1 of
-			undefined -> {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp}]), Req0, []};
-			_ -> js_handler:not_found(Req0)
-		    end;
+		not_found -> {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
-			{jsx:encode([{list, proplists:get_value(list, List0)},
+		    {jsx:encode([
+			{list, proplists:get_value(list, List0)},
 			{dirs, proplists:get_value(dirs, List0)},
 			{server_utc, UTCTimestamp},
 			{uncommitted, proplists:get_value(uncommitted, List0)}
@@ -87,33 +86,28 @@ to_json(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:check_token(Req0) of
-	undefined -> {{false, <<"Token">>}, Req0, []};
-	not_found -> {{false, <<"Token">>}, Req0, []};
-	expired -> {{false, <<"Token">>}, Req0, []};
-	User -> {true, Req0, User}
-    end.
+    utils:is_authorized(Req0).
 
 %%
 %% Checks if user has access
 %% ( called after 'is_authorized()' )
 %%
-forbidden(Req0, State) ->
+forbidden(Req0, User) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case utils:is_valid_bucket_id(BucketId, State#user.tenant_id) of
+    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, State#user.tenant_id, Group#group.id) end,
-		State#user.groups),
+		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+		User#user.groups),
 	    case UserBelongsToGroup of
-		false -> {true, Req0, []};
-		true -> {false, Req0, [{user, State}, {bucket_id, BucketId}]}
+		false -> js_handler:forbidden(Req0, 37);
+		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
 	    end;
-	false -> {true, Req0, []}
+	false -> js_handler:forbidden(Req0, 7)
     end.
 
 %%
@@ -131,20 +125,260 @@ resource_exists(Req0, State) ->
 previously_existed(Req0, _State) ->
     {false, Req0, []}.
 
-patch_resource(Req0, State) ->
+%%
+%% Parse object record from Metadata, replacing values from provided Options
+%%
+parse_object_record(Metadata, Options) ->
+    OrigName =
+	case proplists:get_value(orig_name, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-orig-filename", Metadata);
+	    V0 -> V0
+	end,
+    ModifiedTime =
+	case proplists:get_value(last_modified_utc, Options, undefined) of
+	    undefined -> utils:to_integer(proplists:get_value("x-amz-meta-modified-utc", Metadata));
+	    V1 -> V1
+	end,
+    UploadTime =
+	case proplists:get_value(upload_time, Metadata, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-upload-time", Metadata);
+	    V2 -> V2
+	end,
+    TotalBytes =
+	case proplists:get_value(bytes, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-bytes", Metadata);
+	    V3 -> V3
+	end,
+    GUID =
+	case proplists:get_value(guid, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-guid", Metadata);
+	    V4 -> V4
+	end,
+    IsDeleted =
+	case proplists:get_value(is_deleted, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-is-deleted", Metadata);
+	    V5 -> V5
+	end,
+    AuthorId =
+	case proplists:get_value(author_id, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-author-id", Metadata);
+	    V6 -> V6
+	end,
+    AuthorName =
+	case proplists:get_value(author_name, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-author-name", Metadata);
+	    V7 -> V7
+	end,
+    AuthorTel =
+	case proplists:get_value(author_tel, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-author-tel", Metadata);
+	    V8 -> V8
+	end,
+    IsLocked =
+	case proplists:get_value(is_locked, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-is-locked", Metadata);
+	    V9 -> V9
+	end,
+    LockUserId =
+	case proplists:get_value(user_id, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-lock-user-id", Metadata);
+	    Va -> Va
+	end,
+    LockModifiedTime =
+	case proplists:get_value(lock_modified_utc, Options, undefined) of
+	    undefined -> proplists:get_value("x-amz-meta-lock-modified-utc", Metadata);
+	    Vb -> Vb
+	end,
+    ContentType =
+	case proplists:get_value(content_type, Options, undefined) of
+	    undefined -> proplists:get_value(content_type, Metadata);
+	    Vc -> Vc
+	end,
+    Md5 =
+	case proplists:get_value(md5, Options, undefined) of
+	    undefined ->
+		Etag = proplists:get_value(etag, Metadata, ""),
+		string:strip(Etag, both, $");
+	    Vd -> Vd
+	end,
+    [
+	{orig_name, OrigName},
+	{last_modified_utc, ModifiedTime},
+	{upload_time, UploadTime},
+	{bytes, TotalBytes},
+	{guid, GUID},
+	{author_id, AuthorId},
+	{author_name, AuthorName},
+	{author_tel, AuthorTel},
+	{is_deleted, IsDeleted},
+	{lock_user_id, LockUserId},
+	{is_locked, IsLocked},
+	{lock_modified_utc, LockModifiedTime},
+	{content_type, ContentType},
+	{md5, Md5}
+    ].
+
+validate_patch(Body, State) ->
     BucketId = proplists:get_value(bucket_id, State),
-    {ok, Attrs0, Req1} = cowboy_req:read_body(Req0),
-    Attrs1 = jsx:decode(Attrs0),
-    Prefix0 = proplists:get_value(<<"prefix">>, Attrs1),
-    case proplists:get_value(<<"undelete">>, Attrs1) of
-	undefined -> {true, Req1, []};
-	ObjectsList0 ->
-	    ObjectsList1 = [utils:to_list(N) || N <- ObjectsList0, byte_size(N) < 255],
-	    case indexing:update(BucketId, Prefix0, [{undelete, ObjectsList1}]) of
-		lock -> js_handler:too_many(Req0);
-		_ -> {true, Req1, []}
+    case jsx:is_json(Body) of
+	{error, badarg} -> {error, 21};
+	false -> {error, 21};
+	true ->
+	    FieldValues = jsx:decode(Body),
+	    Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
+	    case validate_prefix(BucketId, Prefix0) of
+		{error, Number} -> {error, Number};
+		Prefix1 ->
+		    ObjectsList0 = proplists:get_value(<<"objects">>, FieldValues),
+		    ObjectsList1 =
+			case ObjectsList0 of
+			    undefined -> [];
+			    _ -> [utils:to_list(N) || N <- ObjectsList0, byte_size(N) < 255]
+			end,
+		    case proplists:get_value(<<"op">>, FieldValues) of
+			undefined -> {error, 41};
+			<<"lock">> -> {Prefix1, ObjectsList1, lock};
+			<<"unlock">> -> {Prefix1, ObjectsList1, unlock};
+			<<"undelete">> -> {Prefix1, ObjectsList1, undelete};
+			_ -> {error, 41}
+		    end
 	    end
     end.
+
+%%
+%% PATCH request is used to mark objects as locked/unlocked/not deleted.
+%%
+patch_resource(Req0, State) ->
+    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+    case validate_patch(Body, State) of
+	{error, Number} -> js_handler:bad_request(Req1, Number);
+	{Prefix, ObjectsList, Operation} ->
+	    User = proplists:get_value(user, State),
+	    UserId = User#user.id,
+	    BucketId = proplists:get_value(bucket_id, State),
+	    case Operation of
+		lock ->
+		    UpdatedOnes0 = [update_lock(UserId, BucketId, Prefix, K, true) || K <- ObjectsList],
+		    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
+		    Req2 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req1),
+		    {true, Req2, []};
+		unlock ->
+		    UpdatedOnes0 = [update_lock(UserId, BucketId, Prefix, K, false) || K <- ObjectsList],
+		    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
+		    Req2 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req1),
+		    {true, Req2, []};
+		undelete ->
+		    ModifiedKeys0 = [undelete(BucketId, Prefix, K) || K <- ObjectsList],
+		    ModifiedKeys1 = [proplists:get_value(object_key, I) || I <- ModifiedKeys0, I =/= not_found],
+		    case indexing:update(BucketId, Prefix, [{undelete, ModifiedKeys1}]) of
+			lock -> js_handler:too_many(Req0);
+			_ -> {true, Req1, []}
+		    end
+	    end
+    end.
+
+undelete(BucketId, Prefix, ObjectKey) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	not_found -> not_found;
+	Metadata0 ->
+	    LockModifiedTime =  io_lib:format("~p", [utils:timestamp()/1000]),
+	    Metadata1 = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
+
+	    ModifiedTime = utils:to_list(proplists:get_value(last_modified_utc, Metadata1)),
+	    LockModifiedTime = proplists:get_value(lock_modified_utc, Metadata1),
+	    IsLocked = proplists:get_value(is_locked, Metadata1),
+	    Options = [{acl, public_read}, {meta, [{"orig-filename", proplists:get_value(orig_name, Metadata1)},
+						   {"modified-utc", ModifiedTime},
+						   {"upload-time", proplists:get_value(upload_time, Metadata1)},
+						   {"bytes", proplists:get_value(bytes, Metadata1)},
+						   {"guid", proplists:get_value(guid, Metadata1)},
+						   {"author-id", proplists:get_value(author_id, Metadata1)},
+						   {"author-name", proplists:get_value(author_name, Metadata1)},
+						   {"author-tel", proplists:get_value(author_tel, Metadata1)},
+						   {"lock-user-id", proplists:get_value(lock_user_id, Metadata1)},
+						   {"is-locked", IsLocked},
+						   {"lock-modified-utc", LockModifiedTime},
+						   {"is-deleted", proplists:get_value(is_deleted, Metadata1)}]}],
+	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>, Options),
+	    case Response of
+		ok ->
+		    [{object_key, ObjectKey},
+		     {is_locked, IsLocked},
+		     {lock_modified_utc, LockModifiedTime}];
+		_ -> error
+	    end
+    end.
+
+
+update_lock(UserId0, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean(IsLocked0) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	not_found -> not_found;
+	Metadata0 ->
+	    LockModifiedTime =  io_lib:format("~p", [utils:timestamp()/1000]),
+	    Metadata1 = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
+
+	    UserId1 = proplists:get_value(lock_user_id, Metadata1),
+	    ModifiedTime = proplists:get_value(last_modified_utc, Metadata1),
+	    LockModifiedTime = proplists:get_value(lock_modified_utc, Metadata1),
+	    IsLocked1 = proplists:get_value(is_locked, Metadata1),
+	    IsDeleted = proplists:get_value(is_deleted, Metadata1),
+	    Options = [{acl, public_read}, {meta, [{"orig-filename", proplists:get_value(orig_name, Metadata1)},
+						   {"modified-utc", utils:to_list(ModifiedTime)},
+						   {"upload-time", proplists:get_value(upload_time, Metadata1)},
+						   {"bytes", proplists:get_value(bytes, Metadata1)},
+						   {"guid", proplists:get_value(guid, Metadata1)},
+						   {"author-id", proplists:get_value(author_id, Metadata1)},
+						   {"author-name", proplists:get_value(author_name, Metadata1)},
+						   {"author-tel", proplists:get_value(author_tel, Metadata1)},
+						   {"lock-user-id", UserId0},
+						   {"is-locked", erlang:atom_to_list(IsLocked0)},
+						   {"lock-modified-utc", LockModifiedTime},
+						   {"is-deleted", IsDeleted}]}],
+	    case UserId1 =/= undefined andalso UserId0 =/= UserId1 andalso IsDeleted =:= false of
+		true ->
+		    %% Locked by someone else
+		    [{object_key, erlang:list_to_binary(ObjectKey)},
+		     {is_locked, IsLocked1},
+		     {lock_user_id, erlang:list_to_binary(UserId1)},
+		     {lock_modified_utc, erlang:list_to_binary(LockModifiedTime)}];
+		false ->
+		    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>, Options),
+		    case Response of
+			ok ->
+			    WasLocked = proplists:get_value("x-amz-meta-is-locked", Metadata0),
+			    case WasLocked =/= IsLocked0 of
+				true -> ?INFO("Lock state changes from ~p to ~p: ~p/~p",
+					      [WasLocked, IsLocked0, BucketId, PrefixedObjectKey]);
+				false -> ok
+			    end,
+			    [{object_key, erlang:list_to_binary(ObjectKey)},
+			     {is_locked, IsLocked0},
+			     {lock_user_id, erlang:list_to_binary(UserId1)},
+			     {lock_modified_utc, erlang:list_to_binary(LockModifiedTime)}];
+			_ -> error
+		    end
+	    end
+    end.
+
+%%
+%% Receives binary hex prefix value, returns lowercase hex string.
+%% Appends "/" at the end if absent.
+%%
+-spec prefix_lowercase(binary()) -> list()|undefined.
+
+prefix_lowercase(Prefix0) when erlang:is_binary(Prefix0) ->
+    case Prefix0 of
+       <<>> -> undefined;
+       Prefix1 ->
+           Prefix2 = string:to_lower(lists:flatten(erlang:binary_to_list(Prefix1))),
+           case utils:ends_with(Prefix1, <<"/">>) of
+               true -> Prefix2;
+               false -> Prefix2++"/"
+           end
+    end;
+prefix_lowercase(undefined) -> undefined.
 
 %%
 %% Validates prefix from POST request.
@@ -158,7 +392,7 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
     case utils:is_valid_hex_prefix(Prefix0) of
 	true ->
 	    %% Check if prefix exists
-	    Prefix1 = utils:to_lower(Prefix0),
+	    Prefix1 = prefix_lowercase(Prefix0),
 	    case Prefix1 of
 		undefined -> undefined;
 		_ ->
@@ -168,10 +402,38 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 			_ -> Prefix1
 		    end
 	    end;
-	false -> {error, 11}
+	false -> {error, 36}
+    end.
+
+%%
+%% Checks if object or pseudo-directory is present in index.
+%%
+directory_or_object_exists(BucketId, Prefix, DirectoryName) ->
+    IndexContent = indexing:get_index(BucketId, Prefix),
+    case indexing:pseudo_directory_exists(IndexContent, DirectoryName) of
+	true -> {error, 10};
+	false ->
+	    case indexing:object_exists(IndexContent, DirectoryName) of
+		false ->
+		    HexDirectoryName1 = utils:hex(DirectoryName),
+		    PrefixedDirectoryName1 = utils:prefixed_object_key(Prefix, HexDirectoryName1),
+		    {PrefixedDirectoryName1, Prefix, DirectoryName};
+		ExistingObjectRecord ->
+		    case proplists:get_value(is_deleted, ExistingObjectRecord) of
+			true ->
+			    HexDirectoryName0 = utils:hex(DirectoryName),
+			    PrefixedDirectoryName0 = utils:prefixed_object_key(Prefix, HexDirectoryName0),
+			    StaleObjectKey = proplists:get_value(object_key, ExistingObjectRecord),
+			    PrefixedStaleObjectKey = utils:prefixed_object_key(
+				Prefix, erlang:binary_to_list(StaleObjectKey)),
+			    {stale_object, PrefixedStaleObjectKey, PrefixedDirectoryName0, Prefix, DirectoryName};
+			false -> {error, 29}
+		    end
+	    end
     end.
 
 validate_directory_name(_BucketId, _Prefix, null) -> {error, 12};
+validate_directory_name(_BucketId, null, _DirectoryName0) -> {error, 36};
 validate_directory_name(_BucketId, _Prefix, undefined) -> {error, 12};
 validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	when erlang:is_list(BucketId),
@@ -183,17 +445,10 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 	    case validate_prefix(BucketId, Prefix0) of
 		{error, Number} -> {error, Number};
 		Prefix1 ->
-		    IndexContent = indexing:get_index(BucketId, Prefix1),
-		    case indexing:pseudo_directory_exists(IndexContent, DirectoryName0) of
+		    case utils:starts_with(DirectoryName0, erlang:list_to_binary(?RIAK_REAL_OBJECT_PREFIX))
+			    andalso Prefix0 =:= undefined of
 			true -> {error, 10};
-			false ->
-			    case indexing:object_exists(IndexContent, DirectoryName0) of
-				true -> {error, 29};
-				false ->
-				    HexDirectoryName = utils:hex(DirectoryName0),
-				    PrefixedDirectoryName = utils:prefixed_object_key(Prefix1, HexDirectoryName),
-				    {PrefixedDirectoryName, Prefix1, DirectoryName0}
-			    end
+			false -> directory_or_object_exists(BucketId, Prefix1, DirectoryName0)
 		    end
 	    end
     end.
@@ -203,16 +458,15 @@ validate_directory_name(BucketId, Prefix0, DirectoryName0)
 %%
 validate_post(Req, Body, BucketId) ->
     case jsx:is_json(Body) of
-	{error, badarg} -> js_handler:bad_request(Req, 21);
-	false -> js_handler:bad_request(Req, 21);
+	{error, badarg} -> {error, 21};
+	false -> {error, 21};
 	true ->
 	    FieldValues = jsx:decode(Body),
 	    Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
 	    DirectoryName0 = proplists:get_value(<<"directory_name">>, FieldValues),
 	    case validate_directory_name(BucketId, Prefix0, DirectoryName0) of
-		{PrefixedDirectoryName, Prefix1, DirectoryName1} ->
-		    {PrefixedDirectoryName, Prefix1, DirectoryName1};
-		{error, Number} -> js_handler:bad_request(Req, Number)
+		{error, Number} -> js_handler:bad_request(Req, Number);
+		Attrs -> Attrs
 	    end
     end.
 
@@ -240,7 +494,7 @@ create_pseudo_directory(Req0, State) ->
                        action="mkdir",
                        user_name=User#user.name,
                        tenant_name=User#user.tenant_name,
-                       timestamp=io_lib:format("~p", [utils:timestamp()])
+                       timestamp=io_lib:format("~p", [utils:timestamp()/1000])
                    },
                    Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
                    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
@@ -260,12 +514,21 @@ handle_post(Req0, State0) ->
     end,
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case validate_post(Req1, Body, BucketId) of
-	{true, Req2, []} -> {true, Req2, []};  % error
+	{error, Number} -> js_handler:bad_request(Req1, Number);
 	{PrefixedDirectoryName, Prefix, DirectoryName} ->
 	    create_pseudo_directory(Req1, [
 		{prefixed_directory_name, PrefixedDirectoryName},
 		{prefix, Prefix},
 		{directory_name, DirectoryName},
+		{user, proplists:get_value(user, State0)},
+		{bucket_id, BucketId}]);
+	{stale_object, PrefixedStaleObjectKey, PrefixedDirectoryName, Prefix1, DirectoryName1} ->
+	    %% Remove stale object and then create directory
+	    riak_api:delete_object(BucketId, PrefixedStaleObjectKey),
+	    create_pseudo_directory(Req1, [
+		{prefixed_directory_name, PrefixedDirectoryName},
+		{prefix, Prefix1},
+		{directory_name, DirectoryName1},
 		{user, proplists:get_value(user, State0)},
 		{bucket_id, BucketId}])
     end.
@@ -308,7 +571,7 @@ basic_delete_validations(Req0, State) ->
 		true ->
 		    FieldValues = jsx:decode(Body),
 		    Prefix0 = proplists:get_value(<<"prefix">>, FieldValues),
-		    ObjectKeys = proplists:get_value(<<"object_keys">>, FieldValues),
+		    ObjectKeys = [I || I <- proplists:get_value(<<"object_keys">>, FieldValues, []), I =/= null],
 		    case validate_prefix(BucketId, Prefix0) of
 			{error, Number} -> {error, Number};
 			Prefix1 -> {Req1, BucketId, Prefix1, ObjectKeys}
@@ -333,32 +596,45 @@ validate_delete(Req0, State) ->
     end.
 
 delete_pseudo_directory(_BucketId, "", "/", _ActionLogRecord, _Timestamp) -> {dir_name, "/"};
-delete_pseudo_directory(BucketId, Prefix, ObjectKey0, ActionLogRecord0, Timestamp) ->
+delete_pseudo_directory(BucketId, Prefix, ObjectKey0, ActionLogRecord0, _Timestamp) ->
     ObjectKey1 = erlang:binary_to_list(ObjectKey0),
-    %% If ther's no "-deleted-" substring in pseudo-directory.
-    %%     - mark directory as deleted
-    %%     - mark all nested objects as deleted
-    %%     - leave record in action log
     DstDirectoryName0 = unicode:characters_to_list(utils:unhex(ObjectKey0)),
-    case string:str(DstDirectoryName0, "-deleted-") of
-	0 ->
-	    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
-	    %% rename_pseudo_directory() marks pseudo-directory as "uncommited".
-	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey1),
-	    rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
-		unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0);
-	_ ->
-	    %% "-deleted-" substring was found in directory name. No need to add another tag.
-	    case indexing:update(BucketId, Prefix, [{to_delete,
-				    [{ObjectKey0, Timestamp}]}]) of
-		lock -> lock;
-		_ ->
-		    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
-		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-		    {dir_name, ObjectKey0}
-	    end
-    end.
+    %%
+    %% The following operation would allow to undelete files in future.
+    %% But is is too expensive.
+    %%
+    %% case string:str(DstDirectoryName0, "-deleted-") of
+    %% 	0 ->
+    %% 	    %%     - mark directory as deleted
+    %% 	    %%     - mark all nested objects as deleted
+    %% 	    %%     - leave record in action log
+    %% 	    %% "-deleted-" substring was found in directory name. No need to add another tag.
+    %% 	    %% rename_pseudo_directory() marks pseudo-directory as "uncommited".
+    %% 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey1),
+    %% 	    %% DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
+    %% 	    %%rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
+    %% 	    %%	unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0);
+    %% 	_ ->
+    %% 	    case indexing:update(BucketId, Prefix, [{to_delete,
+    %% 				    [{ObjectKey0, Timestamp}]}]) of
+    %% 		lock -> lock;
+    %% 		_ ->
+    %% 		    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
+    %% 		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+    %% 		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+    %% 		    {dir_name, ObjectKey0}
+    %% 	    end
+    %% end.
+
+    %% Just delete files
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey1),
+    List0 = riak_api:recursively_list_pseudo_dir(BucketId, PrefixedObjectKey),
+    [riak_api:delete_object(BucketId, Key) || Key <- List0],
+    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
+    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+    {dir_name, ObjectKey0}.
+
 
 delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp) ->
     %% Mark object as deleted
@@ -366,20 +642,24 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp) ->
     case indexing:update(BucketId, Prefix, [{to_delete, ObjectKeys1}]) of
 	lock -> lock;
 	List0 ->
-	    %% Leave record in action log
-	    OrigNames = lists:map(
-		fun(I) ->
-		    case indexing:get_object_record([{list, List0}], I) of
-			[] -> [];
-			ObjectMeta ->
-			    UnicodeObjectName0 = proplists:get_value(orig_name, ObjectMeta),
-			    [unicode:characters_to_list(UnicodeObjectName0), " "]
-		    end
-		end, ObjectKeys0),
-	    Summary0 = lists:flatten([["Deleted \""], OrigNames, ["\""]]),
-	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-	    ok
+	    case length(ObjectKeys0) of
+		0 -> ok;
+		_ ->
+		    %% Leave record in action log
+		    OrigNames = lists:map(
+			fun(I) ->
+			    case indexing:get_object_record([{list, List0}], I) of
+				[] -> [];
+				ObjectMeta ->
+				    UnicodeObjectName0 = proplists:get_value(orig_name, ObjectMeta),
+				    [unicode:characters_to_list(UnicodeObjectName0), " "]
+			    end
+			end, ObjectKeys0),
+		    Summary0 = lists:flatten([["Deleted \""], OrigNames, ["\""]]),
+		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+		    ok
+	    end
     end.
 
 %%
@@ -437,7 +717,7 @@ delete_resource(Req0, State) ->
 		action="delete",
 		user_name=User#user.name,
 		tenant_name=User#user.tenant_name,
-		timestamp=io_lib:format("~p", [Timestamp])
+		timestamp=io_lib:format("~p", [Timestamp/1000])
 	    },
 	    %% Set "uncommitted" flag only if ther's a lot of delete
 	    case length(PseudoDirectories) > 0 of
