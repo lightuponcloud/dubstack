@@ -6,34 +6,40 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
 ## What it can do
 
-1. **Simple authentication**
+1. **File Synchronization**
+
+    This is a server side of the file synchronization software.
+    It allows not only file upload/download, but also file lock/unlock,
+    delete/undelete and restore previous versions.
+
+2. **Simple authentication**
 
     Login/password and other credentials are stored in Riak CS bucket,
     called "security" and can be manipulated through web interface.
 
     You don't have to implement complex ``vN`` AWS signing algorithms.
 
-2. **Action log**
+3. **Action log**
 
     It records history of upload, copy, move, rename and delete operations.
     History is stored in ``.riak_action_log.xml`` object by default.
 
-3. **Provides web interface, Android application and synchronization client for Windows**
+4. **Provides web interface, Android application and synchronization client for Windows**
 
     You can manage objects, users, their groups and tenants using browser or Android App.
 
-4. **Readable URLs**
+5. **Readable URLs**
     It transliterates UTF8 object names. For example pseudo-directory
     ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
     file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
 
-5. **Search**
+6. **Search**
 
     It has a simple Solr API implementation, allowing to index contents of uploaded objects.
     Since Yokozuna was removed from Riak CS, you will have to setup Solr and its schema manually.
     See [solr_schema.xml](doc/solr_schema.xml) and [solr_setup.txt](doc/solr_setup.txt).
 
-6. **Thumbnails**
+7. **Thumbnails**
 
     Thumbnails are generated on demand by dedicated gen_server process.
 
