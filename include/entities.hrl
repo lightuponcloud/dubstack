@@ -1,4 +1,4 @@
--export_type([tenant/0, group/0, user/0, token/0, csrf_token/0, app_token/0]).
+-export_type([tenant/0, group/0, user/0, token/0, csrf_token/0, object/0]).
 
 %% Time in miliseconds
 -define(CSRF_TOKEN_EXPIRATION_TIME, 31449600000). % 1000 * 60 * 60 * 24 * 7 * 52
@@ -46,13 +46,24 @@
     expires     => pos_integer() | infinity
 }.
 
-%%
-%% Application token allow applications to interact with this middleware
-%%
--type app_token() :: #{
-    id          => string(),
-    name        => string(),
-    enabled     => boolean()
+-type object() :: #{
+    key                => string(),
+    orig_name          => binary(),
+    last_modified_utc  => integer(),
+    upload_time        => integer(),
+    bytes              => integer(),
+    guid               => string(),
+    is_deleted         => boolean(),
+    author_id          => string(),
+    author_name        => binary(),
+    author_tel         => string(),
+    is_locked          => boolean(),
+    lock_user_id       => string(),
+    lock_user_name     => binary(),
+    lock_user_tel      => string(),
+    lock_modified_utc  => integer(),
+    md5                => string(),
+    content_type       => string()
 }.
 
 -record(tenant, {
@@ -83,10 +94,24 @@
     name        = ""::string()
 }).
 
--record(app_token, {
-    id          = ""::string(),
-    name        = ""::string(),
-    enabled     = true::boolean()
+-record(object, {
+    key                = "",
+    orig_name          = "",
+    last_modified_utc  = undefined,
+    upload_time        = undefined,
+    bytes              = 0,
+    guid               = undefined,
+    is_deleted         = false,
+    author_id          = undefined,
+    author_name        = undefined,
+    author_tel         = undefined,
+    is_locked          = false,
+    lock_user_id       = undefined,
+    lock_user_name     = undefined,
+    lock_user_tel      = undefined,
+    lock_modified_utc  = undefined,
+    md5                = undefined,
+    content_type       = undefined
 }).
 
 -define(AUTH_NAME, pbkdf2_sha256).

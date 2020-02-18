@@ -14,7 +14,6 @@ start(_Type, _Args) ->
     Dispatch = cowboy_router:compile([
 	{'_', [
 	    {"/riak/list/[:bucket_id]/", list_handler, []},
-	    {"/riak/object/[:bucket_id]/", object_handler, []},
 	    {"/riak/thumbnail/[:bucket_id]/", img_scale_handler, []},
 
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
@@ -47,11 +46,13 @@ start(_Type, _Args) ->
 	]}
     ]),
     Settings = #general_settings{},
+    %% idle_timeout is set to make sure client has enough time to download big file
     {ok, _} = cowboy:start_clear(middleware_http_listener,
-	[{port, Settings#general_settings.http_listen_port}],
+	[{port, Settings#general_settings.http_listen_port},
+	 {max_connections, infinity}],
 	#{env => #{
 	    dispatch => Dispatch,
-	    idle_timeout => 43200000 %% 12 hours
+	    idle_timeout => 43200000 %% Time in ms with no data received before Cowboy closes the connection.
 	}}),
     img:start_link(0),
     middleware_sup:start_link().

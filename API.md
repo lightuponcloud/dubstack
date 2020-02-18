@@ -1,7 +1,7 @@
 # DubStack API reference
 
 
-## POST /riak/login/ Login
+## POST /riak/login/
 
 This endpoint authenticates user and returns bearer token with other details.
 
@@ -18,6 +18,11 @@ This endpoint authenticates user and returns bearer token with other details.
 ### Success Response
 
 **Code** : `200 OK`
+
+### Other Response Codes
+
+**Code** : `400 Bad Request` When incorrect JSON values provided
+
 
 #### Request Example
 ```sh
@@ -64,15 +69,28 @@ curl -H "authorization : Token $TOKEN" \
 ..
 ```
 
-### Other Response Codes
+GET /riak/logout/
 
-**Code** : `400 Bad Request` When incorrect JSON values provided
+Removes bearer token or session id, if the last one is submitted in headers by browser.
+
+### Success Response
+
+**Code** : `200 OK`
+
+**Code** : `302 Redirect` to login, if session id was provided
 
 
+#### Request Example
 
-## GET /riak/list/[:bucket_id] List of objects in bucket
+```sh
+curl -v -X GET $URL/riak/logout/ \
+    -H "authorization: Token $TOKEN"
+```
 
-Returns contents of cached index, containing list of objects and pseudo-directories.
+## GET /riak/list/[:bucket_id] 
+
+Use this API endpoint to get the list of objects. 
+It returns contents of cached index, containing list of objects and pseudo-directories.
 
 ### Parameters
 
@@ -84,6 +102,15 @@ Returns contents of cached index, containing list of objects and pseudo-director
 ### Success Response
 
 **Code** : `200 OK`
+
+### Other Response Codes
+
+**Code** : `401 Unauthorized` When token is not provided in headers
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
+
 
 #### Request Example
 ```sh
@@ -98,14 +125,24 @@ curl -vv -X GET "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res/?prefix=646
 {
    "list":[
       {
-         "object_key":"img_20180225_130754.jpg",
-         "orig_name":"IMG_20180225_130754.jpg",
-         "bytes":2690467,
-         "content_type":"image/jpeg",
-         "last_modified":1539366733,
-         "is_deleted":false,
-         "md5":"9ae51374bb6623ec3b6d17a5c2415391-2",
-         "access_token":"2nshwtcu4f2k73h5kh2x"
+         "object_key":" img_20180225_130754.jpg",
+         "orig_name": "IMG_20180225_130754.jpg",
+         "bytes": 2690467,
+         "content_type": "image/jpeg",
+         "last_modified_utc": 1539366733,
+         "guid": "c699175a-9f58-44b0-83f8-18e166b12b0d",
+         "author_id": "706f77d2b233c2a1935b5473edb764d2",
+         "author_name": "Іван Франко",
+         "author_tel": "0951234567 (фейк)",
+         "is_locked": true,
+         "lock_user_id": "706f77d2b233c2a1935b5473edb764d2",
+         "lock_user_name": "Іван Франко",
+         "lock_user_tel": "0951234567 (фейк)",
+         "lock_modified_utc": 1580838703,
+         "is_deleted": false,
+         "md5": "9ae51374bb6623ec3b6d17a5c2415391-2",
+         "width": 1024,
+         "height": 768
       }
    ],
    "dirs":[
@@ -119,24 +156,8 @@ curl -vv -X GET "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res/?prefix=646
 }
 ```
 
-### Other Response Codes
 
-**Code** : `401 Unauthorized` When token is not provided in headers
-
-**Code** : `403 Forbidden` When user has no access to bucket
-
-**Code** : `404 Not Found` When prefix not found
-
-NB: Since DELETE, COPY and MOVE operations are performed on the list of objects,
-it will take time for Riak CS to process many requests. In that case COPY,
-DELETE and MOVE API endpoints will set "*uncommitted*" flag to *true*.
-
-When list response has "*uncommitted*" flag set to true, it means the contents
-of the list is not up to date.
-
-
-
-## POST /riak/list/[:bucket_id] Creates pseudo-directory
+## POST /riak/list/[:bucket_id]
 
 This API endpoint creates pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
 
@@ -155,6 +176,19 @@ This API endpoint creates pseudo-directory, that is stored as Hex-encoded value 
 
 **Code** : `204 No Content`
 
+### Other Response Codes
+
+**Code** : `401 Unauthorized` When token is not provided in headers
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
+
+**Code** : `400 Bad Request` When incorrect JSON values provided
+
+**Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
+
+
 #### Request Example
 ```sh
 curl -X POST "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
@@ -169,6 +203,40 @@ curl -X POST "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
 **directory_name** : UTF8 name of new pseudo-dorectory, that should be created.
 
 
+## PATCH /riak/list/[:bucket_id]
+
+This API andpoint allows to *lock*, *unlock*, *undelete* objects.
+Undelete operation marks objects as visible again.
+Lock marks them immutable and unlock reverses that operation.
+
+### Body
+
+```json
+{
+   "op": "undelete",
+   "prefix": "string",
+   "objects": ["string", "string", .. "string"]
+}
+
+{
+   "op": "lock",
+   "prefix": "string",
+   "objects": ["string", "string", .. "string"]
+}
+
+{
+   "op": "unlock",
+   "prefix": "string",
+   "objects": ["string", "string", .. "string"]
+}
+```
+
+**Auth required** : YES
+
+### Success Response
+
+**Code** : `204 No Content`
+
 ### Other Response Codes
 
 **Code** : `401 Unauthorized` When token is not provided in headers
@@ -181,25 +249,6 @@ curl -X POST "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
 
 **Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
 
-
-## PATCH /riak/list/[:bucket_id] Undelete objects
-
-Marks objects as visible again.
-
-### Body
-
-```json
-{
-   "undelete":"string",
-   "prefix":"string"
-}
-```
-
-**Auth required** : YES
-
-### Success Response
-
-**Code** : `204 No Content`
 
 #### Request Example
 ```sh
@@ -210,75 +259,9 @@ curl -X PATCH "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
     -d "{ \"prefix\": \"64656d6f/\", \"object_key\": \"something.random\" }"
 ```
 
-### Other Response Codes
+## DELETE /riak/list/[:bucket_id]
 
-**Code** : `401 Unauthorized` When token is not provided in headers
-
-**Code** : `403 Forbidden` When user has no access to bucket
-
-**Code** : `404 Not Found` When prefix not found
-
-**Code** : `400 Bad Request` When incorrect JSON values provided
-
-**Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
-
-
-## GET /riak/object/[:bucket_id] Get object details
-
-Returns object properties.
-
-### Parameters
-
-**object_key** : Object key in Riak CS
-
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
-
-**Auth required** : YES
-
-### Success Response
-
-**Code** : `200 OK`
-
-#### Request Example
-```sh
-curl -X GET "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
-    -H "accept: application/json" \
-    -H "Content-Type: application/json" \
-    -H "authorization: Token $TOKEN" \
-    -d "{ \"object_key\": \"something.jpg\" }"
-```
-
-#### Response Example
-
-```json
-{
-   "prefix":"64656d6f/",
-   "key":"something.jpg",
-   "orig_name":"Something Something.jpg",
-   "last_modified_utc":1534011746,
-   "uploaded":"Wed, 17 Oct 2018 14:16:00 GMT",
-   "content_length":66406,
-   "content_type":"image/jpeg",
-   "access_token":"eagwasuxts1uvcf8f4e0"
-}
-```
-
-### Other Response Codes
-
-**Code** : `401 Unauthorized` When token is not provided in headers
-
-**Code** : `403 Forbidden` When user has no access to bucket
-
-**Code** : `404 Not Found` When prefix not found
-
-**Code** : `400 Bad Request` When incorrect JSON values provided
-
-
-
-## DELETE /riak/list/[:bucket_id] Deletes objects/pseudo-directories
-
-Marks objects as deleted, renames pseudo-directoies and makrs them as deleted as well.
-Objects then can be removed with 3rd party tool, such as s3cmd.
+Marks objects as deleted. In case of pseudo-directoies, it renames them and makrs them as deleted.
 
 ### Body
 
@@ -305,6 +288,19 @@ and passed as "object_key" with "/" at the end. For example
 
 **Code** : `200 OK`
 
+### Other Response Codes
+
+**Code** : `401 Unauthorized` When token is not provided in headers
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
+
+**Code** : `400 Bad Request` When incorrect JSON values provided
+
+**Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
+
+
 #### Request Example
 ```sh
 curl -X DELETE "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
@@ -322,6 +318,32 @@ curl -X DELETE "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
 }
 ```
 
+## GET /riak/thumbnail/[:bucket_id]
+
+Generate image thumbnail. Scales image, stored in Riak CS to width or heigt, specified in request
+Returns binary image data.
+
+### Parameters
+
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes "626c6168".
+
+**object_key** : ASCII "object_key" value returned by GET /riak/list/[:bucket_id] API endpoint.
+
+**w** : Requested width (optional)
+
+**h*** : Requested height (optional)
+
+**dummy** : If dummy=1 and image not found, returns image with text "image unavailable".
+
+**crop** : Boolean flag, telling server to crop image during scaling. Default: 1 (true)
+
+
+**Auth required** : YES
+
+### Success Response
+
+**Code** : `200 OK`
+
 ### Other Response Codes
 
 **Code** : `401 Unauthorized` When token is not provided in headers
@@ -332,33 +354,6 @@ curl -X DELETE "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
 
 **Code** : `400 Bad Request` When incorrect JSON values provided
 
-**Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
-
-
-## GET /riak/thumbnail/[:bucket_id] Generate image thumbnail
-
-Scales image, stored in Riak CS to provided width or heigt and returns binary image data.
-
-### Parameters
-
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes "626c6168".
-
-**object_key** : ASCII "object_key" value returned by GET /riak/list/[:bucket_id] API endpoint.
-
-**w** : Width of thumbnail
-
-**h*** : Height of thumbnail
-
-**access_token** : Secret token you can use for sharing output image.
-
-**dummy** : If dummy=1 and image not found, returns image with text "image unavailable".
-
-
-**Auth required** : YES
-
-### Success Response
-
-**Code** : `200 OK`
 
 #### Request Example
 ```sh
@@ -371,28 +366,22 @@ curl -X GET "http://127.0.0.1/riak/thumbnail/the-poetry-naukovtsi-res" \
 
 It returns binary image data.
 
-### Other Response Codes
 
-**Code** : `401 Unauthorized` When token is not provided in headers
+## POST /riak/upload/[:bucket_id]
 
-**Code** : `403 Forbidden` When user has no access to bucket
-
-**Code** : `404 Not Found` When prefix not found
-
-**Code** : `400 Bad Request` When incorrect JSON values provided
-
-
-
-## POST /riak/upload/[:bucket_id] Upload file
-
-Allows to upload files to Riak CS. This API endpoint also creates bucket if it do not exist,
-transliterates provided ``"object_key"`` to use it as Riak CS object key, attaches original
-name and modification time to object metadata, so desktop applications can find what version
-of file is latest.
+Allows to upload files to Riak CS. 
+It also do the following
+- Creates bucket if it do not exist
+- Transliterates provided filename for use in URL
+- Attaches metadata to uploaded file
+- Updates cached index ( list of files ) and full-text-search index
 
 If file is bigger than ``FILE_UPLOAD_CHUNK_SIZE``, it returns upload ID, that should be used
 to upload next parts of file.
 
+Upload operation places file to special prefix, ``RIAK_REAL_OBJECT_PREFIX``, configured in riak.hrl
+and then puts link to the real object in requested pseudo-directory. This allows to perform file operations,
+such as **copy**, **move**, **rename**, **delete**, **undelete** faster.
 
 **Auth required** : YES
 
@@ -402,34 +391,6 @@ to upload next parts of file.
 
 **Code** : `200 OK`
 
-
-#### Request Example
-```sh
-FILE_SIZE_RANGE_TOTAL=`stat --printf="%s" something.random`
-let "FILE_SIZE_RANGE_END=$FILE_SIZE_RANGE_TOTAL - 1"
-if uname | grep -q "Darwin"; then
-    time_fmt="-f %m"
-else
-    time_fmt="-c %Y"
-fi
-TIMESTAMP=`stat $time_fmt something.random`
-
-curl -v -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/" \
-    -F "files[]=@something.random;filename=Something.random" \
-    -F "object_key=Something.random" \
-    -F "modified_utc=$TIMESTAMP" \
-    -H "accept: application/json" \
-    -H "content-range: bytes 0-$FILE_SIZE_RANGE_END/$FILE_SIZE_RANGE_TOTAL" \
-    -H "authorization: Token $TOKEN"
-```
-**content-range** : Format of this header is start byte-end byte/total bytes. It is optional for small files under `FILE_UPLOAD_CHUNK_SIZE` bytes.
-
-#### Response Example
-```json
-{
-   "object_key":"something.random"
-}
-```
 
 ### Other Response Codes
 
@@ -446,7 +407,73 @@ curl -v -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/" \
 **Code** : `429 Too Many Requests` When server is unable to process request, as Riak CS is overloaded.
 
 
-## POST /riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/ Upload big file
+#### Request Example
+```sh
+FILE_SIZE_RANGE_TOTAL=`stat --printf="%s" something.random`
+let "FILE_SIZE_RANGE_END=$FILE_SIZE_RANGE_TOTAL - 1"
+if uname | grep -q "Darwin"; then
+    time_fmt="-f %m"
+else
+    time_fmt="-c %Y"
+fi
+TIMESTAMP=`stat $time_fmt something.random`
+MD5SUM=`md5sum something.random | awk '{print $1}'`
+
+curl -v -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/" \
+    -F "modified_utc=$TIMESTAMP" \
+    -F "last_seen_modified_utc=$TIMESTAMP" \
+    -F "etags[]=$MD5SUM" \
+    -F "files[]=@something.random;filename=Something.random" \
+    -H "accept: application/json" \
+    -H "content-range: bytes 0-$FILE_SIZE_RANGE_END/$FILE_SIZE_RANGE_TOTAL" \
+    -H "authorization: Token $TOKEN"
+```
+**content-range** : Format of this header is the following.
+```
+start byte-end byte/total bytes. 
+```
+It is optional for small files under `FILE_UPLOAD_CHUNK_SIZE` bytes.
+
+**modified_utc** : Last modification file. This parameter is stored in metadata and used to check if next upload with the same filename should replace existing file or not.
+
+**last_seen_modified_utc** : Tells server the time when client have seen updates last time. This is optional parameter.
+
+**etags[]** : Md5 sum of binary part of data
+
+#### Response Example
+```json
+      {
+         "object_key":" "something.random",
+         "orig_name": "Something.random",
+         "bytes": 2690467,
+         "content_type": "application/octet-stream",
+         "last_modified_utc": 1539366733,
+         "guid": "c699175a-9f58-44b0-83f8-18e166b12b0d",
+         "author_id": "706f77d2b233c2a1935b5473edb764d2",
+         "author_name": "Іван Франко",
+         "author_tel": "0951234567 (фейк)",
+         "is_locked": true,
+         "lock_user_id": "706f77d2b233c2a1935b5473edb764d2",
+         "lock_user_name": "Іван Франко",
+         "lock_user_tel": "0951234567 (фейк)",
+         "lock_modified_utc": 1580838703,
+         "is_deleted": false,
+         "md5": "9ae51374bb6623ec3b6d17a5c2415391-2",
+         "width": null,
+         "height": null
+      }
+
+// In case of big file, the response to the first upload would look the following way:
+{
+    "upload_id":"Z7mFJgyZRQ6G8xxNciYp1g",
+    "last_modified_utc":1510914514,
+    "end_byte":1999999,
+    "md5":"c168dbdff4b1ba42392ec0634254d5f6",
+    "guid":"4ea476c4-50d1-48e6-aefc-30bfebecb347"
+}
+```
+
+## POST /riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/
 
 This API endpint should be used to continue upload of big file.
 
@@ -458,6 +485,17 @@ This API endpint should be used to continue upload of big file.
 **Code** : `100 Continue`
 
 **Code** : `200 OK`
+
+
+### Other Response Codes
+
+**Code** : `401 Unauthorized` When token is not provided in headers
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
+
+**Code** : `400 Bad Request` In case of incorrect headers or multipart field values
 
 
 #### Request Example
@@ -488,9 +526,9 @@ TIMESTAMP=`stat $time_fmt xaa`
 #
 # Upload first chunk
 #
-FIRST_CHUNK_STATUS=`curl -s -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/" \
-    -F "files[]=@xaa;filename=something.random" \
-    -F "object_key=Something.random" \
+FIRST_CHUNK_STATUS=`curl -s -X POST "http://127.0.0.1/riak/upload/the-greenhouse-test-res/" \
+    -F 'files[]=@xaa;filename=something.random' \
+    -F "object_name=Something.random" \
     -F "modified_utc=$TIMESTAMP" \
     -H "accept: application/json" \
     -H "content-range: bytes 0-$FIRST_CHUNK_RANGE_END/$FILE_SIZE_RANGE_TOTAL" \
@@ -500,18 +538,18 @@ FIRST_CHUNK_STATUS=`curl -s -X POST "http://127.0.0.1/riak/upload/the-poetry-nau
 # Parse Upload ID
 #
 UPLOAD_ID=`echo $FIRST_CHUNK_STATUS|python -c "import sys, json; print json.load(sys.stdin)['upload_id']"`
-object_key=`echo $FIRST_CHUNK_STATUS|python -c "import sys, json; print json.load(sys.stdin)['object_key']"`
+GUID=`echo $FIRST_CHUNK_STATUS|python -c "import sys, json; print json.load(sys.stdin)['guid']"`
 FIRST_END_BYTE=`echo $FIRST_CHUNK_STATUS|python -c "import sys, json; print json.load(sys.stdin)['end_byte']"`
 FIRST_MD5=`echo $FIRST_CHUNK_STATUS|python -c "import sys, json; print json.load(sys.stdin)['md5']"`
 SECOND_MD5=`md5sum xab| awk '{ print $1 }'`
 
 let "SECOND_START_BYTE=$FIRST_END_BYTE+1"
 
-curl -s -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/$UPLOAD_ID/2/" \
+curl -s -X POST "$URL/riak/upload/the-greenhouse-test-res/$UPLOAD_ID/2/" \
     -F 'files[]=@xab;filename=something.random' \
-    -F "object_key=$object_key" \
-    -F "modified_utc=$TIMESTAMP" \
+    -F "guid=$GUID" \
     -F "etags[]=1,$FIRST_MD5,2,$SECOND_MD5" \
+    -F "modified_utc=$TIMESTAMP" \
     -H "accept: application/json" \
     -H "content-range: bytes $SECOND_START_BYTE-$SECOND_CHUNK_RANGE_END/$FILE_SIZE_RANGE_TOTAL" \
     -H "authorization: Token $TOKEN"
@@ -520,60 +558,25 @@ curl -s -X POST "http://127.0.0.1/riak/upload/the-poetry-naukovtsi-res/$UPLOAD_I
 #### Response Example
 ```json
 {
-   "upload_id":"qsf1Qzw4TgufqdNgNoByfQ",
-   "object_key":"something.random",
-   "end_byte":3631893,
-   "md5":"89b10a5b5fd9e5ba1c97562ab67e54cc"
+    "upload_id":"Z7mFJgyZRQ6G8xxNciYp1g",
+    "last_modified_utc":1510914514,
+    "end_byte":1999999,
+    "md5":"c168dbdff4b1ba42392ec0634254d5f6",
+    "guid":"4ea476c4-50d1-48e6-aefc-30bfebecb347"
 }
 ```
 
-### Other Response Codes
 
-**Code** : `401 Unauthorized` When token is not provided in headers
+## POST /riak/copy/[:src_bucket_id]/
 
-**Code** : `403 Forbidden` When user has no access to bucket
+Copy object or directory.
 
-**Code** : `404 Not Found` When prefix not found
-
-**Code** : `400 Bad Request` In case of incorrect headers or multipart field values
-
-
-
-## POST /riak/copy/[:src_bucket_id]/ Copy object or directory
-
-This API endpoint copies object using Riak CS COPY command.
 
 **Auth required** : YES
 
 ### Success Response
 
 **Code** : `200 OK`
-
-Response Example:
-[]
-
-### Body
-
-```json
-{
-   "src_object_keys":["key 1", "key 2"],
-   "dst_bucket_id":"string",
-   "dst_prefix":"string",
-   "src_prefix":"string"
-}
-```
-
-#### Request Example
-```sh
-#
-# The following request copies file "something.random" from pseudo-directory "demo" to "demo/test/".
-#
-curl -s -X POST "http://127.0.0.1/riak/copy/the-poetry-naukovtsi-res/" \
-    -H "accept: application/json" \
-    -H "Content-Type: application/json" \
-    -H "authorization: Token $TOKEN" \
-    -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": [\"something.random\"] }"
-```
 
 ### Other Response Codes
 
@@ -591,16 +594,69 @@ curl -s -X POST "http://127.0.0.1/riak/copy/the-poetry-naukovtsi-res/" \
                           missing in the list.
 
 
-## POST /riak/move/[:src_bucket_id]/ Move object or directory
+### Body
 
-This API endpoint copies object using Riak CS COPY command and then deletes it in previous location.
-This might be suboptimal, but currently Riak CS do not have MOVE command.
+```json
+{
+   "src_prefix": "string",    // Source prefix
+   "dst_prefix": "string",    // Destination prefix
+   "dst_bucket_id": "string", // Destination bucket
+   "src_object_keys": {"key 1": "Destination Name 1", "key 2": "Destination Name 2"],
+}
+```
+
+Response Example:
+[{
+    bytes: 20,
+    src_orig_name: "Something.random",
+    dst_orig_name: "Something.random",
+    old_key: "something.random",
+    new_key: "something.random",
+    dst_prefix: "74657374/",
+    guid: "6caef57f-fc6d-457d-b2b0-210a1ed2f753",
+    renamed: false,
+    src_prefix: null
+}, ..]
+
+
+#### Request Example
+```sh
+#
+# The following request copies file "something.random" from pseudo-directory "demo" to "demo/test/".
+#
+curl -s -X POST "http://127.0.0.1/riak/copy/the-poetry-naukovtsi-res/" \
+    -H "accept: application/json" \
+    -H "Content-Type: application/json" \
+    -H "authorization: Token $TOKEN" \
+    -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": [\"something.random\"] }"
+```
+
+
+
+## POST /riak/move/[:src_bucket_id]/
+
+Move object or directory.
 
 **Auth required** : YES
 
 ### Success Response
 
 **Code** : `204 No Content`
+
+### Other Response Codes
+
+**Code** : `401 Unauthorized` When token is not provided in headers
+
+**Code** : `403 Forbidden` When user has no access to bucket
+
+**Code** : `404 Not Found` When prefix not found
+
+**Code** : `400 Bad Request` In case of incorrect headers or multipart field values
+
+**Code** : `202 Accepted` Application returns 202 when it failed to copy some of objects, or it failed to update index.
+                          In that case response should contain the list of copied objects. List might be empty or
+                          it can be incomplete. So client application should retry copy of those object that are 
+                          missing in the list.
 
 ### Body
 
@@ -625,6 +681,18 @@ curl -s -X POST "http://127.0.0.1/riak/move/the-poetry-naukovtsi-res/" \
     -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": [\"something.random\"] }"
 ```
 
+
+## POST /riak/rename/[:src_bucket_id]/ 
+
+Renames object or directory. Changes ``"orig_name"`` meta tag when called on object.
+Moves nested objects to new prefix when used on pseudo-directories.
+
+**Auth required** : YES
+
+### Success Response
+
+**Code** : `204 No Content`
+
 ### Other Response Codes
 
 **Code** : `401 Unauthorized` When token is not provided in headers
@@ -635,23 +703,10 @@ curl -s -X POST "http://127.0.0.1/riak/move/the-poetry-naukovtsi-res/" \
 
 **Code** : `400 Bad Request` In case of incorrect headers or multipart field values
 
-**Code** : `202 Accepted` Application returns 202 when it failed to copy some of objects, or it failed to update index.
-                          In that case response should contain the list of copied objects. List might be empty or
-                          it can be incomplete. So client application should retry copy of those object that are 
-                          missing in the list.
-
-
-
-## POST /riak/rename/[:src_bucket_id]/ Rename object or directory
-
-Changes ``"orig_name"`` meta tag when called on object.
-Moves nested objects to new prefix when used on pseudo-directories.
-
-**Auth required** : YES
-
-### Success Response
-
-**Code** : `204 No Content`
+**Code** : `202 Accepted` Application returns 202 when it failed to rename some of objects, or it failed to update index.
+                          In that case response should contain the list of renamed objects. List might be empty or
+                          it can be incomplete. So client application should retry finish rename manually in that case
+                          Example of response body in that case: {"dir_errors": ["64656d6f/], "object_errors": []}
 
 ### Body
 
@@ -680,6 +735,23 @@ curl -s -X POST "http://127.0.0.1/riak/rename/the-poetry-naukovtsi-res/" \
     -d "{ \"prefix\": \"64656d6f/\", \"src_object_key\": \"something-random.jpg\", \"dst_object_name\": \"Something Something.jpg\" }"
 ```
 
+## GET /riak/download/[...]
+
+Allows to download file, in case user belongs to group where file is stored.
+
+**Auth required** : YES
+
+
+#### Request Example
+```sh
+curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/something.random" \
+    -H "authorization: Token $TOKEN" --output something.random
+```
+
+### Success Response
+
+**Code** : `200 OK`
+
 ### Other Response Codes
 
 **Code** : `401 Unauthorized` When token is not provided in headers
@@ -688,9 +760,54 @@ curl -s -X POST "http://127.0.0.1/riak/rename/the-poetry-naukovtsi-res/" \
 
 **Code** : `404 Not Found` When prefix not found
 
-**Code** : `400 Bad Request` In case of incorrect headers or multipart field values
+**Code** : `400 Bad Request` When incorrect JSON values provided
 
-**Code** : `202 Accepted` Application returns 202 when it failed to rename some of objects, or it failed to update index.
-                          In that case response should contain the list of renamed objects. List might be empty or
-                          it can be incomplete. So client application should retry finish rename manually in that case
-                          Example of response body in that case: {"dir_errors": ["64656d6f/], "object_errors": []}
+
+## GET /riak/action-log/[:bucket_id]/
+
+Fetch the history of specified pseudo-directory.
+
+### Parameters
+
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+
+**object_key** : The key that upload/list returns for referencing object in URL.
+		 If provided, the object history of changes will be returned.
+
+**Auth required** : YES
+
+#### Response Example
+```json
+{
+    "action": "copy",
+    "details": "Copied from "/".",
+    "tenant_name": "Poets",
+    "timestamp": "1575107875",
+    "user_name": "Іван Франко"
+}
+```
+
+
+## POST /riak/action-log/[:bucket_id]/
+
+Allow to restore previous version of file.
+
+### Parameters
+
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+
+
+**Auth required** : YES
+
+#### Request Example
+```sh
+curl -s -X POST "http://127.0.0.1/riak/action-log/?prefix=626c6168" \
+    -H "accept: application/json" \
+    -H "Content-Type: application/json" \
+    -H "authorization: Token $TOKEN" \
+    -d "{ \"object_key\": \"something-random.jpg\", \"timestamp\": \"1576148851\" }"
+```
+
+### Success Response
+
+**Code** : `200 OK`

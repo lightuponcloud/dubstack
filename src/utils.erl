@@ -4,21 +4,22 @@
 -module(utils).
 %% Validations
 -export([is_valid_bucket_id/2, is_valid_object_key/1, is_bucket_belongs_to_group/3,
-	 is_bucket_belongs_to_tenant/2, is_true/1, is_false/1, 
-	 has_duplicates/1, ends_with/2, starts_with/2, even/1, 
+	 is_bucket_belongs_to_tenant/2, is_true/1, is_false/1,
+	 has_duplicates/1, ends_with/2, starts_with/2, even/1,
 	 validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
-	 check_token/1, is_authorized/1]).
+	 is_hidden_prefix/1, get_token/1]).
 %% Conversions
 -export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
 	 to_binary/1, to_atom/1, to_boolean/1]).
 %% Ancillary
 -export([mime_type/1, slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
-	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1]).
+	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
+	 translate/2, dirname/1]).
 
 -include("riak.hrl").
 -include("general.hrl").
--include("user.hrl").
+-include("entities.hrl").
 
 mime_types() ->
     MimeTypesFile = "/etc/mime.types",
@@ -32,9 +33,13 @@ mime_type(FileName) when erlang:is_list(FileName) ->
 	[] -> "application/octet_stream";
 	Extension0 ->
 	    Extension1 = ux_string:to_lower(unicode:characters_to_list(Extension0)),
-	    MimeTypes = mime_types(),
-	    LookupKey = string:substr(Extension1, 2),
-	    proplists:get_value(LookupKey, MimeTypes, "application/octet_stream")
+	    case Extension1 of
+		".heic" -> "image/heic";  %% nonsense from apple
+		_ ->
+		    MimeTypes = mime_types(),
+		    LookupKey = string:substr(Extension1, 2),
+		    proplists:get_value(LookupKey, MimeTypes, "application/octet_stream")
+	    end
     end.
 
 %%
@@ -82,6 +87,7 @@ trim_spaces(Bin0) ->
 %%
 -spec prefixed_object_key(string()|binary()|undefined, string()|binary()) -> string().
 
+prefixed_object_key(null, ObjectKey) -> ObjectKey;
 prefixed_object_key(undefined, ObjectKey) -> ObjectKey;
 prefixed_object_key([], ObjectKey) -> ObjectKey;
 prefixed_object_key(".", ObjectKey) -> ObjectKey;
@@ -104,8 +110,8 @@ prefixed_object_key(Prefix, ObjectKey0) when erlang:is_list(Prefix), erlang:is_l
 	    true -> string:sub_string(ObjectKey0, 2, length(ObjectKey0));
 	    false -> ObjectKey0
 	end,
+    %% Concatenate prefix and object key
     case string:sub_string(Prefix, length(Prefix), length(Prefix)) =:= "/" of
-	%% strip '/' at the end, return 'prefix/object_key'
 	true -> string:concat(Prefix, ObjectKey1);
 	_ -> string:concat(Prefix ++ "/", ObjectKey1)
     end.
@@ -385,6 +391,7 @@ is_valid_object_key(<< _, Rest/bits >>, 0) -> is_valid_object_key(Rest, 0).
 
 -spec is_valid_object_key(binary()) -> true|false.
 
+is_valid_object_key(<<>>) -> false;
 is_valid_object_key(Prefix) when erlang:is_binary(Prefix) ->
     (size(Prefix) =< 254) andalso (validate_utf8(Prefix, 0) =:= 0) andalso (is_valid_object_key(Prefix, 0) =:= 0);
 is_valid_object_key(_) -> false.
@@ -450,13 +457,29 @@ format_timestamp(ModifiedTime0) when erlang:is_integer(ModifiedTime0) ->
     lists:flatten(
 	io_lib:format("~4.10.0b-~2.10.0b-~2.10.0b", [Year, Month, Day])).
 
+%%
+%% Checks if provided object's key ends with service suffix
+%%
 -spec is_hidden_object(proplist()) -> boolean().
 
 is_hidden_object(ObjInfo) ->
-    ObjectKey = proplists:get_value(key, ObjInfo),
-    lists:suffix(?RIAK_INDEX_FILENAME, ObjectKey) =:= true orelse 
-    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
-    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true.
+    case proplists:get_value(key, ObjInfo) of
+        undefined -> true;  %% .stop file or something
+        ObjectKey ->
+	    lists:suffix(?RIAK_INDEX_FILENAME, ObjectKey) =:= true orelse 
+	    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
+	    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
+	    lists:suffix(?RIAK_LOCK_SUFFIX, ObjectKey) =:= true
+    end.
+
+%%
+%% Check if provided prefix starts with service prefixes.
+%%
+-spec is_hidden_prefix(list()) -> boolean().
+
+is_hidden_prefix(Prefix) when erlang:is_list(Prefix) ->
+    lists:prefix(?RIAK_REAL_OBJECT_PREFIX, Prefix) =:= true orelse 
+    lists:prefix(?RIAK_REAL_OBJECT_PREFIX, Prefix) =:= true.
 
 %%
 %% Joins a list of elements adding a separator between each of them.
@@ -470,16 +493,11 @@ join_list_with_separator([Head|Tail], Sep, Acc0) ->
     join_list_with_separator(Tail, Sep, Acc1);
 join_list_with_separator([], _Sep, Acc0) -> lists:reverse(Acc0).
 
-%%
-%% Extracts token from request headers and looks it up in "security" bucket
-%%
--spec check_token(any()) -> user()|undefined|not_found|expired.
+-spec get_token(any()) -> list()|undefined.
 
-check_token(Req0) ->
+get_token(Req0) ->
     case cowboy_req:header(<<"authorization">>, Req0) of
-        <<"Token ", TokenValue0/binary>> ->
-	    TokenValue1 = erlang:binary_to_list(TokenValue0),
-	    login_handler:check_token(TokenValue1);
+        <<"Token ", TokenValue0/binary>> -> erlang:binary_to_list(TokenValue0);
 	_ -> undefined
     end.
 
@@ -545,10 +563,33 @@ firstmatch(L, Condition) ->
     [F | _] -> F
   end.
 
-is_authorized(Req0) ->
-    case check_token(Req0) of
-	undefined -> js_handler:unauthorized(Req0, 28);
-	not_found -> js_handler:unauthorized(Req0, 28);
-	expired -> js_handler:unauthorized(Req0, 38);
-	User -> {true, Req0, User}
+translate(Val, Locale) when is_list(Locale) ->
+    %% TODO: use dets to get translations
+    Val.
+
+-spec dirname(binary()|list()|undefined) -> binary()|list()|undefined.
+
+dirname(undefined) -> undefined;
+dirname(Path0) when erlang:is_list(Path0) ->
+    Path1 =
+	case string:sub_string(Path0, length(Path0), length(Path0)) =:= "/" of
+	    true -> string:sub_string(Path0, 1, length(Path0)-1);
+	    _ -> Path0
+	end,
+    case filename:dirname(Path1) of
+	"." -> undefined;
+	Path2 -> Path2 ++ "/"
+    end;
+dirname(Path0) when erlang:is_binary(Path0) ->
+    Path2 =
+	case ends_with(Path0, <<"/">>) of
+	    true ->
+		Size = byte_size(Path0)-1,
+		<<Path1:Size/binary, _/binary>> = Path0,
+		filename:dirname(Path1);
+	    false -> filename:dirname(Path0)
+	end,
+    case filename:dirname(Path2) of
+	<<".">> -> undefined;
+	Path3 -> << Path3/binary, <<"/">>/binary >>
     end.

@@ -80,9 +80,9 @@ index(BucketId, Prefix, ObjectKey, ContentType) ->
 	    Headers = [{"content-type", ContentType}],
 	    %% Upload object to Solr
 	    Config1 = #riak_api_config{s3_proxy_host=undefined, s3_proxy_port=undefined},
-	    MetaData = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
+	    Metadata = riak_api:get_object_metadata(BucketId, PrefixedObjectKey),
 	    OrigName = 
-		case erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", MetaData, ObjectKey)) of
+		case erlcloud_http:url_encode(proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey)) of
 		    undefined -> ObjectKey;
 		    Name -> Name
 		end,

@@ -12,7 +12,10 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
+
+init(Req, Opts) ->
+    {cowboy_rest, Req, Opts}.
 
 %%
 %% Returns User if password match what's in DB.
@@ -25,6 +28,7 @@ check_credentials(null, _Password) -> false;
 check_credentials(undefined, _Password) -> false;
 check_credentials(_Login, <<>>) -> false;
 check_credentials(_Login, undefined) -> false;
+check_credentials(_Login, null) -> false;
 check_credentials(Login, Password)
 	when erlang:is_binary(Login), erlang:is_binary(Password) ->
     UserId = utils:hex(erlang:md5(Login)),
@@ -63,7 +67,7 @@ new_token(Req0, UserId, TenantId) ->
 	    RootElement0 = #xmlElement{name=auth, content=[NewToken]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
 	    UUID4 = utils:to_list(riak_crypto:uuid4()),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKENS_PREFIX, UUID4,
+	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
 		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
 	    UUID4
     end.
@@ -86,7 +90,7 @@ new_csrf_token() ->
     RootElement0 = #xmlElement{name=auth, content=[NewCSRFToken]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     UUID4 = utils:to_list(riak_crypto:uuid4()),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKENS_PREFIX, UUID4,
+    riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
 	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
     UUID4.
 
@@ -100,7 +104,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
     case check_cookie(UUID4) of
 	false -> false;
 	CookieValue ->
-	    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKENS_PREFIX,
+	    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKEN_PREFIX,
 		erlang:binary_to_list(CookieValue)),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 		not_found -> false;
@@ -120,7 +124,7 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 -spec check_token(string()) -> user()|not_found|expired.
 
 check_token(UUID4) when erlang:is_list(UUID4) ->
-    PrefixedToken = utils:prefixed_object_key(?TOKENS_PREFIX, UUID4),
+    PrefixedToken = utils:prefixed_object_key(?TOKEN_PREFIX, UUID4),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
 	not_found -> not_found;
 	TokenObject ->
@@ -183,8 +187,6 @@ check_session_id(SessionID0) when erlang:is_binary(SessionID0) ->
 	    end
     end.
 
-init(Req, Opts) ->
-    {cowboy_rest, Req, Opts}.
 
 %%
 %% Called first
@@ -223,7 +225,7 @@ handle_post(Req0, _State) ->
 		    Login = proplists:get_value(<<"login">>, FieldValues),
 		    Password = proplists:get_value(<<"password">>, FieldValues),
 		    case check_credentials(Login, Password) of
-			false -> js_handler:forbidden(Req0, 18);
+			false -> js_handler:forbidden(Req0, 3);
 			not_found -> js_handler:forbidden(Req0, 17);
 			blocked -> js_handler:forbidden(Req0, 19);
 			User0 ->

@@ -15,7 +15,6 @@
 #define BUF_SIZE            26214400 // 25 MB is big enough for most of JPEGs
 #define OK                  0
 
-#define	KNOWN_FORMATS       ["jpeg", "png"]
 #undef MIN
 #define MIN(a,b)        ((a) < (b) ? (a) : (b))
 #undef ROUND
@@ -31,6 +30,7 @@ typedef struct transform {
     unsigned long scale_width;
     unsigned long scale_height;
     unsigned char *tag; // PID
+    int crop; // Crop image
     size_t tag_size;
 } transform_se;
 
@@ -42,7 +42,6 @@ static ssize_t write_exact(unsigned char * buf, ssize_t len) {
             return i;
         wrote += i;
     } while (wrote < len);
-
     return len;
 }
 
@@ -134,22 +133,22 @@ int process_image(transform_se *se, ei_x_buff *result){
       double cal_ratio = (double)se->scale_width / se->scale_height;
       if(cal_ratio > src_ratio){
 	status = MagickResizeImage(magick_wand, se->scale_width, (se->scale_width * height / width), TriangleFilter, 1.0);
+        if(se->crop == 1){
+          width = MagickGetImageWidth(magick_wand);
+          height = MagickGetImageHeight(magick_wand);
 
-        width = MagickGetImageWidth(magick_wand);
-        height = MagickGetImageHeight(magick_wand);
-
-	new_height = ((height + se->scale_height)/2) - ((height - se->scale_height)/2);
-	MagickCropImage(magick_wand, width, new_height, 0, (height - se->scale_height)/2);
-
+	  new_height = ((height + se->scale_height)/2) - ((height - se->scale_height)/2);
+	  MagickCropImage(magick_wand, width, new_height, 0, (height - se->scale_height)/2);
+        }
       } else if(cal_ratio < src_ratio){
 	status = MagickResizeImage(magick_wand, se->scale_height * width / height, se->scale_height, TriangleFilter, 1.0);
+        if(se->crop == 1){
+          width = MagickGetImageWidth(magick_wand);
+          height = MagickGetImageHeight(magick_wand);
 
-        width = MagickGetImageWidth(magick_wand);
-        height = MagickGetImageHeight(magick_wand);
-
-	new_width = ((width + se->scale_width)/2) - ((width -  se->scale_width)/2);
-
-	MagickCropImage(magick_wand, new_width, height, (width -  se->scale_width)/2, 0);
+	  new_width = ((width + se->scale_width)/2) - ((width -  se->scale_width)/2);
+	  MagickCropImage(magick_wand, new_width, height, (width -  se->scale_width)/2, 0);
+	}
       } else {
 	status = MagickResizeImage(magick_wand, se->scale_width, se->scale_height, TriangleFilter, 1.0);
       }
@@ -205,6 +204,7 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
   se->tag_size = 0;
   se->scale_width = 0;
   se->scale_height = 0;
+  se->crop = 1;
 
   int i;
   for (i = 0; i < arity; i++){
@@ -266,6 +266,8 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	(void)ei_decode_ulong((const char *) buf, &offset, &(se->scale_width));
     } else if(strncmp("scale_height", last_atom, strlen(last_atom)) == 0){
 	(void)ei_decode_ulong((const char *) buf, &offset, &(se->scale_height));
+    } else if(strncmp("crop", last_atom, strlen(last_atom)) == 0){
+	(void)ei_decode_boolean((const char *) buf, &offset, &(se->crop));
     } else if(strncmp("tag", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->tag_size));
 	if(ERL_BINARY_EXT != type){

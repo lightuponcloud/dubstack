@@ -33,6 +33,7 @@ $.stack = function(options){
     options: $.extend({
 	    token: '{{ token }}',
 	    bucketName: '{{ bucket_id }}',
+	    staticRoot: '{{ static_root }}',
 	    errorElementID: '',
 	    rpc_url: '',
 	    task_timeout: 1000,
@@ -137,7 +138,7 @@ $.stack = function(options){
 	promise.done(success_callback);
 	promise.fail(error_callback);
     },
-    _chunked_upload: function(upload_id, modified_utc, prefix, file, offset, multipart_id, oname, etags){
+    _chunked_upload: function(upload_id, modified_utc, prefix, file, offset, multipart_id, guid, etags){
 	/*
 	    upload_id -- DOM object ID
 	    modified_utc -- last modified date ( UTC timestamp )
@@ -145,7 +146,7 @@ $.stack = function(options){
 	    file -- browser's file object
 	    offset -- position in file to upload from
 	    multipart_id -- unique upload id
-	    oname -- object name, generated and returned by server
+	    guid -- unique object id, generated and returned by server
 	    etags -- list of md5 sums of file parts. It is passed with the last part to server
 	*/
 	var chunk_size = RiakAPI.options.chunk_size;
@@ -164,7 +165,7 @@ $.stack = function(options){
 	    form_data.append('etags[]', etags);
 	  }
 	  if(prefix) form_data.append('prefix', prefix);
-	  if(oname) form_data.append('object_key', oname);
+	  if(guid) form_data.append('guid', guid);
 	  var headers = {'content-range': 'bytes '+offset+'-'+(offset + blob_size - 1)+'/'+file.size};
 	  if(multipart_id){ var post_url=RiakAPI.options.rpc_url+multipart_id+'/'+part_num+'/'
 	  } else {var post_url=RiakAPI.options.rpc_url;}
@@ -181,8 +182,8 @@ $.stack = function(options){
 	        RiakAPI.options.onSuccess(data, status);
 	      } else {
 		var umid = data.upload_id;
-		var oname = data.object_key;
-	        RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, data.end_byte+1, umid, oname, etags);
+		var guid = data.guid;
+	        RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, data.end_byte+1, umid, guid, etags);
 	      }
 	    },
 	    function(msg, xhr, status){
@@ -202,8 +203,8 @@ $.stack = function(options){
 		 $('#'+RiakAPI.options.errorElementID).empty().append('<span class="err">'+gettext('network error, retrying')+'</span>');
 		 setTimeout(function(){
 		    var umid = data.upload_id;
-		    var oname = data.object_key;
-		    RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, offset, umid, oname, etags);
+		    var guid = data.guid;
+		    RiakAPI._chunked_upload(upload_id, modified_utc, prefix, file, offset, umid, guid, etags);
 		}, 3000);
 		return;
 	      } else if(status=='error'){
@@ -234,6 +235,7 @@ $.stack = function(options){
 	} else {
 	 RiakAPI._get_md5(file, function(checksum){
 	  form_data.append('files[]', file);
+	  form_data.append('etags[]', checksum);
 	  form_data.append('modified_utc', modified_utc);
 	  if(prefix) form_data.append('prefix', prefix);
 	  var headers = {'content-range': 'bytes 0-'+(file_size-1)+'/'+file.size};
@@ -309,11 +311,13 @@ $.stack = function(options){
         RiakAPI.options.onFailure(e, xhr, status);
        });
     },
-    copy_object: function(from_bucket_id, from_prefix, from_object_key, to_bucket_id, to_prefix, to_object_key){
+    copy_object: function(from_bucket_id, from_prefix, from_object_key, to_object_name, to_bucket_id, to_prefix, to_object_key){
 	var form_data = {};
 	form_data['src_bucket_id'] = from_bucket_id;
 	form_data['src_prefix'] = from_prefix;
-	form_data['src_object_keys'] = [from_object_key];
+        var srcKeys = {};
+	srcKeys[from_object_key] = to_object_name;
+	form_data['src_object_keys'] = srcKeys;
 	form_data['dst_bucket_id'] = to_bucket_id;
 	form_data['dst_prefix'] = to_prefix;
 	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
@@ -324,6 +328,12 @@ $.stack = function(options){
 	if(hex_prefix!=undefined) form_data['prefix'] = hex_prefix;
 	form_data['src_object_key'] = src_object_key;
 	form_data['dst_object_name'] = dst_object_name;
+	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
+	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
+    },
+    restore_object: function(object_key, last_modified_utc){
+	var form_data = {'timestamp': last_modified_utc};
+	form_data['object_key'] = object_key;
 	RiakAPI.post_json(RiakAPI.options.rpc_url, JSON.stringify(form_data), {'Content-Type': 'application/json'},
 	    RiakAPI.options.onSuccess, RiakAPI.options.onFailure, RiakAPI.options.onProgress);
     },
@@ -345,12 +355,41 @@ $.stack = function(options){
 	return RiakAPI.options.bucketName;
     },
     get_action_log: function(prefix){
+      var params = {};
+      if(prefix) params['prefix'] = prefix;
+      RiakAPI.stack_rpc(params);
+    },
+    get_changelog: function(object_key){
+      var params = {};
+      if(object_key) params['object_key'] = object_key;
+      RiakAPI.stack_rpc(params);
+    },
+    lock: function(prefix, object_key){
+      var params = {"op": "lock"};
       if(prefix){
        if(prefix.indexOf('/', prefix.length - 1) == -1) prefix = prefix+'/';
-       RiakAPI.stack_rpc({'prefix': prefix});
-      } else {
-       RiakAPI.stack_rpc();
+       params = {'prefix': prefix};
       }
+      if(object_key) params['objects'] = [object_key];
+      RiakAPI.stack_rpc(params);
+    },
+    unlock: function(prefix, object_key){
+      var params = {"op": "unlock"};
+      if(prefix){
+       if(prefix.indexOf('/', prefix.length - 1) == -1) prefix = prefix+'/';
+       params = {'prefix': prefix};
+      }
+      if(object_key) params['objects'] = [object_key];
+      RiakAPI.stack_rpc(params);
+    },
+    get_download_url: function(root_uri, bucket_id, hex_prefix, obj_name){
+     var token = RiakAPI.options.token;
+     var url = root_uri+'download/'+bucket_id+'/'+obj_name;
+     if(hex_prefix) url = root_uri+'download/'+bucket_id+'/'+(hex_prefix.charAt(hex_prefix.length-1)=="/"?hex_prefix:hex_prefix+"/")+obj_name;
+     return url;
+    },
+    get_static_root: function(){
+      return RiakAPI.options.staticRoot;
     },
     setErrorElementID: function(value){
       RiakAPI.options.errorElementID = value;
@@ -367,8 +406,14 @@ $.stack = function(options){
     get_bucket_id: RiakAPI.get_bucket_id,
     get_object_metadata: RiakAPI.get_object_metadata,
     get_action_log: RiakAPI.get_action_log,
+    get_changelog: RiakAPI.get_changelog,
+    lock: RiakAPI.lock,
+    unlock: RiakAPI.unlock,
     rename_object: RiakAPI.rename_object,
-    setErrorElementID: RiakAPI.setErrorElementID
+    restore_object: RiakAPI.restore_object,
+    get_download_url: RiakAPI.get_download_url,
+    get_static_root: RiakAPI.get_static_root,
+    setErrorElementID: RiakAPI.setErrorElementID,
  };
 };
 })(jQuery);

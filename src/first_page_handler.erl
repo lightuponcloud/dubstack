@@ -9,7 +9,7 @@
 
 -include("general.hrl").
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 
 
 init(Req0, _Opts) ->
@@ -32,9 +32,9 @@ allowed_methods(Req, State) ->
 
 bad_request(Req0) ->
     Req1 = cowboy_req:reply(400, #{
-	<<"content-type">> => <<"application/json">>
-    }, <<>>, Req0),
-    {true, Req1, []}.
+	<<"content-type">> => <<"text/html">>
+    }, Req0),
+    {stop, Req1, []}.
 
 content_types_accepted(Req, State) ->
     case cowboy_req:method(Req) of
@@ -47,7 +47,7 @@ forbidden_response(Req0) ->
     Req1 = cowboy_req:reply(403, #{
 	<<"content-type">> => <<"text/html">>
     }, Body, Req0),
-    {ok, Req1, []}.
+    {stop, Req1, []}.
 
 
 validate_post(Req0, Settings) ->
@@ -189,8 +189,9 @@ first_page(Req0, Settings, State) ->
 	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"text/html">>
 	    }, Body, Req0),
-	    {ok, Req1, []};
+	    {stop, Req1, []};
 	false ->
+	    Locale = Settings#general_settings.locale,
 	    {ok, Body} = index_dtl:render([
 		{hex_prefix, Prefix0},
 		{bucket_id, BucketId1},
@@ -200,7 +201,7 @@ first_page(Req0, Settings, State) ->
 		{bucket_suffix, ""},
 		{private_suffix, ?PRIVATE_BUCKET_SUFFIX},
 		{public_suffix, ?PUBLIC_BUCKET_SUFFIX}
-	    ] ++ State),
+	    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>
 	    }, Body, Req0),

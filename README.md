@@ -9,8 +9,8 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 1. **File Synchronization**
 
     This is a server side of the file synchronization software.
-    It allows not only file upload/download, but also file lock/unlock,
-    delete/undelete and restore previous versions.
+    It allows not only file **upload**/**download**, but also file **lock**/**unlock**,
+    **delete**/**undelete** and restore previous versions.
 
 2. **Simple authentication**
 
@@ -19,10 +19,9 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
     You don't have to implement complex ``vN`` AWS signing algorithms.
 
-3. **Action log**
+3. **Action log and changelog**
 
     It records history of upload, copy, move, rename and delete operations.
-    History is stored in ``.riak_action_log.xml`` object by default.
 
 4. **Provides web interface, Android application and synchronization client for Windows**
 

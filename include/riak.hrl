@@ -12,12 +12,17 @@
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="Replace With Riak CS key"::string(),
-          secret_access_key="Replace with Riak CS access key"::string(),
+          access_key_id="GUXIOJVOKUDDMG0HPWKP"::string(),
+          secret_access_key="SF94xTjigPb1t3deGjlwCls_fgeIho9GnvzxfA"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
 -type(riak_api_config() :: #riak_api_config{}).
+
+%%
+%% If you change the following values, you have to re-initialize the contents of object storage.
+%% Everything should be REMOVED.
+%%
 
 %%
 %% Length of the chunk of data, sent from remote client
@@ -34,7 +39,7 @@
 %% Default: 5368709122
 %%	    ( 5 GB )
 %%
--define(FILE_MAXIMUM_SIZE, 5368709122).
+-define(FILE_MAXIMUM_SIZE, 11811160064).
 %%
 %% Ther's convention within that project to use the
 %% following bucket names
@@ -76,6 +81,12 @@
 %%
 -define(RIAK_LOCK_INDEX_FILENAME, ".riak_index.lock").
 %%
+%% The number of seconds index lock can exist.
+%% In case of very large number of files this number should be increased,
+%% as it might take more time to update index.
+%%
+-define(RIAK_LOCK_INDEX_COOLOFF_TIME, 30).
+%%
 %% Action logs are stored in XML format in every pseudo-directory
 %% except root ( "/" ).
 %%
@@ -88,6 +99,14 @@
 %% Default: "~object"
 %%
 -define(RIAK_REAL_OBJECT_PREFIX, "~object").
+%%
+%% Locked object suffix.
+%% Temporary object created with .lock extension by default.
+%% Locked objects are not supposed to be modified.
+%%
+%% Default: ".lock"
+%%
+-define(RIAK_LOCK_SUFFIX, ".lock").
 %%
 %% Name of bucket prefix
 %%
@@ -119,35 +138,28 @@
 %%
 %% Default: "tokens/"
 %%
--define(TOKENS_PREFIX, "tokens/").
+-define(TOKEN_PREFIX, "tokens/").
 %%
 %% Prefix to object, that stores CSRF token,
 %% used to validate login from web page.
 %%
 %% Default: "csrf-tokens/"
 %%
--define(CSRF_TOKENS_PREFIX, "csrf-tokens/").
-%%
-%% Prefix to object, that stores information
-%% on Application tokens.
-%%
-%% Default: "app-tokens/"
-%%
--define(APP_TOKENS_PREFIX, "app-tokens/").
+-define(CSRF_TOKEN_PREFIX, "csrf-tokens/").
 %%
 %% Prefix to object, that stores User profile
 %% in security bucket.
 %%
 %% Default: "users/"
 %%
--define(USERS_PREFIX, "users/").
+-define(USER_PREFIX, "users/").
 %%
 %% Prefix to object, that stores Tenant details
 %% in security bucket.
 %%
 %% Default: "tenants/"
 %%
--define(TENANTS_PREFIX, "tenants/").
+-define(TENANT_PREFIX, "tenants/").
 
 %%
 %% Enable this to allow the creation of an admin user when
@@ -173,6 +185,7 @@
 %% The fllowing setting allows you to specify maximum lengths of tenant and
 %% group names to avoid errors from Riak CS.
 %%
-%% Sum of tenand and group lengths should be <= 51 characters
+%% WARNING: Sum of tenand and group lengths should be <= 51 characters
+%%
 -define(MAXIMUM_TENANT_NAME, 26).
 -define(MAXIMUM_GROUP_NAME, 25).

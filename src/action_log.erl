@@ -7,12 +7,13 @@
 -export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
          content_types_accepted/2,  forbidden/2, resource_exists/2,
 	 previously_existed/2]).
--export([add_record/3, strip_hidden_part/1, fetch_full_object_history/2]).
+-export([add_record/3, strip_hidden_part/1, fetch_full_object_history/2,
+	 validate_timestamp/4, validate_object_key/4, validate_post/3, handle_post/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 -include("action_log.hrl").
 
 -import(xmerl_xs, 
@@ -102,7 +103,7 @@ get_action_log(Req0, State, BucketId, Prefix) ->
     ExistingObject0 = riak_api:head_object(BucketId,
 	PrefixedActionLogFilename),
     case ExistingObject0 of
-	not_found -> js_handler:not_found(Req0);
+	not_found -> {<<"[]">>, Req0, State};
 	_ ->
 	    ExistingObject1 = riak_api:get_object(BucketId, PrefixedActionLogFilename),
 	    XMLContent0 = utils:to_list(proplists:get_value(content, ExistingObject1)),
@@ -149,21 +150,29 @@ get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
 	RiakResponse0 ->
 	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
 	    ObjectList0 = [list_handler:parse_object_record(riak_api:head_object(BucketId, I), [])
-			   || I <- fetch_full_object_history(BucketId, GUID)],
+			   || I <- fetch_full_object_history(BucketId, GUID),
+			   utils:is_hidden_object(I) =:= false],
 	    ObjectList1 = lists:map(
 		fun(I) ->
-		    AuthorId = utils:to_binary(proplists:get_value(author_id, I)),
-		    AuthorName = utils:unhex(utils:to_binary(proplists:get_value(author_name, I))),
-		    AuthorTel = utils:to_binary(proplists:get_value(author_tel, I)),
+		    AuthorId = utils:to_binary(proplists:get_value("author-id", I)),
+		    AuthorName = utils:unhex(utils:to_binary(proplists:get_value("author-name", I))),
+		    AuthorTel =
+			case proplists:get_value("author-tel", I) of
+			    undefined -> null;
+			    Tel -> utils:unhex(erlang:list_to_binary(Tel))
+			end,
 		    [{author_id, AuthorId},
 		     {author_name, AuthorName},
 		     {author_tel, AuthorTel},
-		     {last_modified_utc, proplists:get_value(last_modified_utc, I)}]
+		     {last_modified_utc, erlang:list_to_binary(proplists:get_value("modified-utc", I))}]
 		end, ObjectList0),
 	    Output = jsx:encode(ObjectList1),
 	    {Output, Req0, State}
     end.
 
+%%
+%% Returns list of actions in pseudo-directory. If object_key specified, returns object history.
+%%
 to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix = proplists:get_value(prefix, State),
@@ -177,14 +186,151 @@ to_json(Req0, State) ->
     end.
 
 %%
+%% Adds record to pseudo-directory's history.
+%% ( used in function for restoring object versions ).
+%%
+log_restore_action(State) ->
+    User = proplists:get_value(user, State),
+    BucketId = proplists:get_value(bucket_id, State),
+    Prefix = proplists:get_value(prefix, State),
+    OrigName = proplists:get_value(orig_name, State),
+    PrevDate = proplists:get_value(prev_date, State),
+    Timestamp = io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
+    ActionLogRecord0 = #riak_action_log_record{
+	action="restored",
+	user_name=User#user.name,
+	tenant_name=User#user.tenant_name,
+	timestamp=Timestamp
+    },
+    UnicodeObjectKey = unicode:characters_to_list(OrigName),
+    Summary = lists:flatten([["Restored \""], [UnicodeObjectKey], ["\" to version from "], [PrevDate]]),
+    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
+    action_log:add_record(BucketId, Prefix, ActionLogRecord1).
+
+validate_timestamp(undefined, _BucketId, _Prefix, _RealKey) -> {error, 44};
+validate_timestamp(null, _BucketId, _Prefix, _RealKey) -> {error, 44};
+validate_timestamp(<<>>, _BucketId, _Prefix, _RealKey) -> {error, 44};
+validate_timestamp(Timestamp0, BucketId, Prefix, RealKey)
+	when erlang:is_binary(Timestamp0), erlang:is_list(RealKey),
+	     erlang:is_list(Prefix) orelse Prefix =:= undefined ->
+    Timestamp1 = erlang:binary_to_list(Timestamp0),
+    try erlang:list_to_integer(Timestamp1) of
+        _Int ->
+	    case Timestamp1 =:= RealKey of
+		true -> {error, 45};
+		false ->
+		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, Timestamp1),
+		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+			not_found -> {error, 44};
+			Meta -> Meta
+		    end
+	    end
+    catch
+        error:badarg -> {error, 44}
+    end.
+
+%%
+%% Check if object exists by provided prefix and object key.
+%% Also chek if real object exist for specified date.
+%%
+validate_object_key(_BucketId, _Prefix, undefined, _Timestamp) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, null, _Timestamp) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, <<>>, _Timestamp) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, undefined) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, null) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, _ObjectKey, <<>>) -> {error, 17};
+validate_object_key(BucketId, Prefix, ObjectKey, Timestamp)
+	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
+	     erlang:is_binary(ObjectKey), erlang:is_binary(Timestamp) ->
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	not_found -> {error, 17};
+	Metadata0 ->
+	    IsLocked = proplists:get_value("x-amz-meta-is-locked", Metadata0),
+	    case IsLocked of
+		"true" -> {error, 43};
+		_ ->
+		    ModifiedTime0 = proplists:get_value("x-amz-meta-modified-utc", Metadata0),
+		    GUID = proplists:get_value("x-amz-meta-guid", Metadata0),
+		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+		    case validate_timestamp(Timestamp, BucketId, RealPrefix, ModifiedTime0) of
+			{error, Number} -> {error, Number};
+			Metadata1 ->
+			    OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
+			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
+			    Md5 = proplists:get_value(etag, Metadata0),
+			    Meta = list_handler:parse_object_record(Metadata1, [
+				{orig_name, OrigName},
+				{bytes, Bytes},
+				{is_deleted, "false"},
+				{is_locked, "false"},
+				{lock_user_id, undefined},
+				{lock_user_name, undefined},
+				{lock_user_tel, undefined},
+				{lock_modified_utc, undefined},
+				{md5, Md5}]),
+			    {Prefix, ObjectKey, Meta}
+		    end
+	    end
+    end.
+
+validate_post(Body, BucketId, Prefix) ->
+    case jsx:is_json(Body) of
+	{error, badarg} -> {error, 21};
+	false -> {error, 21};
+	true ->
+	    FieldValues = jsx:decode(Body),
+	    ObkectKey = proplists:get_value(<<"object_key">>, FieldValues),
+	    Timestamp = proplists:get_value(<<"timestamp">>, FieldValues),
+	    case validate_object_key(BucketId, Prefix, ObkectKey, Timestamp) of
+		{error, Number} -> {error, Number};
+		{Prefix, ObjectKey, Meta} -> {Prefix, ObjectKey, Meta}
+	    end
+    end.
+
+%%
+%% Restores previous version ob object
+%%
+handle_post(Req0, State0) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+    case validate_post(Body, BucketId, Prefix) of
+	{error, Number} -> js_handler:bad_request(Req1, Number);
+	{Prefix, ObjectKey0, Meta} ->
+	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
+	    case riak_api:put_object(BucketId, Prefix, ObjectKey1, <<>>,
+				     [{acl, public_read}, {meta, Meta}]) of
+		ok ->
+		    %% Update pseudo-directory index for faster listing.
+		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
+			lock -> js_handler:too_many(Req0);
+    			_ ->
+			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
+			    PrevDate = erlang:list_to_integer(proplists:get_value("modified-utc", Meta)),
+			    State1 = [{orig_name, OrigName},
+				      {prev_date, utils:format_timestamp(PrevDate)}],
+                	    log_restore_action(State0 ++ State1),
+                	    {true, Req0, []}
+        	    end;
+		_ -> js_handler:too_many(Req1)
+	    end
+    end.
+
+%%
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
 forbidden(Req0, _State) ->
-    case utils:check_token(Req0) of
-	not_found -> js_handler:forbidden(Req0, 28);
-	expired -> js_handler:forbidden(Req0, 38);
-	User -> {false, Req0, [{user,User}]}
+    case utils:get_token(Req0) of
+	undefined -> js_handler:forbidden(Req0, 28);
+	Token -> 
+	    %% Extracts token from request headers and looks it up in "security" bucket
+	    case login_handler:check_token(Token) of
+		not_found -> js_handler:forbidden(Req0, 28);
+		expired -> js_handler:forbidden(Req0, 38);
+		User -> {false, Req0, [{user, User}]}
+	    end
     end.
 
 %%
@@ -222,7 +368,6 @@ resource_exists(Req0, State) ->
 
 previously_existed(Req0, _State) ->
     {false, Req0, []}.
-
 
 %%
 %% Removes stuff, regular user is not supposed to see.

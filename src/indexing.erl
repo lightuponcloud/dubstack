@@ -4,7 +4,8 @@
 %%
 -module(indexing).
 -export([update/2, update/3, get_index/2, get_object_record/2,
-	 object_exists/2, pseudo_directory_exists/2]).
+	 directory_or_object_exists/4, pseudo_directory_exists/2, to_object/1,
+	 get_object_record_by_orig_name/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -12,9 +13,11 @@
     [ xslapply/2, value_of/1, select/2, built_in_rules/2 ]).
 
 -include("riak.hrl").
+-include("entities.hrl").
 
 %%
-%% Returns information from metadata and headers
+%% Returns information from metadata and headers.
+%% It is stored in index in a form, convenient for JSON serialization.
 %%
 prepare_object_record(Record0, DeletedObjects) ->
     Metadata = proplists:get_value(metadata, Record0),
@@ -22,8 +25,11 @@ prepare_object_record(Record0, DeletedObjects) ->
     ObjectKey1 = filename:basename(ObjectKey0),
     OrigName0 = proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey1),
     GUID = proplists:get_value("x-amz-meta-guid", Metadata),
-    ModifiedTime = utils:to_integer(proplists:get_value("x-amz-meta-modified-utc", Metadata)),
-
+    ModifiedTime =
+	case proplists:get_value("x-amz-meta-modified-utc", Metadata) of
+	    undefined -> null;
+	    T -> utils:to_integer(T)
+	end,
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
     UploadTimestamp1 = calendar:datetime_to_gregorian_seconds(UploadTimestamp0) - 62167219200,
     Bytes = utils:to_integer(proplists:get_value("x-amz-meta-bytes", Metadata)),
@@ -32,8 +38,8 @@ prepare_object_record(Record0, DeletedObjects) ->
     Md5 = string:strip(Etag, both, $"),
 
     %% Object meta tag orig-filename can't be renamed,
-    %% But I can store a new name in index object.
-    OrigName1 = unicode:characters_to_list(erlang:list_to_binary(OrigName0)),
+    %% But I can store a new name in index object
+    OrigName1 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(OrigName0))),
     IsDeleted =
 	case proplists:get_value(erlang:list_to_binary(ObjectKey1), DeletedObjects) of
 	    undefined ->
@@ -44,19 +50,114 @@ prepare_object_record(Record0, DeletedObjects) ->
 	end,
     LockedFlag = proplists:get_value("x-amz-meta-is-locked", Metadata, "false"),
     IsLocked = erlang:list_to_atom(LockedFlag),
-    LockModifiedTime = utils:to_integer(proplists:get_value("x-amz-meta-lock-modified-utc", Metadata)),
-    [{orig_name, unicode:characters_to_binary(OrigName1)},
+    LockUserId =
+	case proplists:get_value("x-amz-meta-lock-user-id", Metadata) of
+	    undefined -> null;
+	    UID -> erlang:list_to_binary(UID)
+	end,
+    LockUserName =
+	case proplists:get_value("x-amz-meta-lock-user-name", Metadata) of
+	    undefined -> null;
+	    UN -> utils:unhex(erlang:list_to_binary(UN))
+	end,
+    LockUserTel =
+	case proplists:get_value("x-amz-meta-lock-user-tel", Metadata) of
+	    undefined -> null;
+	    Tel -> utils:unhex(erlang:list_to_binary(Tel))
+	end,
+    LockModifiedTime =
+	case proplists:get_value("x-amz-meta-lock-modified-utc", Metadata) of
+	    undefined -> null;
+	    V -> utils:to_integer(V)
+	end,
+    AuthorTel =
+	case proplists:get_value("x-amz-meta-author-tel", Metadata) of
+	    undefined -> null;
+	    C -> utils:unhex(erlang:list_to_binary(C))
+	end,
+    Result = [{orig_name, unicode:characters_to_binary(OrigName1)},
      {last_modified_utc, ModifiedTime},
      {upload_time, UploadTimestamp1},
      {guid, erlang:list_to_binary(GUID)},
+     {author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
+     {author_name, utils:unhex(erlang:list_to_binary(proplists:get_value("x-amz-meta-author-name", Metadata)))},
+     {author_tel, AuthorTel},
      {is_locked, IsLocked},
+     {lock_user_id, LockUserId},
+     {lock_user_name, LockUserName},
+     {lock_user_tel, LockUserTel},
      {lock_modified_utc, LockModifiedTime},
      {is_deleted, IsDeleted},
      {object_key, erlang:list_to_binary(ObjectKey1)},
      {bytes, Bytes},
      {content_type, unicode:characters_to_binary(ContentType)},
      {md5, unicode:characters_to_binary(Md5)}
-    ].
+    ],
+    Width = proplists:get_value("x-amz-meta-width", Metadata),
+    Height = proplists:get_value("x-amz-meta-height", Metadata),
+    case Width =/= undefined of
+	true ->
+	    Result ++ [{width, erlang:list_to_integer(Width)},
+		       {height, erlang:list_to_integer(Height)}];
+	false -> Result
+    end.
+
+%%
+%% Since index contains JSON values, such as binaries and null's,
+%% sometimes it has to be transformed back to usual object record.
+%%
+-spec to_object(proplist()) -> object().
+
+to_object(IndexMeta) ->
+    ModifiedTime =
+	case proplists:get_value(last_modified_utc, IndexMeta) of
+	    null -> undefined;
+	    T -> T
+	end,
+    LockUserId =
+	case proplists:get_value(lock_user_id, IndexMeta) of
+	    null -> undefined;
+	    UID -> erlang:binary_to_list(UID)
+	end,
+    LockUserName =
+	case proplists:get_value(lock_user_name, IndexMeta) of
+	    null -> undefined;
+	    UN -> UN
+	end,
+    LockUserTel =
+	case proplists:get_value(lock_user_tel, IndexMeta) of
+	    null -> undefined;
+	    Tel -> Tel
+	end,
+    LockModifiedTime =
+	case proplists:get_value(lock_modified_utc, IndexMeta) of
+	    null -> undefined;
+	    V -> V
+	end,
+    AuthorTel =
+	case proplists:get_value(author_tel, IndexMeta) of
+	    null -> undefined;
+	    C -> C
+	end,
+    #object{
+	key = erlang:binary_to_list(proplists:get_value(object_key, IndexMeta)),
+	orig_name = proplists:get_value(orig_name, IndexMeta),
+	last_modified_utc = ModifiedTime,
+	upload_time = proplists:get_value(upload_time, IndexMeta),
+        bytes = proplists:get_value(bytes, IndexMeta),
+        guid = erlang:binary_to_list(proplists:get_value(guid, IndexMeta)),
+        is_deleted = erlang:atom_to_list(proplists:get_value(is_deleted, IndexMeta)),
+        author_id = erlang:binary_to_list(proplists:get_value(author_id, IndexMeta)),
+        author_name = proplists:get_value(author_name, IndexMeta),
+        author_tel = AuthorTel,
+        is_locked = proplists:get_value(is_locked, IndexMeta),
+        lock_user_id = LockUserId,
+        lock_user_name = LockUserName,
+        lock_user_tel = LockUserTel,
+	lock_modified_utc = LockModifiedTime,
+        md5 = erlang:binary_to_list(proplists:get_value(md5, IndexMeta)),
+	content_type = proplists:get_value(content_type, IndexMeta)
+    }.
 
 %%
 %% Retrieves objects list from Riak CS (all pages),
@@ -111,11 +212,10 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 	    IsExist = proplists:is_defined(
 		erlang:binary_to_list(utils:prefixed_object_key(Prefix1, ObjectKey0)),
 		ActualListContents),
-	    IsDeleted = proplists:is_defined(erlang:binary_to_list(ObjectKey0), DeletedObjects1),
+	    IsDeleted = proplists:is_defined(ObjectKey0, DeletedObjects1),
 	    IsModified = lists:member(erlang:binary_to_list(ObjectKey0), ModifiedKeys),
 	    IsExist andalso IsModified =:= false andalso IsDeleted =:= false
 	end, IndexListContents),
-
     IndexKeys = lists:map(
 	fun(R0) ->
 	    R1 = utils:prefixed_object_key(Prefix1, proplists:get_value(object_key, R0)),
@@ -218,9 +318,9 @@ get_object_record(IndexContent, ObjectKey) when erlang:is_binary(ObjectKey) ->
 %%
 %% Checks if object with specified original name exists
 %%
--spec object_exists(proplist(), binary()) -> true|false.
+-spec get_object_record_by_orig_name(proplist(), binary()) -> true|false.
 
-object_exists(IndexContent, OrigName0)
+get_object_record_by_orig_name(IndexContent, OrigName0)
 	when erlang:is_list(IndexContent), erlang:is_binary(OrigName0) ->
     %% Get a lowercase value
     OrigName1 = ux_string:to_lower(unicode:characters_to_list(OrigName0)),
@@ -233,30 +333,64 @@ object_exists(IndexContent, OrigName0)
 	    ux_string:to_lower(OrigName3) =:= OrigName1
 	end),
     case length(ExistingObjectRecord) of
-	0 -> false;
+	0 -> not_found;
 	_ -> ExistingObjectRecord
     end.
 
 %%
 %% Checks if pseudo-directory exists.
 %%
--spec pseudo_directory_exists(proplist(), list()|binary()) -> true|false.
-
-pseudo_directory_exists(IndexContent, DirectoryName0)
-	when erlang:is_list(IndexContent), erlang:is_list(DirectoryName0)  ->
-    DirectoryName1 = unicode:characters_to_binary(utils:unhex_path(DirectoryName0)),
-    pseudo_directory_exists(IndexContent, DirectoryName1);
+%% Returns tuple: {original directory name in lowercase, original hex representation}
+%%
+-spec pseudo_directory_exists(proplist(), binary()) -> true|false.
 
 pseudo_directory_exists(IndexContent, DirectoryName0)
 	when erlang:is_list(IndexContent), erlang:is_binary(DirectoryName0) ->
-    ExistingPrefixes = lists:map(
-	fun(P0) ->
-	    P1 = proplists:get_value(prefix, P0),
-	    P2 = unicode:characters_to_list(utils:unhex_path(erlang:binary_to_list(P1))),
-	    ux_string:to_lower(P2)
-	end, proplists:get_value(dirs, IndexContent, [])),
+    ExistingNames =
+	lists:map(
+	    fun(P0) ->
+		P1 = proplists:get_value(prefix, P0),
+		P2 = lists:last([T || T <- binary:split(P1, <<"/">>, [global]), erlang:byte_size(T) > 0]),
+		P3 = unicode:characters_to_list(utils:unhex(P2)),
+		{ux_string:to_lower(P3), P2}
+	    end, proplists:get_value(dirs, IndexContent, [])),
     DirectoryName1 = ux_string:to_lower(unicode:characters_to_list(DirectoryName0)),
-    lists:member(DirectoryName1, ExistingPrefixes).
+    lists:keyfind(DirectoryName1, 1, ExistingNames).
+
+%%
+%% Checks if object or pseudo-directory is present in index.
+%%
+%% Returns
+%%
+%% - {directory, /hex/prefix/}
+%% - {object, /hex-prefix/object_key}
+%% - {false, /hex-prefixed-hex-name}
+%%
+-spec directory_or_object_exists(string(), string(), binary(), proplist()) -> any().
+
+directory_or_object_exists(BucketId, Prefix, Name0, IndexContent)
+	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined, erlang:is_binary(Name0) ->
+    %% Remove "/" at the end, if present
+    Name1 =
+	case utils:ends_with(Name0, <<"/">>) of
+	    true ->
+		Size0 = byte_size(Name0)-1,
+		<<Name2:Size0/binary, _/binary>> = Name0,
+		Name2;
+	    false -> Name0
+	end,
+    case pseudo_directory_exists(IndexContent, Name1) of
+	{_, DirName} -> {directory, DirName};
+	false ->
+	    case get_object_record_by_orig_name(IndexContent, Name1) of
+		not_found -> false;
+		ExistingObjectRecord ->
+		    case proplists:get_value(is_deleted, ExistingObjectRecord) of
+			true -> false;
+			false -> {object, proplists:get_value(orig_name, ExistingObjectRecord)}
+		    end
+	    end
+    end.
 
 %%
 %% Creates list of objects
@@ -265,10 +399,11 @@ pseudo_directory_exists(IndexContent, DirectoryName0)
 %% RiakOptions can include ACL for index object, as well as other Riak CS options
 %%
 %% Options can include the following:
-%% - {modified_keys, [key1, key2, .. keyN]}
+%% - {modified_keys, ["key1", "key2", .. "keyN"]}
 %%
 %% - {copy_from, [{bucket_id, name}, {prefix, prefix-to-.riak_index.etf/}]
-%%   instructs "update" function to copy renamed objects map from source index
+%%   instructs "update" function to copy deleted objects map from source index
+%%
 %%   For example:
 %%
 %%   {copy_from, [
@@ -288,11 +423,7 @@ pseudo_directory_exists(IndexContent, DirectoryName0)
 %%   ]}
 %%   ``copied_names`` is optional.
 %%
-%% - {modified_keys, ["key1", "key2", .."keyN"]}
-%%
 %% - {to_delete, [{"blah.png", 1532357691}]}
-%%
-%% - {undelete, ["blah.png"]}
 %%
 %% - {uncommitted, true}
 %%   Marks prefix as such that have uncommitted changes.
@@ -322,46 +453,67 @@ update(BucketId, Prefix0, Options, RiakOptions)
     case riak_api:head_object(BucketId, PrefixedLockFilename) of
 	not_found ->
 	    %% Create lock file instantly
-	    riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, RiakOptions),
+	    LockMeta = [{"modified-utc", erlang:round(utils:timestamp()/1000)}],
+	    LockOptions = [{acl, public_read}, {meta, LockMeta}],
+
+	    riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, LockOptions),
 
 	    %% Retrieve existing index object first
 	    List0 = get_index(BucketId, Prefix0),
 
-	    ModifiedKeys = proplists:get_value(modified_keys, Options, []),
+	    ModifiedKeys0 = proplists:get_value(modified_keys, Options, []),
 
 	    DeletedObjects0 = proplists:get_value(to_delete, Options, []),
 	    DeletedObjects1 = proplists:get_value(to_delete, List0, []),
-	    UndeleteList = proplists:get_value(undelete, Options, []),
 
-	    DeletedObjects2 = DeletedObjects0 ++ [
-		{K, proplists:get_value(K, DeletedObjects1)} || K <- proplists:get_keys(DeletedObjects1),
-		    (proplists:is_defined(K, DeletedObjects0) =/= true andalso
-		     lists:member(K, UndeleteList) =:= false)
-	    ],
 	    %% Add deleted object map from source index ( Used in COPY and MOVE ).
-	    DeletedObjects3 =
+	    {ModifiedKeys1, DeletedObjects3} =
 		case proplists:get_value(copy_from, Options) of
-		    undefined -> [];
+		    undefined -> {[], []};
 		    CopyFrom ->
 			SrcBucketId = proplists:get_value(bucket_id, CopyFrom),
 			SrcPrefix = proplists:get_value(prefix, CopyFrom),
 			PrefixedSrcIndexFilename = utils:prefixed_object_key(SrcPrefix, ?RIAK_INDEX_FILENAME),
 			case riak_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
-			    not_found -> [];
+			    not_found -> {[], []};
 			    Content ->
+				CopiedNames = proplists:get_value(copied_names, CopyFrom, []),
+				CopiedKeys = [erlang:binary_to_list(proplists:get_value(new_key, I))
+					      || I <- CopiedNames],
 				SrcList = erlang:binary_to_term(proplists:get_value(content, Content)),
-				proplists:get_value(to_delete, SrcList, [])
+				{CopiedKeys, proplists:get_value(to_delete, SrcList, [])}
 			end
 		end,
+	    ModifiedKeys2 = ModifiedKeys0 ++ ModifiedKeys1,
+	    DeletedObjects2 = DeletedObjects0 ++ [
+		{K, proplists:get_value(K, DeletedObjects1)} || K <- proplists:get_keys(DeletedObjects1),
+		    (proplists:is_defined(K, DeletedObjects0) =/= true andalso
+		     lists:member(erlang:binary_to_list(K), ModifiedKeys2) =:= false)
+	    ],
+
 	    %% Retrieve existing index object first
 	    List0 = get_index(BucketId, Prefix0),
 
 	    IsUncommitted = proplists:get_value(uncommitted, Options, false),
-	    List1 = get_diff_list(BucketId, Prefix0, List0, DeletedObjects2 ++ DeletedObjects3, ModifiedKeys, IsUncommitted),
+	    List1 = get_diff_list(BucketId, Prefix0, List0,
+				  DeletedObjects2 ++ DeletedObjects3,
+				  ModifiedKeys2, IsUncommitted),
 	    riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List1), RiakOptions),
 
 	    %% Remove lock
 	    riak_api:delete_object(BucketId, PrefixedLockFilename),
-	    proplists:get_value(list, List1);
-	_ -> lock
+	    List1; %% necessary for pseudo_directory_exists()
+	IndexLockMeta ->
+	    %% Check for stale index
+	    DeltaSeconds =
+		case proplists:get_value("x-amz-meta-modified-utc", IndexLockMeta) of
+		    undefined -> 0;
+		    T -> erlang:round(utils:timestamp()/1000) - utils:to_integer(T)
+		end,
+	    case DeltaSeconds > ?RIAK_LOCK_INDEX_COOLOFF_TIME of
+		true ->
+		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    update(BucketId, Prefix0, Options, RiakOptions);
+		false -> lock
+	    end
     end.

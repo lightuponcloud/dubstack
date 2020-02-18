@@ -35,7 +35,7 @@
         <div class="header_links">
             <div class="main-content header_links_container clearfix">
                 <span class="logout"><a href="{{ root_path }}logout/" id="logout_link">Logout</a></span>
-                <span><label class="header-links-username">Logged in as {% ifequal staff "true" %}<b>{{ name }}</b>{% else %}{{ name }}{% endifequal %}</label></span>
+                <span><label class="header-links-username">Logged in as {% ifequal staff "true" %}<b>{{ name }}</b>{% else %}{{ name }}{% endifequal %}, {{ tenant_name }}</label></span>
             </div>
         </div>
         <div id="header_content">
@@ -106,11 +106,11 @@
     <span class="dirseparator"></span>
 </span>
 <span id="id-status"></span>
-<span class="pushbutton"><button id="id-action-log" class="form-short-small-button1" type="button">Action Log</button></span>
+<span class="pushbutton"><button id="id-action-log" class="form-short-small-button1" type="button">{% trans 'Action Log' %}</button></span>
 <span class="separator"></span>
-<span class="pushbutton"><button id="id-createdir-button" class="form-short-small-button1" type="button">Create Directory</button></span>
+<span class="pushbutton"><button id="id-createdir-button" class="form-short-small-button1" type="button">{% trans 'Create Directory' %}</button></span>
 <span class="separator"></span>
-<span class="pushbutton"><button id="id-upload-button" class="form-short-small-button1 mob-hidden">Upload</button><span class="hidden-btn"><span>Upload</span><input type="file" multiple="" name="files[]"></span></span>
+<span class="pushbutton"><button id="id-upload-button" class="form-short-small-button1 mob-hidden">{% trans 'Upload' %}</button><span class="hidden-btn"><span>{% trans 'Upload' %}</span><input type="file" multiple="" name="files[]"></span></span>
 {% endblock %}</h3>
 <div class="management-table clearfix">
  <div class="articles-details">
@@ -125,10 +125,10 @@
 </div>
 <div class="confirm pink_error">
     <div>
-	<i class="glyphicon glyphicon-info-sign"></i>Are you sure you want to delete <span id="id-dialog-obj-rm-msg"></span>
+	<i class="glyphicon glyphicon-info-sign"></i>{% trans 'Are you sure you want to delete ' %}<span id="id-dialog-obj-rm-msg"></span>
 	<div>
-	    <span class="pushbutton"><button type="button" class="alert-button" id="ok-btn">Yes</button></span>
-	    <span class="pushbutton"><button type="button" class="alert-button" id="cancel-btn"> Cancel</button></span>
+	    <span class="pushbutton"><button type="button" class="alert-button" id="ok-btn">{% trans 'Yes' %}</button></span>
+	    <span class="pushbutton"><button type="button" class="alert-button" id="cancel-btn"> {% trans 'Cancel' %}</button></span>
 	</div>
     </div>
 </div>
@@ -140,9 +140,9 @@
 
 <div class="files-tbl clearfix" style="display:none;">
     <div class="files-tbl_th">
-	<div class="file-name_th"><a href="#" id="id-sort-by-name" data-sorting="asc">Name</a></div>
-	<div class="file-size_th"><a href="#" id="id-sort-by-size" data-sorting="asc">Size</a></div>
-	<div class="file-modified_th"><a href="#" id="id-sort-by-date" data-sorting="asc">Modified</a></div>
+	<div class="file-name_th"><a href="#" id="id-sort-by-name" data-sorting="asc">{% trans 'Name' %}</a></div>
+	<div class="file-size_th"><a href="#" id="id-sort-by-size" data-sorting="asc">{% trans 'Size' %}</a></div>
+	<div class="file-modified_th"><a href="#" id="id-sort-by-date" data-sorting="asc">{% trans 'Modified' %}</a></div>
 	<div class="file-url_th"><img src="{{ static_root }}preview.png" /></div>
 	<div class="file-preview-url_th"><img src="{{ static_root }}link.png" /></div>
 	<div></div>
@@ -156,6 +156,8 @@
         <div class="row"><a href="#"><span id="menu-copy"><span>Copy</span></span></a></div>
         <div class="row"><a href="#"><span id="menu-move"><span>Move</span></span></a></div>
         <div class="row"><a href="#"><span id="menu-rename"><span>Rename</span></span></a></div>
+        <div class="row"><a href="#"><span id="menu-changelog"><span>Changelog</span></span></a></div>
+        <!--div class="row"><a href="#"><span id="menu-lock"><span>Lock</span></span></a></div-->
     </div>
 </div>
 
@@ -174,7 +176,7 @@
 <!-- End Wrapper -->
 </section>
 <div id="dialog" title="Basic dialog"></div>
-<div id="shadow"><div id="loader-img" class="loader">Loading...</div></div>
+<div id="shadow"><div id="loader-img" class="loader">{% trans 'Loading'%}...</div></div>
 
 </body>
 </html>

@@ -3,7 +3,7 @@
 %%
 -module(js_handler).
 
--export([init/2, bad_request/2, forbidden/2, unauthorized/2, not_found/1, too_many/1,
+-export([init/2, bad_request/2, forbidden/2, unauthorized/2, not_found/1, too_many/1, not_modified/1,
 	 redirect_to_login/1, incorrect_configuration/2]).
 
 -include("general.hrl").
@@ -81,6 +81,7 @@ init(Req0, Opts) ->
     {ok, Body} = jquery_riak_js_dtl:render([
 	{messages, JSONMessages},
 	{root_path, Settings#general_settings.root_path},
+	{static_root, Settings#general_settings.static_root},
 	{bucket_id, BucketId},
 	{token, Token},
 	{chunk_size, ?FILE_UPLOAD_CHUNK_SIZE}
@@ -88,41 +89,48 @@ init(Req0, Opts) ->
     Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, Body, Req0),
     {ok, Req1, Opts}.
 
-bad_request(Req0, MsgCode) when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) ->
+bad_request(Req0, MsgCode)
+	when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) orelse erlang:is_atom(MsgCode) ->
     Req1 = cowboy_req:reply(400, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),
-    {true, Req1, []}.
+    {stop, Req1, []}.
 
 forbidden(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(403, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),
-    {true, Req1, []}.
+    {stop, Req1, []}.
 
 unauthorized(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(401, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, MsgCode}]), Req0),
-    {{false, <<"Token">>}, Req1, []}.
-
-too_many(Req0) ->
-    Req1 = cowboy_req:reply(429, #{
-	<<"content-type">> => <<"application/json">>
-    }, jsx:encode([{error, 33}]), Req0),
-    {true, Req1, []}.
-
-not_found(Req0) ->
-    Req1 = cowboy_req:reply(404, #{
-	<<"content-type">> => <<"application/json">>
-    }, <<>>, Req0),
-    {true, Req1, []}.
+    {stop, Req1, []}.
 
 incorrect_configuration(Req0, MsgCode) when erlang:is_list(MsgCode) ->
     Req1 = cowboy_req:reply(500, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([{error, erlang:list_to_binary(MsgCode)}]), Req0),
-    {true, Req1, []}.
+    {stop, Req1, []}.
+
+too_many(Req0) ->
+    Req1 = cowboy_req:reply(429, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, 33}]), Req0),
+    {stop, Req1, []}.
+
+not_found(Req0) ->
+    Req1 = cowboy_req:reply(404, #{
+	<<"content-type">> => <<"application/json">>
+    }, Req0),
+    {stop, Req1, []}.
+
+not_modified(Req0) ->
+    Req1 = cowboy_req:reply(304, #{
+	<<"content-type">> => <<"application/json">>
+    }, Req0),
+    {stop, Req1, []}.
 
 redirect_to_login(Req0) ->
     Settings = #general_settings{},

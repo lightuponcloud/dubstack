@@ -42,16 +42,6 @@ $(document).ready(function(){
             <label for="id_password">Password</label>
             <div><input autocomplete="off" id="id_password" type="password" class="custom-input-194x31" name="password" /></div>
         </div>
-
-{% comment %}
-<!-- TODO: add captcha here -->
-        {% if form.hide_captcha_field|equal:"0" %}
-            <div class="row">
-		<label for="id_captcha_1">Captcha</label>
-                <div class="captcha-wrapper">{{ form.captcha }}</div>
-	    </div>
-        {% endif %}
-{% endcomment %}
 	<div class="row">
 	    <span class="pushbutton"><button type="submit" class="submit button">Login</button></span>
         </div>

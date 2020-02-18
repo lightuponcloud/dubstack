@@ -17,7 +17,7 @@
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 -include("general.hrl").
 
 
@@ -73,7 +73,7 @@ get_tenant(TenantId0) when erlang:is_list(TenantId0) ->
     case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
 	not_found -> not_found;
 	_ ->
-	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, TenantId0),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId0),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		not_found -> not_found;
 		Response ->
@@ -118,7 +118,7 @@ content_types_provided(Req, State) ->
     ], Req, State}.
 
 get_tenants_list(TenantList0, Marker0) ->
-    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?TENANTS_PREFIX}, {marker, Marker0}]),
+    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?TENANT_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];
 	_ ->
@@ -192,10 +192,7 @@ to_html(Req0, State) ->
 			{tenants, TenantsList},
 			{tenants_count, length(TenantsList)}
 		    ] ++ State1),
-		    Req1 = cowboy_req:reply(200, #{
-			<<"content-type">> => <<"text/html">>
-		    }, Body, Req0),
-		    {ok, Req1, []}
+		    {Body, Req0, []}
 	    end
     end.
 
@@ -221,18 +218,22 @@ forbidden(Req0, _State) ->
 	    },
 	    {false, Req0, [{user, User0}]};
 	false ->
-	    case utils:check_token(Req0) of
-		not_found -> js_handler:forbidden(Req0, 28);
-		expired -> js_handler:forbidden(Req0, 38);
+	    case utils:get_token(Req0) of
 		undefined ->
 		    SessionCookieName = Settings#general_settings.session_cookie_name,
 		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 		    %% Response depends on content type
 		    {false, Req0, [{session_id, SessionID0}]};
-		User1 ->
-		    case User1#user.staff of
-			true -> {false, Req0, [{user, User1}]};
-			false -> js_handler:forbidden(Req0, 39)
+		Token -> 
+		    %% Extracts token from request headers and looks it up in "security" bucket
+		    case login_handler:check_token(Token) of
+			not_found -> js_handler:forbidden(Req0, 28);
+			expired -> js_handler:forbidden(Req0, 38);
+			User1 ->
+			    case User1#user.staff of
+				true -> {false, Req0, [{user, User1}]};
+				false -> js_handler:forbidden(Req0, 39)
+			    end
 		    end
 	    end
     end.
@@ -471,7 +472,7 @@ new_tenant(Req0, Tenant0) ->
 	    riak_api:create_bucket(?SECURITY_BUCKET_NAME);
 	_ -> ok
     end,
-    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, Tenant0#tenant.id),
+    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, Tenant0#tenant.id),
     ExistingTenantObject = riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
     case ExistingTenantObject of
 	not_found ->
@@ -487,7 +488,7 @@ new_tenant(Req0, Tenant0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=tenant, content=[Tenant1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANTS_PREFIX, Tenant0#tenant.id,
+	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
 		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
 	    Req1 = cowboy_req:set_resp_body(jsx:encode([
 		{id, list_to_binary(Tenant0#tenant.id)},
@@ -498,12 +499,12 @@ new_tenant(Req0, Tenant0) ->
 		    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
 		    || G <- Tenant0#tenant.groups]}
 		]), Req0),
-	    {true, Req1, []};
+	    {stop, Req1, []};
 	_ ->
 	    Req1 = cowboy_req:reply(400, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{error, <<"Tenant exists.">>}]), Req0),
-	    {true, Req1, []}
+	    {stop, Req1, []}
     end.
 
 %%
@@ -523,7 +524,7 @@ edit_tenant(Req0, Tenant) ->
 	]},
     RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANTS_PREFIX, Tenant#tenant.id,
+    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
 	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
 
     Req1 = cowboy_req:set_resp_body(jsx:encode([
@@ -555,16 +556,15 @@ handle_post(Req0, _State) ->
 	    Req2 = cowboy_req:reply(400, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{errors, Reasons}]), Req1),
-	    {true, Req2, []};
+	    {stop, Req2, []};
 	Tenant ->
 	    case get_tenant(Tenant#tenant.id) of
-		not_found ->
-		    new_tenant(Req1, Tenant);
+		not_found -> new_tenant(Req1, Tenant);
 		_ ->
 		    Req3 = cowboy_req:reply(400, #{
 			<<"content-type">> => <<"application/json">>
 		    }, jsx:encode([{errors, <<"Tenant with this name exists.">>}]), Req1),
-		    {true, Req3, []}
+		    {stop, Req3, []}
 	    end
     end.
 
@@ -601,7 +601,7 @@ delete_resource(Req0, _State) ->
 	    {true, Req1, []};
 	TenantId1 ->
 	    TenantId2 = erlang:binary_to_list(TenantId1),
-	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, TenantId2),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId2),
 	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedTenantId)
     end.
 

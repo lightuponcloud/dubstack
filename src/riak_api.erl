@@ -17,14 +17,16 @@
 	 s3_xml_request/8,
 	 validate_upload_id/3,
 	 increment_filename/1,
-	 pick_object_key/5,
+	 pick_object_key/7,
 	 s3_request/8,
 	 request_httpc/6,
-	 recursively_list_pseudo_dir/2
+	 recursively_list_pseudo_dir/2,
+	 mark_filename_conflict/2
         ]).
 
 -include("riak.hrl").
 -include("general.hrl").
+-include("entities.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
 -type s3_bucket_acl() :: private
@@ -69,8 +71,11 @@ copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName, Options) ->
          {"x-amz-copy-source-if-modified-since", proplists:get_value(if_modified_since, Options)},
          {"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}],
     Config = #riak_api_config{timeout=480000},  % 480000 == 8 minutes
-    {ok, {_Status, Headers, _Body}} = s3_request(put, DestBucketId, [$/|DestKeyName], "", [], <<>>, RequestHeaders, Config),
-    [{content_length, proplists:get_value("content-length", Headers, "0")}].
+    case s3_request(put, DestBucketId, [$/|DestKeyName], "", [], <<>>, RequestHeaders, Config) of
+	{ok, {_Status, Headers, _Body}} ->
+	    [{content_length, proplists:get_value("content-length", Headers, "0")}];
+	{error, {Reason,_,_,_,_}} -> {error, Reason}
+    end.
 
 -spec create_bucket(string()) -> ok.
 
@@ -232,12 +237,10 @@ fetch_object(MethodName, BucketId, Key, Options0)
 	    undefined ->
 		s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config);
 	    true ->
-		Options1 = [{socket_opts, [
-				{recbuf, 16#FFFFFF},
-				{sndbuf, 16#1FFFFFF}]},
-				{body_format, binary},
-				{sync, false},
-				{stream, {self, once}}],
+		Options1 = [{socket_opts, [{recbuf, 16#FFFFFF}, {sndbuf, 16#1FFFFFF}]},
+			    {body_format, binary},
+			    {sync, false},
+			    {stream, {self, once}}],
 		s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config, Options1)
 	end,
     case Response of
@@ -268,7 +271,7 @@ increment_filename(FileName) when erlang:is_binary(FileName) ->
 	HyphenPositions ->
 	    {LastHyphenPos, _} = lists:last(HyphenPositions),
 	    V = binary:part(RootName, size(RootName), -(size(RootName)-LastHyphenPos-1)),
-	    try binary_to_integer(V) of
+	    try erlang:binary_to_integer(V) of
 		N ->
 		    NamePart = binary:part(RootName, 0, LastHyphenPos+1),
 		    IncrementedValue = integer_to_binary(N+1),
@@ -276,6 +279,56 @@ increment_filename(FileName) when erlang:is_binary(FileName) ->
 	    catch error:badarg ->
 		<< RootName/binary,  <<"-1">>/binary, Extension/binary >>
 	    end
+    end.
+
+increment_conflict_filename(G, UserName, Date) ->
+    Bit0 = lists:nth(1, G),
+    case binary:matches(Bit0, <<", conflicted copy">>) of
+	[] -> lists:foldr(fun (F, S) -> <<F/binary, S/binary>> end, <<>>, G);
+	Pos0 ->
+	    {LastPos, Length} = lists:last(Pos0),
+	    Bit1 = binary:part(Bit0, LastPos+Length, size(Bit0)-(LastPos+Length)),
+	    case binary:matches(Bit1, <<" ">>) of
+		[] -> << UserName/binary,
+			 <<", conflicted copy-1 ">>/binary, Date/binary, <<")">>/binary >>;
+		Pos1 ->
+		    {SpacePos, _} = lists:nth(1, Pos1),
+		    V = binary:part(Bit1, 1, SpacePos-1),
+		    try erlang:binary_to_integer(V) of
+			N ->
+			    IncrementedValue = erlang:integer_to_binary(N+1),
+			    << UserName/binary,
+			       <<", conflicted copy-">>/binary, IncrementedValue/binary,
+			       <<" ">>/binary, Date/binary, <<")">>/binary >>
+		    catch error:badarg ->
+			<< UserName/binary,
+			   <<", conflicted copy-1 ">>/binary, Date/binary, <<")">>/binary >>
+		    end
+	    end
+    end.
+
+%%
+%% Renames filename, by adding "conflicted copy", username and timestamp to the file name.
+%%
+-spec mark_filename_conflict(binary(), binary()) -> binary().
+
+mark_filename_conflict(FileName, UserName) when erlang:is_binary(FileName), erlang:is_binary(UserName) ->
+    {RootName0, Extension} = {filename:rootname(FileName), filename:extension(FileName)},
+    Date = erlang:list_to_binary(utils:format_timestamp(utils:to_integer(erlang:round(utils:timestamp()/1000)))),
+    ConflictName = << RootName0/binary, <<" (">>/binary, UserName/binary, <<", conflicted copy ">>/binary,
+		      Date/binary, <<")">>/binary, Extension/binary >>,
+    %% Check if file name is marked as confliect for user and date
+    case binary:matches(RootName0, ConflictName) of
+	[] ->
+	    case binary:matches(RootName0, <<", conflicted copy">>) of
+		[] -> ConflictName; %% no "conflicted copy" string found. Safe to add it
+		_ ->
+		    %% split filename by round brackets and try to find "conflicted copy" inside
+		    Groups = re:split(RootName0, <<"([\(\)])">>,[{return,binary},group]),
+		    RootName1 = [increment_conflict_filename(G, UserName, Date) || G <- Groups],
+		    lists:foldr(fun (F, S) -> <<F/binary, S/binary>> end, <<>>, RootName1++[Extension])
+	    end;
+	_ -> ConflictName  %% the name contains "conflicted copy" text already
     end.
 
 %%
@@ -309,96 +362,127 @@ is_new_version(_, _) -> false.
 %%	    whether new object is a previous version flag
 %%	}
 %%
--spec pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent) -> {string(), binary(), boolean()}
-    when
+-spec pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName, IndexContent) ->
+	{string(), binary(), boolean()} when
     BucketId :: string(),
     Prefix :: string(),
     FileName :: binary(),
     ModifiedTime :: integer()|undefined,
-    IndexContent :: list().
+    LastSeenModifiedTime :: integer()|undefined,
+    UserName :: binary(),
+    IndexContent :: proplist().
 
-pick_object_key(BucketId, Prefix, FileName, ModifiedTime, IndexContent)
+pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName, IndexContent)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	 erlang:is_binary(FileName),
-	 erlang:is_integer(ModifiedTime) orelse ModifiedTime =:= undefined ->
+	 erlang:is_integer(ModifiedTime) orelse ModifiedTime =:= undefined,
+	 erlang:is_integer(LastSeenModifiedTime) orelse LastSeenModifiedTime =:= undefined,
+	 erlang:is_binary(UserName) ->
     %% Lowercase directory names, used for comparision
-    ExistingPrefixes = lists:map(
+    ExistingDirectoryNames = lists:map(
 	fun(P0) ->
-	    P1 = filename:basename(proplists:get_value(prefix, P0)),
-	    P2 = unicode:characters_to_list(utils:unhex_path(erlang:binary_to_list(P1))),
-	    ux_string:to_lower(P2)
+	    P1 = proplists:get_value(prefix, P0),
+	    P2 = lists:last([T || T <- binary:split(P1, <<"/">>, [global]), erlang:byte_size(T) > 0]),
+	    P3 = unicode:characters_to_list(utils:unhex(P2)),
+	    ux_string:to_lower(P3)
 	end, proplists:get_value(dirs, IndexContent, [])),
     ExistingList = proplists:get_value(list, IndexContent, []),
     %% Lowercase original object names, used for comparison
-    ExistingOrigNames = [
+    ExistingObjects = [
 	begin
 	    OrigName1 = proplists:get_value(orig_name, I),
-	    OrigName2 = unicode:characters_to_list(erlang:binary_to_list(OrigName1)),
-	    ux_string:to_lower(OrigName2)
+	    OrigName2 = unicode:characters_to_list(OrigName1),
+	    Object = indexing:to_object(I),
+	    {ux_string:to_lower(OrigName2), Object}
 	end || I <- ExistingList,
 	proplists:get_value(is_deleted, I) =:= false],
-    pick_object_key(BucketId, Prefix, FileName, ModifiedTime,
-		     ExistingList, ExistingPrefixes, ExistingOrigNames, undefined, true).
+    pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName,
+		    ExistingDirectoryNames, ExistingObjects, undefined, undefined, true).
 
-pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-		ExistingList, ExistingPrefixes, ExistingOrigNames, Uniq1, IsNewVersion0)
+pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0, LastSeenModifiedTime, UserName,
+		ExistingDirectoryNames, ExistingObjects, UniqKey0, UniqOrigName0, IsNewVersion0)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	 erlang:is_binary(FileName0),
 	 erlang:is_integer(ModifiedTime0) orelse ModifiedTime0 =:= undefined,
-	 erlang:is_list(ExistingList), erlang:is_list(ExistingPrefixes),
-	 erlang:is_list(ExistingOrigNames), erlang:is_boolean(IsNewVersion0),
-	 erlang:is_binary(Uniq1) orelse Uniq1 =:= undefined ->
-    ObjectKey0 =
-	case Uniq1 of
+	 erlang:is_integer(LastSeenModifiedTime) orelse LastSeenModifiedTime =:= undefined,
+	 erlang:is_binary(UserName), erlang:is_list(ExistingDirectoryNames),
+	 erlang:is_list(ExistingObjects), erlang:is_boolean(IsNewVersion0),
+	 erlang:is_list(UniqKey0) orelse UniqKey0 =:= undefined,
+	 erlang:is_binary(UniqOrigName0) orelse UniqOrigName0 =:= undefined ->
+    NewName0 =
+	case UniqOrigName0 of
 	    undefined -> FileName0;
-	    _ -> Uniq1
+	    _ -> UniqOrigName0
 	end,
+    NewName1 = ux_string:to_lower(unicode:characters_to_list(NewName0)),  %% lowercase
     %% Transliterate filename
-    ObjectKey1 =
-	case utils:slugify_object_key(ObjectKey0) of
-	    [] -> utils:hex(ObjectKey0);
-	    "." -> utils:hex(ObjectKey0);
-	    ".." -> utils:hex(ObjectKey0);
-	    ON -> ON
+    ObjectKey0 =
+	case UniqKey0 of
+	    undefined ->
+		case utils:slugify_object_key(NewName0) of
+		    [] -> utils:hex(NewName0);
+		    "." -> utils:hex(NewName0);
+		    ".." -> utils:hex(NewName0);
+		    Slug -> Slug
+		end;
+	    _ -> UniqKey0
 	end,
-    ObjectKey2 = erlang:list_to_binary(ObjectKey1),
-    %% Check if key exists. Deleted records are not taken into account
-    ExistingObjectRecord = utils:firstmatch(ExistingList,
-	fun(ObjectRecord) ->
-	    case proplists:get_value(object_key, ObjectRecord) =:= ObjectKey2 of
-		true ->
-		    case proplists:get_value(is_deleted, ObjectRecord) of
-			true -> false;
-			false -> true
-		    end;
-		false -> false
-	    end
+    %% Check if object with such key OR name exists.
+    ExistingObjectRecord = utils:firstmatch(ExistingObjects,
+	fun(ExistingOne) ->
+	    Object = element(2, ExistingOne),
+	    NewName2 = element(1, ExistingOne),
+	    Object#object.key =:= ObjectKey0 orelse NewName2 =:= NewName1
 	end),
     case ExistingObjectRecord of
 	[] ->
-	    %% Check if pseudo-directory with this name exists
-	    DirectoryName = ux_string:to_lower(unicode:characters_to_list(ObjectKey0)),
-	    case lists:member(DirectoryName, ExistingPrefixes) of
-		true -> pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-					 ExistingList, ExistingPrefixes, ExistingOrigNames,
-					 increment_filename(ObjectKey0), IsNewVersion0);
-		false ->
-		    %% Check if orig_name exists, as object could have been renamed
-		    ObjectKey3 = ux_string:to_lower(unicode:characters_to_list(ObjectKey0)),
-		    case lists:member(ObjectKey3, ExistingOrigNames) of
-			true ->
-			    RenamedOneModifiedTime = lists:nth(1, [proplists:get_value(last_modified_utc, I)
-					  || I <- ExistingList,
-					  proplists:get_value(orig_name, I) =:= ObjectKey0]),
-			    IsNewVersion = is_new_version(RenamedOneModifiedTime, ModifiedTime0),
-			    {ObjectKey1, ObjectKey0, IsNewVersion};
-			false -> {ObjectKey1, ObjectKey0, IsNewVersion0}
-		    end
+	    %% Check if pseudo-directory with this name exists.
+	    %% Increment filename in that case
+	    DirectoryName = ux_string:to_lower(unicode:characters_to_list(NewName0)),
+	    case lists:member(DirectoryName, ExistingDirectoryNames) of
+		true ->
+		    %% Directory exists, new object name required
+		    pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
+				    LastSeenModifiedTime, UserName,
+				    ExistingDirectoryNames, ExistingObjects,
+				    erlang:binary_to_list(increment_filename(erlang:list_to_binary(ObjectKey0))),
+				    increment_filename(NewName0), IsNewVersion0);
+		false -> {ObjectKey0, NewName0, IsNewVersion0, undefined, false}
 	    end;
-	ObjectMeta ->
-	    IsNewVersion = is_new_version(proplists:get_value(last_modified_utc, ObjectMeta), ModifiedTime0),
-	    %% If stored object is older, replace it with newer version
-	    {ObjectKey1, ObjectKey0, IsNewVersion}
+	{ObjectName, Object} ->
+	    case ObjectName =:= NewName1 of
+		false ->
+		    %% Increment key only as it could be a different object
+		    %% slug is not reliable encoding method, it has collisions
+		    pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
+				    LastSeenModifiedTime, UserName,
+				    ExistingDirectoryNames, ExistingObjects,
+				    erlang:binary_to_list(increment_filename(erlang:list_to_binary(ObjectKey0))),
+				    NewName0, IsNewVersion0);
+		true ->
+		    %% Most probably the same object
+		    IsNewVersion1 = is_new_version(Object#object.last_modified_utc, ModifiedTime0),
+		    %% If stored object is older, it should be replaced with a newer version.
+		    %% But in case client have used previous version of object before he started
+		    %% editing, object should be marked as such that have conflict.
+		    case LastSeenModifiedTime =:= undefined of
+			true ->
+			    %% Let caller (upload or copy function) to decide what to do next
+			    {ObjectKey0, NewName0, IsNewVersion1, Object, false};
+			false ->
+			    case LastSeenModifiedTime < Object#object.last_modified_utc of
+				true ->
+				    %% Client could have edited object offline and do not have an actual data
+				    ConflictName = mark_filename_conflict(FileName0, UserName),
+				    ConflictKey = utils:slugify_object_key(ConflictName),
+				    {ConflictKey, ConflictName, IsNewVersion1, Object, true};
+				false ->
+				    %% The client's last seen modified date is the actual object modification date
+				    %% The modified version of file has arrived.
+				    {ObjectKey0, NewName0, IsNewVersion1, Object, false}
+			    end
+		    end
+	    end
     end.
 
 -spec get_object_metadata(string(), string()) -> proplist().
@@ -740,22 +824,23 @@ s3_xml_request2(Method, Host, Path, Subresource, Params, POSTData, Headers, Conf
             Error
     end.
 
-port_spec(#riak_api_config{s3_port=80}) ->
-    "";
-port_spec(#riak_api_config{s3_port=Port}) ->
-    [":", erlang:integer_to_list(Port)].
+port_spec(#riak_api_config{s3_port=80}) -> "";
+port_spec(#riak_api_config{s3_port=Port}) -> [":", erlang:integer_to_list(Port)].
 
 %% Guard clause protects against empty bodied requests from being
 %% unable to find a matching httpc:request call.
 request_httpc(URL, Method, Hdrs, <<>>, Config, Options)
-    when (Method =:= options) orelse 
-         (Method =:= get) orelse 
-         (Method =:= head) orelse 
-         (Method =:= delete) orelse 
+    when (Method =:= options) orelse
+         (Method =:= get) orelse
+         (Method =:= head) orelse
+         (Method =:= delete) orelse
          (Method =:= trace) ->
     HdrsStr = [{utils:to_list(K), utils:to_list(V)} || {K, V} <- Hdrs],
-
-    Timeout = get_timeout(Config),
+    Timeout =
+	case proplists:is_defined(stream, Options) of
+	    true -> infinity;
+	    false -> get_timeout(Config)
+	end,
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method, {URL, HdrsStr},
 	[{timeout, Timeout}], Options));
@@ -763,10 +848,8 @@ request_httpc(URL, Method, Hdrs, <<>>, Config, Options)
 request_httpc(URL, Method, Hdrs0, Body, Config, Options) ->
     Hdrs1 =
 	case lists:keyfind("content-type", 1, Hdrs0) of
-            false ->
-		[{"content-type", "*/*"} | Hdrs0];
-            _ ->
-		Hdrs0
+            false -> [{"content-type", "*/*"} | Hdrs0];
+            _ -> Hdrs0
         end,
     Hdrs2 = [{utils:to_list(K), utils:to_list(V)} || {K, V} <- Hdrs1],
     Hdrs3 = [{"connection", "close"} | Hdrs2],

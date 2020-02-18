@@ -8,7 +8,7 @@
 	 is_authorized/2, forbidden/2]).
 
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 -include("log.hrl").
 
 init(Req, Opts) ->
@@ -41,7 +41,7 @@ get_riak_object(RiakURL) ->
     OrigName =
 	case proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey) of
 	    undefined -> ObjectKey;
-	    Name -> Name
+	    Name -> utils:unhex(erlang:list_to_binary(Name))
 	end,
     Bytes =
 	case proplists:get_value(content_length, Metadata, undefined) of
@@ -120,8 +120,8 @@ allowed_methods(Req, State) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, _State) ->
-    utils:is_authorized(Req0).
+is_authorized(Req0, State) ->
+    list_handler:is_authorized(Req0, State).
 
 %%
 %% Checks if user has access

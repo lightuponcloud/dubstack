@@ -27,7 +27,7 @@
     csrf_cookie_name => atom(),
     root_path => string(),
     static_root => string(),
-    listen_port => integer()
+    http_listen_port -> integer(),
 }.
 
 -record(general_settings, {
@@ -38,7 +38,7 @@
     csrf_cookie_name=midcsrftoken::atom(),
     root_path="/riak/"::string(),
     static_root="/riak-media/"::string(),
-    listen_port=8081
+    http_listen_port=8081
 }).
 
 -define(DEFAULT_LANGUAGE_TAG, "en").

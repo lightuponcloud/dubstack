@@ -7,8 +7,9 @@
 -export([init/2, content_types_provided/2, to_scale/2, allowed_methods/2,
     is_authorized/2, forbidden/2, resource_exists/2, previously_existed/2]).
 
+-include("general.hrl").
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -47,22 +48,19 @@ to_scale(Req0, State) ->
 		    false -> H
 		end
 	end,
+    CropFlag = proplists:get_value(crop, State),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> {<<>>, Req0, []};
 	RiakResponse0 ->
-	    ModifiedTime = proplists:get_value("x-amz-meta-modified-utc", RiakResponse0),
-	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
-	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-	    RealKey = utils:format_timestamp(utils:to_integer(ModifiedTime)),
-	    RealPath = utils:prefixed_object_key(RealPrefix, RealKey),
-
-	    case riak_api:get_object(BucketId, RealPath) of
+	    {OldBucketId, RealPath} = download_handler:real_path(BucketId, RiakResponse0),
+	    case riak_api:get_object(OldBucketId, RealPath) of
 		not_found -> {<<>>, Req0, []};
 		RiakResponse1 ->
 		    Content = proplists:get_value(content, RiakResponse1),
 		    Reply0 = img:scale([
 			{from, Content},
 			{to, jpeg},
+			{crop, CropFlag},
 			{scale_width, Width},
 			{scale_height, Height}
 		    ]),
@@ -78,18 +76,32 @@ to_scale(Req0, State) ->
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    case utils:check_token(Req0) of
-	undefined -> {true, Req0, []};
-	not_found -> {true, Req0, []};
-	expired -> {true, Req0, []};
-	User -> {true, Req0, [{user, User}]}
+    %% Extracts token from request headers and looks it up in "security" bucket
+    case utils:get_token(Req0) of
+	undefined -> 
+	    %% Check session id
+	    Settings = #general_settings{},
+	    SessionCookieName = Settings#general_settings.session_cookie_name,
+	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
+	    case login_handler:check_session_id(SessionID0) of
+		false -> js_handler:unauthorized(Req0, 28);
+		{error, Number} -> js_handler:unauthorized(Req0, Number);
+		User -> {true, Req0, User}
+	    end;
+	Token ->
+	    case login_handler:check_token(Token) of
+		not_found -> js_handler:unauthorized(Req0, 28);
+		expired -> js_handler:unauthorized(Req0, 28);
+		User -> {true, Req0, User}
+	    end
     end.
+
 
 %%
 %% Checks if provided token ( or access token ) is valid.
 %% ( called after 'allowed_methods()' )
 %%
-forbidden(Req0, State) ->
+forbidden(Req0, User) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
@@ -117,44 +129,35 @@ forbidden(Req0, State) ->
 	    undefined -> false;
 	    <<"1">> -> true
 	end,
-    case proplists:get_value(user, State) of
-	undefined ->
-	    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
-		{error, Number} -> js_handler:forbidden(Req0, Number);
-		false ->
+    %% The following flag can be used to turn off image cropping
+    CropFlag =
+	case proplists:get_value(<<"crop">>, ParsedQs) of
+	    <<"0">> -> false;
+	    _ -> true
+	end,
+    BucketIdOK =
+	case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
+	    false -> {error, 27};
+	    true -> ok
+	end,
+    case lists:keyfind(error, 1, [Prefix, ObjectKey0, BucketIdOK]) of
+	{error, Number} -> js_handler:forbidden(Req0, Number);
+	false ->
+	    UserBelongsToGroup = lists:any(fun(Group) ->
+		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+		User#user.groups),
+	    case UserBelongsToGroup of
+		false -> js_handler:forbidden(Req0, 37);
+		true ->
 		    {false, Req0, [
 			{bucket_id, BucketId},
 			{prefix, Prefix},
 			{width, Width},
 			{height, Height},
 			{is_dummy, IsDummyReq},
+			{crop, CropFlag},
 			{object_key, ObjectKey0}
 		    ]}
-	    end;
-	User ->
-	    BucketIdOK =
-		case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-		    false -> {error, 27};
-		    true -> ok
-		end,
-	    case lists:keyfind(error, 1, [Prefix, ObjectKey0, BucketIdOK]) of
-		{error, Number} -> js_handler:forbidden(Req0, Number);
-		false ->
-		    UserBelongsToGroup = lists:any(fun(Group) ->
-			utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-			User#user.groups),
-		    case UserBelongsToGroup of
-			false -> js_handler:forbidden(Req0, 37);
-			true ->
-			    {false, Req0, [
-				{bucket_id, BucketId},
-				{prefix, Prefix},
-				{width, Width},
-				{height, Height},
-				{is_dummy, IsDummyReq},
-				{object_key, ObjectKey0}
-			    ]}
-		    end
 	    end
     end.
 

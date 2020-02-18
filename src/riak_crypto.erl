@@ -83,9 +83,11 @@ canonical_query_string(Params) ->
                  end
                  || {Key, Value} <- Sorted, Value =/= none, Value =/= undefined], "&").
 
-trimall(Value) ->
+trimall(Value) when erlang:is_list(Value) ->
     %% TODO - remove excess internal whitespace in header values
-    re:replace(Value, "(^\\s+)|(\\s+$)", "", [global]).
+    re:replace(Value, "(^\\s+)|(\\s+$)", "", [global]);
+trimall(Value) when erlang:is_binary(Value) -> Value;
+trimall(Value) -> utils:to_list(Value).
 
 hash_encode(Data) ->
     Hash = crypto:hash(sha256, Data),
@@ -147,11 +149,12 @@ seed() ->
 	    erlang:error(badarg)
     end.
 
+%%
 %% UUID4 is 122 bits of entropy; we need 16 8-bit bytes to get that.
 %% Example UUID4: f47ac10b-58cc-4372-a567-0e02b2c3d479
 %% For reasons unknown, the third group of characters must start with the number 4.
 %% For further unknown reasons, the fourth group of characters must start with 8, 9, a or b.
-
+%%
 -spec uuid4() -> binary().
 
 uuid4() ->
@@ -176,11 +179,11 @@ random_string() ->
     AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
     lists:foldl(
 	fun(_, Acc) ->
-            try [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] of
+            try [lists:nth(rand:uniform(length(AllowedChars)), AllowedChars)] of
 		Value -> Value ++ Acc
 	    catch error:low_entropy ->
 		riak_crypto:seed(),
-                [lists:nth(crypto:rand_uniform(1, length(AllowedChars)), AllowedChars)] ++ Acc
+                [lists:nth(rand:uniform(length(AllowedChars)), AllowedChars)] ++ Acc
 	    end
 	end, [], lists:seq(1, Length)).
 

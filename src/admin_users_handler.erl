@@ -19,7 +19,7 @@
 -include_lib("xmerl/include/xmerl.hrl").
 -include("general.hrl").
 -include("riak.hrl").
--include("user.hrl").
+-include("entities.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -64,6 +64,11 @@ content_types_provided(Req, State) ->
 -spec user_to_proplist(user()) -> proplist().
 
 user_to_proplist(User) ->
+    Tel =
+	case User#user.tel of
+	    undefined -> undefined;
+	    V -> unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(V)))
+	end,
     [
 	{id, erlang:list_to_binary(User#user.id)},
 	{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.name)))},
@@ -71,7 +76,7 @@ user_to_proplist(User) ->
 	{tenant_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tenant_name)))},
 	{tenant_enabled, utils:to_binary(User#user.tenant_enabled)},
 	{login, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.login)))},
-	{tel, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))},
+	{tel, Tel},
 	{enabled, utils:to_binary(User#user.enabled)},
 	{staff, utils:to_binary(User#user.staff)},
 	{groups, [
@@ -108,15 +113,15 @@ to_json(Req0, State) ->
 		    %% Only staff is allowed to access this API endpoint
 		    Req1 = cowboy_req:reply(403, #{
 			<<"content-type">> => <<"application/json">>
-			}, <<>>, Req0),
-		    {<<>>, Req1, []}
+			}, Req0),
+		    {stop, Req1, []}
 	    end;
 	_ ->
 	    %% REST API accepts only bearer Tokens
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>
-		}, <<>>, Req0),
-	    {<<>>, Req1, []}
+		}, Req0),
+	    {stop, Req1, []}
     end.
 
 to_html(Req0, State0) ->
@@ -152,10 +157,7 @@ to_html(Req0, State0) ->
 			{path_tenant, PathTenant1},
 			{tenants, Tenants}
 		    ] ++ State1),
-		    Req1 = cowboy_req:reply(200, #{
-			<<"content-type">> => <<"text/html">>
-		    }, Body, Req0),
-		    {ok, Req1, []}
+		    {Body, Req0, []}
 	    end
     end.
 
@@ -199,14 +201,14 @@ parse_user(RootElement) ->
 -spec get_user(string()) -> user()|not_found.
 
 get_user(UserId) when erlang:is_list(UserId) ->
-    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, UserId),
+    PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, UserId),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	not_found -> not_found;
 	UserObject ->
 	    XMLDocument0 = utils:to_list(proplists:get_value(content, UserObject)),
 	    {RootElement0, _} = xmerl_scan:string(XMLDocument0),
             User0 = parse_user(RootElement0),
-	    PrefixedTenantId = utils:prefixed_object_key(?TENANTS_PREFIX, User0#user.tenant_id),
+	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, User0#user.tenant_id),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
 		not_found -> not_found;
 		TenantObject ->
@@ -236,7 +238,7 @@ get_full_users_list(Tenant) ->
     get_full_users_list(Tenant, [], undefined).
 
 get_full_users_list(Tenant, UsersList0, Marker0) ->
-    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?USERS_PREFIX}, {marker, Marker0}]),
+    RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?USER_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
 	not_found -> [];
 	_ ->
@@ -260,38 +262,8 @@ get_full_users_list(Tenant, UsersList0, Marker0) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-forbidden(Req0, _State) ->
-    Settings = #general_settings{},
-    case ?ANONYMOUS_USER_CREATION of
-	true ->
-	    User0 = #user{
-		id = admin,
-		name = "Administrator",
-		tenant_id = "nonexistent",
-		tenant_name = "Non-existent",
-		tenant_enabled = true,
-		login = Settings#general_settings.admin_email,
-		tel = "",
-		enabled = true,
-		staff = true
-	    },
-	    {false, Req0, [{user, User0}]};
-	false ->
-	    case utils:check_token(Req0) of
-		not_found -> js_handler:forbidden(Req0, 28);
-		expired -> js_handler:forbidden(Req0, 38);
-		undefined ->
-		    SessionCookieName = Settings#general_settings.session_cookie_name,
-		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-		    %% Response depends on content type
-		    {false, Req0, [{session_id, SessionID0}]};
-		User1 ->
-		    case User1#user.staff of
-			true -> {false, Req0, [{user, User1}]};
-			false -> js_handler:forbidden(Req0, 39)
-		    end
-	    end
-    end.
+forbidden(Req0, State) ->
+    admin_tenants_handler:forbidden(Req0, State).
 
 user_from_state(Req0) ->
     case cowboy_req:binding(user_id, Req0) of
@@ -344,7 +316,7 @@ resource_exists(Req0, State) ->
 -spec new_user(any(), user()) -> any().
 
 new_user(Req0, User0) ->
-    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, User0#user.id),
+    PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, User0#user.id),
     case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
 	not_found ->
 	    %% Create User
@@ -370,16 +342,16 @@ new_user(Req0, User0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=user, content=[User1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USERS_PREFIX, User0#user.id,
+	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
 		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
 
 	    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User0)), Req0),
-	    {true, Req1, []};
+	    {stop, Req1, []};
 	_ ->
 	    Req1 = cowboy_req:reply(400, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{error, <<"User exists.">>}]), Req0),
-	    {true, Req1, []}
+	    {stop, Req1, []}
     end.
 
 %%
@@ -410,7 +382,7 @@ edit_user(Req0, User) ->
 	]},
     RootElement0 = #xmlElement{name=user, content=[EditedUser]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USERS_PREFIX, User#user.id,
+    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
 	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
     Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User)), Req0),
     {true, Req1, []}.
@@ -457,7 +429,7 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
 	true -> {error, {login, <<"Login is easier to remember when it is less than 30 characters.">>}};
 	false ->
 	    UserId = utils:hex(erlang:md5(Login0)),  %% User ID is md5(login)
-	    PrefixedLogin = utils:prefixed_object_key(?USERS_PREFIX, UserId),
+	    PrefixedLogin = utils:prefixed_object_key(?USER_PREFIX, UserId),
 	    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
 		not_found -> {UserId, utils:hex(Login0)};
 		_ ->
@@ -552,6 +524,12 @@ validate_post(Tenant, Body) ->
 	    end
     end.
 
+validate_tel(undefined) -> undefined;
+validate_tel(none) -> undefined;
+validate_tel(<<>>) -> undefined;
+validate_tel(Value) when erlang:is_binary(Value) ->
+    utils:hex(utils:trim_spaces(Value)).
+
 validate_patch(not_found, _Tenant, _Body) ->
     {error, <<"User not found">>};
 validate_patch(User, Tenant, Body) ->
@@ -562,7 +540,7 @@ validate_patch(User, Tenant, Body) ->
 	    FieldValues = jsx:decode(Body),
 	    UserName0 = validate_user_name(proplists:get_value(<<"name">>, FieldValues), not_required),
 	    Login0 = validate_login(proplists:get_value(<<"login">>, FieldValues), not_required),
-	    Tel0 = proplists:get_value(<<"tel">>, FieldValues, ""),
+	    Tel0 = validate_tel(proplists:get_value(<<"tel">>, FieldValues)),
 	    Password0 = validate_password(proplists:get_value(<<"password">>, FieldValues)),
 	    Groups0 = validate_group_ids(proplists:get_value(<<"groups">>, FieldValues), Tenant#tenant.groups),
 	    IsEnabled0 = admin_tenants_handler:validate_boolean(
@@ -582,7 +560,6 @@ validate_patch(User, Tenant, Body) ->
 			    undefined -> User#user.login;
 			    _ -> Login1
 			end,
-		    Tel1 = case Tel0 of undefined -> User#user.tel; _ -> utils:hex(Tel0) end,
 		    {HashType0, Salt0, Password1} = Password0,
 		    {HashType1, Salt1, Password2} =
 			case Password1 of
@@ -597,7 +574,7 @@ validate_patch(User, Tenant, Body) ->
 			tenant_name = User#user.tenant_name,
 			tenant_enabled = User#user.tenant_enabled,
 			login = Login2,
-			tel = Tel1,
+			tel = Tel0,
 			salt = Salt1,
 			password = Password2,
 			hash_type = HashType1,
@@ -629,15 +606,15 @@ handle_post(Req0, State) ->
 	undefined ->
 	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"application/json">>
-	    }, <<>>, Req0),
-	    {ok, Req1, []};
+	    }, Req0),
+	    {stop, Req1, []};
 	PathTenant ->
 	    case validate_post(PathTenant, Body) of
 		{error, Reasons} ->
 		    Req2 = cowboy_req:reply(400, #{
 			<<"content-type">> => <<"application/json">>
 		    }, jsx:encode([{errors, Reasons}]), Req1),
-		    {true, Req2, []};
+		    {stop, Req2, []};
 		User -> new_user(Req1, User)
 	    end
     end.
@@ -653,7 +630,7 @@ patch_resource(Req0, State) ->
 	    Req1 = cowboy_req:reply(400, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
-	    {true, Req1, []};
+	    {stop, Req1, []};
 	false ->
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
 	    case validate_patch(User0, Tenant0, Body) of
@@ -661,7 +638,7 @@ patch_resource(Req0, State) ->
 		    Req2 = cowboy_req:reply(400, #{
 			<<"content-type">> => <<"application/json">>
 		    }, jsx:encode([{errors, Reasons}]), Req1),
-		    {true, Req2, []};
+		    {stop, Req2, []};
 		User1 -> edit_user(Req1, User1)
 	    end
     end.
@@ -674,9 +651,9 @@ delete_resource(Req0, State) ->
 	    Req1 = cowboy_req:reply(400, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{errors, <<"Valid Tenant ID and valid User ID are expected in the URL.">>}]), Req0),
-	    {true, Req1, []};
+	    {stop, Req1, []};
 	false ->
-	    PrefixedUserId = utils:prefixed_object_key(?USERS_PREFIX, User0#user.id),
+	    PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, User0#user.id),
 	    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedUserId),
 	    {true, Req0, []}
     end.

@@ -7,6 +7,28 @@
 <script src="{{ static_root }}ancillary.js"></script>
 <script language="JavaScript">
 
+function parse_user_form_error(data){
+    if(data&&data.hasOwnProperty('errors')){
+	if(typeof data['errors'] == 'string'){
+	    $('#id_errors').append(data['errors']+'<br/>');
+	} else {
+	  if(data['errors'].hasOwnProperty('name')){
+	    $('#id_name_error').append(data['errors']['name']+'<br/>');
+	  }
+	  if(data['errors'].hasOwnProperty('login')){
+	    $('#id_login_error').append(data['errors']['login']+'<br/>');
+	  }
+	  if(data['errors'].hasOwnProperty('password')){
+	    $('#id_password_error').append(data['errors']['password']+'<br/>');
+	  }
+	  if(data['errors'].hasOwnProperty('groups')){
+	    $('#id_groups_errors').append(data['errors']['groups']+'<br/>');
+	  }
+	  return 'error';
+	}
+    }
+}
+
 function submit_change(user_id, tenant_id){
     $('#id-dialog-loading-message-text').empty();
     $('#id-user-form .err').empty();
@@ -14,6 +36,7 @@ function submit_change(user_id, tenant_id){
 
     var name=$('#id_name').val();
     var login=$('#id_login').val();
+    var tel=$('#id_tel').val();
     var password=$('#id_password').val();
     var groups="";
     $('input[name^=group_]:checked').each(function(i,v){
@@ -36,6 +59,7 @@ function submit_change(user_id, tenant_id){
     }
     var form_data = {
 	'login': login,
+	'tel': tel,
 	'password': password,
 	'name': name,
 	'groups': groups,
@@ -44,24 +68,8 @@ function submit_change(user_id, tenant_id){
     };
     request(url, method, form_data, '{{ token }}', function(data, status, jqXHR){
 	    $("#submit_change").attr("disabled",false);
-	    if(data&&data.hasOwnProperty('errors')){
-		if(typeof data['errors'] == 'string'){
-		    $('#id_errors').append(data['errors']+'<br/>');
-		} else {
-		  if(data['errors'].hasOwnProperty('name')){
-		    $('#id_name_error').append(data['errors']['name']+'<br/>');
-		  }
-		  if(data['errors'].hasOwnProperty('login')){
-		    $('#id_login_error').append(data['errors']['login']+'<br/>');
-		  }
-		  if(data['errors'].hasOwnProperty('password')){
-		    $('#id_password_error').append(data['errors']['password']+'<br/>');
-		  }
-		  if(data['errors'].hasOwnProperty('groups')){
-		    $('#id_groups_errors').append(data['errors']['groups']+'<br/>');
-		  }
-		  return;
-		}
+	    if(parse_user_form_error(data)=='error'){
+		return;
 	    } else {
 		var group_ids="";
 		var group_names="";
@@ -77,6 +85,7 @@ function submit_change(user_id, tenant_id){
 		    var tr=$('#id-table-users').find('tr#id-user-tr_'+user_id);
 		    $(tr).find('.first-row-col').empty().append('<center>'+name+'</center><input type="hidden" name="name_'+user_id+'" value="'+name+'"/>');
 		    $(tr).find('.tr-login').empty().append('<center>'+login+'</center><input type="hidden" name="login_'+user_id+'" value="'+login+'"/>');
+		    $(tr).find('.tr-tel').empty().append('<center>'+tel+'</center><input type="hidden" name="tel_'+user_id+'" value="'+tel+'"/>');
 		    $(tr).find('.tr-groups').empty().append('<center>'+group_names+'</center><input type="hidden" name="groups_'+user_id+'" value="'+group_ids+'"/>');
 		    if(data['enabled']=="true") {
 			$(tr).find('.td-enabled').empty().append('<center><img src="{{ static_root }}icon-yes.gif" /></center>');
@@ -95,6 +104,7 @@ function submit_change(user_id, tenant_id){
 		    $('#id-table-users').append('<tr id="id-user-tr_'+data.id+'"> \
 <td class="first-row-col"><center>'+data.name+'</center><input type="hidden" name="name_'+data.id+'" value="'+data.name+'"/></td> \
 <td class="tr-login"><center>'+data.login+'</center><input type="hidden" name="login_'+data.id+'" value="'+data.login+'"/></td> \
+<td class="tr-tel"><center>'+data.tel+'</center><input type="hidden" name="tel_'+data.id+'" value="'+data.tel+'"/></td> \
 <td><center>'+data.tenant_name+'</center><input type="hidden" name="tenant_id_'+data.id+'" value="'+data.tenant_id+'"/></td> \
 <td class="tr-groups"><center>'+group_names+'</center><input type="hidden" name="groups_'+data.id+'" value="'+group_ids+'"/></td> \
 <td class="td-enabled"><center><img src="{{ static_root }}icon-'+(data.enabled=="true"?"yes":"no")+'.gif"/></center><input type="hidden" name="enabled_'+data.id+'" value="'+data.enabled+'"/></td> \
@@ -105,29 +115,45 @@ function submit_change(user_id, tenant_id){
 	    }
 	    $("#dialog").dialog('close');
 	}, function(xhr, status, msg){
-	    $("#submit_change").attr("disabled",false);
-	    $('#id_errors').append($.parseJSON(xhr.responseText));
+	    try{
+                var data = $.parseJSON(xhr.responseText);
+		parse_user_form_error(data);
+		$("#submit_change").attr("disabled",false);
+	    } catch (e){
+		$("#submit_change").attr("disabled",false);
+		$('#id_errors').append("Something's went wrong");
+	    }
 	});
 }
 
 function edit_user(e, user_id){
  var login="";
+ var tel="";
  var name="";
  var groups="";
  var enabled;
  var staff;
  if(user_id){
     login=$('input[name="login_'+user_id+'"]').val();
+    tel=$('input[name="tel_'+user_id+'"]').val();
     name=$('input[name="name_'+user_id+'"]').val();
     groups=$('input[name="groups_'+user_id+'"]').val().split(',');
     enabled=$('input[name="enabled_'+user_id+'"]').val();
     staff=$('input[name="staff_'+user_id+'"]').val();
  }
+
  var groups_input='';
+{% if path_tenant %}
  var group_ids=$('input[name=tenant_group_ids]').val().split(',');
  var group_names=$('input[name=tenant_group_names]').val().split(',');
+{% else %}
+ var tenant_id=$('input[name=tenant_id_'+user_id+']').val();
+ var group_ids=$('input[name=tenant_group_ids_'+tenant_id+']').val().split(',');
+ var group_names=$('input[name=tenant_group_names_'+tenant_id+']').val().split(',');
+{% endif %}
  for(var i=0;i!=group_ids.length;i++){
-    groups_input+='<input type="checkbox" name="group_'+group_ids[i]+'" /> '+group_names[i]+'<br/>';
+    var group_name=group_names[i];
+    groups_input+='<input type="checkbox" name="group_'+group_ids[i]+'" /> '+group_name+'<br/>';
  }
  var user_form = '<form method="POST" id="id-user-form" name="user_form" > \
 <h3><span id="id-dialog-block-header"></span></h3> \
@@ -137,6 +163,7 @@ function edit_user(e, user_id){
 <div style="margin-top:14px;"><span class="err" id="id_password_error"></span></div></div></div> \
 <div class="row"><label for="id_name">Full Name:</label><div><input name="name" id="id_name" value="'+name+'" class="custom-input-194x31"/> \
 <div style="margin-top:14px;"><span class="err" id="id_name_error"></span></div></div></div> \
+<div class="row"><label for="id_tel">Telephone:</label><div><input name="tel" id="id_tel" value="'+tel+'" class="custom-input-194x31" autofocus/></div></div> \
 <div class="row"><label for="id_groups">Groups:</label><div id="id_groups">'+groups_input+' \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
 <input type="checkbox" id="id_enabled" name="enabled" '+(enabled=="true"?"checked=checked":"")+'> Enabled<br/> \
@@ -384,8 +411,15 @@ Tenants <span class="mob-hidden" id="id-block-header"><span class="dirseparator"
 </h3>
 <div class="management-table clearfix">
  <div class="articles-details">
-<input type="hidden" name="tenant_group_names" value="{% for group in path_tenant.groups %}{{ group.name }}{% if not forloop.last %},{% endif %}{% endfor %}" />
-<input type="hidden" name="tenant_group_ids" value="{% for group in path_tenant.groups %}{{ group.id }}{% if not forloop.last %},{% endif %}{% endfor %}" />
+{% if path_tenant %}
+    <input type="hidden" name="tenant_group_names" value="{% for group in path_tenant.groups %}{{ group.name|escape }}{% if not forloop.last %},{% endif %}{% endfor %}" />
+    <input type="hidden" name="tenant_group_ids" value="{% for group in path_tenant.groups %}{{ group.id }}{% if not forloop.last %},{% endif %}{% endfor %}" />
+{% else %}
+    {% for tenant in tenants %}
+    <input type="hidden" name="tenant_group_ids_{{ tenant.id }}" value="{% for group in tenant.groups %}{{ group.id }}{% if not forloop.last %},{% endif %}{% endfor %}"/>
+    <input type="hidden" name="tenant_group_names_{{ tenant.id }}" value="{% for group in tenant.groups %}{{ group.name|escape }}{% if not forloop.last %},{% endif %}{% endfor %}"/>
+    {% endfor %}
+{% endif %}
 
 <div class="confirm pink_error">
     <div>
@@ -409,9 +443,12 @@ Tenants <span class="mob-hidden" id="id-block-header"><span class="dirseparator"
 </div>
 </div>
 <br/><br/>
+<div id="id-tenants">
+</div>
 <table class="lvw" cellpadding="0" cellspacing="0" id="id-table-users"><tr class="table-title-row">
 <th class="chd first-title-col">Name</th>
 <th class="chd">Login</th>
+<th class="chd">Tel.</th>
 <th class="chd">Tenant</th>
 <th class="chd">Groups</th>
 <th class="chd">Active</th>
@@ -423,8 +460,9 @@ Tenants <span class="mob-hidden" id="id-block-header"><span class="dirseparator"
 <tr id="id-user-tr_{{ i.id }}" class="{% if forloop.counter0|even %}oddtr{% endif %}{% if forloop.last %} last_row{% endif %}">
 <td class="first-row-col"><center>{{ i.name }}</center><input type="hidden" name="name_{{ i.id }}" value="{{ i.name }}"/></td>
 <td class="tr-login"><center>{{ i.login }}</center><input type="hidden" name="login_{{ i.id }}" value="{{ i.login }}"/></td>
+<td class="tr-tel"><center>{{ i.tel }}</center><input type="hidden" name="tel_{{ i.id }}" value="{{ i.tel }}"/></td>
 <td><center>{% ifequal path_tenant undefined %}<a href="{{ root_path }}admin/{{ i.tenant_id }}/users/">{{ i.tenant_name }}</a>{% else %}{{ i.tenant_id }}{% endifequal %}</center><input type="hidden" name="tenant_id_{{ i.id }}" value="{{ i.tenant_id }}"/></td>
-<td class="tr-groups"><center>{% for group in i.groups %}{{ group.name }}{% if not forloop.last %}<br/>{% endif %}{% endfor %}</center><input type="hidden" name="groups_{{ i.id }}" value="{% for group in i.groups %}{{ group.id }}{% if not forloop.last %},{% endif %}{% endfor %}"/></td>
+<td class="tr-groups"><center>{% for group in i.groups %}{{ group.name|escape }}{% if not forloop.last %}<br/>{% endif %}{% endfor %}</center><input type="hidden" name="groups_{{ i.id }}" value="{% for group in i.groups %}{{ group.id }}{% if not forloop.last %},{% endif %}{% endfor %}"/></td>
 <td class="td-enabled"><center><img src="{{ static_root }}icon-{% ifequal i.enabled "true" %}yes{% else %}no{% endifequal %}.gif"/></center><input type="hidden" name="enabled_{{ i.id }}" value="{{ i.enabled }}"/></td>
 <td class="td-staff"><center><img src="{{ static_root }}icon-{% ifequal i.staff "true" %}yes{% else %}no{% endifequal %}.gif"/></center><input type="hidden" name="staff_{{ i.id }}" value="{{ i.staff }}"/></td>
 <td class="td-buttons">{% ifequal i.tenant_enabled "true" %}<center><a href="#" id="id-edit-user_{{ i.id }}"><img src="{{ static_root }}edit.png"/> Edit</a>&nbsp;&nbsp;&nbsp;<a href="#" id="id-delete-user_{{ i.id }}"><img src="{{ static_root }}delete.png"> Delete</a></center>{% else %}&nbsp;{% endifequal %}</td>
