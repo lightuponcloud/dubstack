@@ -373,11 +373,34 @@ update_index(Req0, State0) ->
 	    {lock_user_name, LockedUserName1},
 	    {lock_user_tel, LockedUserTel1},
 	    {is_deleted, "false"},
-	    {bytes, utils:to_list(TotalBytes)},
-	    {width, proplists:get_value(width, State0)},
-	    {height, proplists:get_value(height, State0)}
+	    {bytes, utils:to_list(TotalBytes)}
 	]),
-    Options = [{acl, public_read}, {meta, Meta}],
+    MimeType = utils:mime_type(ObjectKey0),
+    %% get image width and heignt if it is less than 50 MB
+    WidthHeight =
+	case TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES orelse utils:starts_with(MimeType, <<"image/">>) =:= false of
+	    true ->
+		[{"width", proplists:get_value(width, State0)},
+		{"height", proplists:get_value(height, State0)}];
+	    false ->
+		{OldBucketId, RealPath} = download_handler:real_path(BucketId,
+		    [{"x-amz-meta-guid", GUID}, {"x-amz-meta-modified-utc", utils:to_list(ModifiedTime0)}]),
+		case riak_api:get_object(OldBucketId, RealPath) of
+		    not_found ->
+			[{"width", proplists:get_value(width, State0)},
+			 {"height", proplists:get_value(height, State0)}];
+		    RiakResponse ->
+			Content = proplists:get_value(content, RiakResponse),
+			Reply0 = img:scale([{from, Content}, {just_get_size, true}]),
+			case Reply0 of
+			    {error, _Reason} ->
+				[{"width", proplists:get_value(width, State0)},
+				 {"height", proplists:get_value(height, State0)}];
+			    {Width, Height} -> [{"width", Width}, {"height", Height}]
+			end
+		end
+	end,
+    Options = [{acl, public_read}, {meta, Meta++WidthHeight}],
     case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
 	ok ->
 	    %% Update pseudo-directory index for faster listing.
@@ -455,6 +478,7 @@ update_index(Req0, State0) ->
 			{width, proplists:get_value(width, State0, null)},
 			{height, proplists:get_value(height, State0, null)}
 		    ]), Req0),
+
 		    {true, Req1, []}
 	    end;
 	{error, Reason} ->
@@ -760,7 +784,8 @@ upload_part(Req0, State0, BinaryData) ->
 					      {is_locked, IsLocked}, {upload_time, UploadTime}, {guid, GUID},
 					      {total_bytes, TotalBytes}, {is_conflict, IsConflict},
 					      {upload_id, unicode:characters_to_binary(UploadId)},
-					      {end_byte, EndByte},
+					      {end_byte, EndByte}, {width, proplists:get_value(width, State0)},
+					      {height, proplists:get_value(height, State0)},
 					      {md5, unicode:characters_to_binary(string:strip(FinalEtag, both, $"))}],
 				    update_index(Req0, State1)
 			    end
@@ -882,23 +907,25 @@ validate_content_range(Req) ->
 %%
 %% ( called after 'allowed_methods()' )
 %%
-forbidden(Req0, State0) ->
+forbidden(Req0, User) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case utils:is_valid_bucket_id(BucketId, State0#user.tenant_id) of
+    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, State0#user.tenant_id, Group#group.id) end,
-		State0#user.groups),
+		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+		User#user.groups),
 	    case UserBelongsToGroup of
-		false -> js_handler:forbidden(Req0, 37);
+		false ->
+		    PUser = admin_users_handler:user_to_proplist(User),
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
 		true ->
 		    case validate_content_range(Req0) of
 			{error, Reason} -> js_handler:forbidden(Req0, Reason);
-			State1 -> {false, Req0, State1++[{user, State0}, {bucket_id, BucketId}]}
+			State1 -> {false, Req0, State1++[{user, User}, {bucket_id, BucketId}]}
 		    end
 	    end;
 	false -> js_handler:forbidden(Req0, 7)

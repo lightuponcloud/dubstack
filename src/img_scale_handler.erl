@@ -52,22 +52,33 @@ to_scale(Req0, State) ->
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> {<<>>, Req0, []};
 	RiakResponse0 ->
-	    {OldBucketId, RealPath} = download_handler:real_path(BucketId, RiakResponse0),
-	    case riak_api:get_object(OldBucketId, RealPath) of
-		not_found -> {<<>>, Req0, []};
-		RiakResponse1 ->
-		    Content = proplists:get_value(content, RiakResponse1),
-		    Reply0 = img:scale([
-			{from, Content},
-			{to, jpeg},
-			{crop, CropFlag},
-			{scale_width, Width},
-			{scale_height, Height}
-		    ]),
-		    case Reply0 of
-			{error, Reason} -> js_handler:bad_request(Req0, Reason);
-			Output0 -> {Output0, Req0, []}
+	    case proplists:get_value("x-amz-meta-bytes", RiakResponse0) of
+		undefined -> {<<>>, Req0, []};
+		TotalBytes ->
+		    case utils:to_integer(TotalBytes) > ?MAXIMUM_IMAGE_SIZE_BYTES of
+			true -> {<<>>, Req0, []};
+			false ->
+			    {OldBucketId, RealPath} = download_handler:real_path(BucketId, RiakResponse0),
+			    scale_attempt(Req0, OldBucketId, RealPath, CropFlag, Width, Height)
 		    end
+	    end
+    end.
+
+scale_attempt(Req0, BucketId, RealPath, CropFlag, Width, Height) ->
+    case riak_api:get_object(BucketId, RealPath) of
+	not_found -> {<<>>, Req0, []};
+	RiakResponse1 ->
+	    Content = proplists:get_value(content, RiakResponse1),
+	    Reply0 = img:scale([
+		{from, Content},
+		{to, jpeg},
+		{crop, CropFlag},
+		{scale_width, Width},
+		{scale_height, Height}
+	    ]),
+	    case Reply0 of
+		{error, Reason} -> js_handler:bad_request(Req0, Reason);
+		Output0 -> {Output0, Req0, []}
 	    end
     end.
 
@@ -147,7 +158,9 @@ forbidden(Req0, User) ->
 		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
 		User#user.groups),
 	    case UserBelongsToGroup of
-		false -> js_handler:forbidden(Req0, 37);
+		false ->
+		    PUser = admin_users_handler:user_to_proplist(User),
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
 		true ->
 		    {false, Req0, [
 			{bucket_id, BucketId},

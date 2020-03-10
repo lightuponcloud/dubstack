@@ -91,6 +91,13 @@ move(Req0, State) ->
 	    NewName = element(2, RequestedKey),
 	    Copied1 = copy_handler:copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0,
 						ObjectKey, NewName, DstIndexContent, User),
+io:fwrite("!!!!!!!!!!!! DstBucketId: ~p~n", [DstBucketId]),
+io:fwrite("!!!!!!!!!!!! SrcPrefix0: ~p~n", [SrcPrefix0]),
+io:fwrite("!!!!!!!!!!!! DstPrefix0: ~p~n", [DstPrefix0]),
+io:fwrite("!!!!!!!!!!!! ObjectKey: ~p~n", [ObjectKey]),
+io:fwrite("!!!!!!!!!!!! NewName: ~p~n", [NewName]),
+io:fwrite("!!!!!!!!!!!! Copied1: ~p~n", [Copied1]),
+
 	    case utils:ends_with(ObjectKey, <<"/">>) of
 		true ->
 		    %% Values are the following:
@@ -183,7 +190,7 @@ move(Req0, State) ->
 		    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
 		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end,
-	    Result = [element(3, I) || I <- Copied0],
+	    Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode(Result), Req0),

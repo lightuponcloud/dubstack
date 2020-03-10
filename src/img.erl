@@ -4,7 +4,7 @@
 -module(img).
 -behaviour(gen_server).
 
--export([start_link/1, scale/1]).
+-export([start_link/1, scale/1, get_size/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
@@ -40,7 +40,7 @@ scale(Term) when erlang:is_list(Term) ->
 			demonitor_port(Port),
 			Reply;
 		    {'EXIT', Port, _} -> erlang:error(badarg)
-		after 5000 ->
+		after 7000 ->
 		    demonitor_port(Port),
 		    {error, timeout}
 		end;
@@ -51,6 +51,33 @@ scale(Term) when erlang:is_list(Term) ->
 	{error, no_response}
     end.
 
+
+-spec get_size(binary()) -> tuple().
+
+get_size(ImageData) when erlang:is_binary(ImageData) ->
+    Tag = erlang:term_to_binary(self()),
+    %% TODO: to use a random port number
+    Port = whereis(img_port_0),
+    Data = erlang:term_to_binary([{from, ImageData}, {tag, Tag}, {just_get_size, true}]),
+    try
+	case port_command(Port, Data) of
+	    true ->
+		receive
+		    {Port, Reply} ->
+			demonitor_port(Port),
+			Reply;
+		    {'EXIT', Port, _} -> erlang:error(badarg)
+		after 7000 ->
+		    demonitor_port(Port),
+		    {error, timeout}
+		end;
+	    false -> erlang:error(badarg)
+	end
+    catch _:badarg ->
+	demonitor_port(Port),
+	{error, no_response}
+    end.
+    
 
 -spec start_port(pos_integer()) -> {port() | undefined, integer() | undefined}.
 

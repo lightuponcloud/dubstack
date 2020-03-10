@@ -115,7 +115,9 @@ forbidden(Req0, User) ->
 		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
 		User#user.groups),
 	    case UserBelongsToGroup of
-		false -> js_handler:forbidden(Req0, 37);
+		false -> 
+		    PUser = admin_users_handler:user_to_proplist(User),
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
 		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
 	    end;
 	false -> js_handler:forbidden(Req0, 7)

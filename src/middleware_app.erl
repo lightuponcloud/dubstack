@@ -51,8 +51,7 @@ start(_Type, _Args) ->
 	[{port, Settings#general_settings.http_listen_port},
 	 {max_connections, infinity}],
 	#{env => #{
-	    dispatch => Dispatch,
-	    idle_timeout => 43200000 %% Time in ms with no data received before Cowboy closes the connection.
+	    dispatch => Dispatch
 	}}),
     img:start_link(0),
     middleware_sup:start_link().

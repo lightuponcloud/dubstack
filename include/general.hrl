@@ -27,19 +27,20 @@
     csrf_cookie_name => atom(),
     root_path => string(),
     static_root => string(),
-    http_listen_port -> integer(),
+    listen_port => integer(),
+    locale => string()
 }.
 
 -record(general_settings, {
-    brand_name="Xentime"::string(),
-    admin_email="support@xentime.com"::string(),
-    domain="xentime.com"::string(),
+    brand_name="Demo"::string(),
+    admin_email="sales@lightupon.cloud"::string(),
+    domain="127.0.0.1"::string(),
     session_cookie_name=midsessionid::atom(),
     csrf_cookie_name=midcsrftoken::atom(),
     root_path="/riak/"::string(),
     static_root="/riak-media/"::string(),
-    http_listen_port=8081
+    http_listen_port=8081,
+    locale="uk"
 }).
 
 -define(DEFAULT_LANGUAGE_TAG, "en").
-

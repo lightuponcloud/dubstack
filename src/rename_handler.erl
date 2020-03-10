@@ -471,20 +471,22 @@ is_authorized(Req0, State) ->
 %% Checks if user has access
 %% ( called after 'is_authorized()' )
 %%
-forbidden(Req0, State) ->
+forbidden(Req0, User) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case utils:is_valid_bucket_id(BucketId, State#user.tenant_id) of
+    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
 	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, State#user.tenant_id, Group#group.id) end,
-		State#user.groups),
+		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+		User#user.groups),
 	    case UserBelongsToGroup of
-		false -> js_handler:forbidden(Req0, 37);
-		true -> {false, Req0, [{user, State}, {bucket_id, BucketId}]}
+		false ->
+		    PUser = admin_users_handler:user_to_proplist(User),
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
+		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
 	    end;
 	false -> js_handler:forbidden(Req0, 7)
     end.

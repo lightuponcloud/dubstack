@@ -189,3 +189,6 @@
 %%
 -define(MAXIMUM_TENANT_NAME, 26).
 -define(MAXIMUM_GROUP_NAME, 25).
+
+-define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096). %% maximum image size to try to scale
+

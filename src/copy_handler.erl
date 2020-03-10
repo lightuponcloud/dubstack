@@ -537,7 +537,7 @@ copy(Req0, State) ->
 	    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
 	    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
     end,
-    Result = [element(3, I) || I <- Copied0],
+    Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
     Req1 = cowboy_req:reply(200, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode(Result), Req0),
@@ -610,7 +610,7 @@ copy_forbidden(Req0, User) ->
 				]}
 		    end
 	    end;
-	false -> js_handler:forbidden(Req0, 27)
+	false -> js_handler:forbidden(Req0, 27, User#user.groups)
     end.
 
 %%

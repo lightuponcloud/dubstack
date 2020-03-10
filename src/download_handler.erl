@@ -63,10 +63,10 @@ validate_request(BucketId, Metadata0) ->
 	    {OldBucketId, RealPath} = real_path(BucketId, Metadata0),
 
 	    ContentType = proplists:get_value(content_type, Metadata0),
-	    Bytes = erlang:list_to_binary(proplists:get_value("x-amz-meta-bytes", Metadata0)),
+	    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
 	    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),
 	    OrigName1 = utils:unhex(OrigName0),
-	    {OldBucketId, RealPath, ContentType, OrigName1, Bytes}
+	    {OldBucketId, RealPath, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
     end.
 
 %%
@@ -78,7 +78,7 @@ validate_request(BucketId, Metadata0) ->
 check_privileges(Req0) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
-	undefined ->
+	undefined -> 
 	    Settings = #general_settings{},
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
@@ -87,7 +87,7 @@ check_privileges(Req0) ->
 		{error, Code} -> {config_error, Code};
 		User -> User
 	    end;
-	Token ->
+	Token -> 
 	    case login_handler:check_token(Token) of
 		not_found -> {error, 28};
 		expired -> {error, 38};
@@ -98,18 +98,6 @@ check_privileges(Req0) ->
 %%
 %% Receives stream from httpc and passes it to cowboy
 %%
-receive_streamed_body(Req0, RequestId) ->
-    receive
-	{http, {RequestId, stream, BinBodyPart}} ->
-	    cowboy_req:stream_body(BinBodyPart, nofin, Req0),
-	    receive_streamed_body(Req0, RequestId);
-	{http, {RequestId, stream_end, _Headers}} ->
-	    cowboy_req:stream_body(<<>>, fin, Req0);
-	{http, Msg} ->
-	    ?ERROR("[download_handler] error receiving stream: ~p", [Msg]),
-	    cowboy_req:stream_body(<<>>, fin, Req0)
-    end.
-
 receive_streamed_body(Req0, RequestId, Pid) ->
     httpc:stream_next(Pid),
     receive
@@ -146,6 +134,7 @@ validate_range(Req0) ->
 
 
 init(Req0, Opts) ->
+    cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
     case check_privileges(Req0) of
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
@@ -193,15 +182,20 @@ init(Req0, Opts) ->
 			    _ -> maps:put(<<"range">>, Range, Headers0)
 			end,
 		    Req1 = cowboy_req:stream_reply(200, Headers1, Req0),
-		    {ok, RequestId} = riak_api:get_object(OldBucketId, RealPath, stream),
-		    receive
-			{http, {RequestId, stream_start, _Headers}} ->
-			    receive_streamed_body(Req1, RequestId);
-			{http, {RequestId, stream_start, _Headers, Pid}}  ->
-			    receive_streamed_body(Req1, RequestId, Pid);
-			{http, Msg} ->
-			    ?ERROR("[download_handler] stream error: ~p", [Msg])
-		    end,
-		    {ok, Req1, Opts}
+		    case riak_api:get_object(OldBucketId, RealPath, stream) of
+			not_found ->
+        		    Req1 = cowboy_req:reply(404, #{
+            			<<"content-type">> => <<"text/html">>
+        		    }, <<"404: Not found">>, Req0),
+			    {ok, Req1, []};
+			{ok, RequestId} ->
+			    receive
+				{http, {RequestId, stream_start, _Headers, Pid}}  ->
+				    receive_streamed_body(Req1, RequestId, Pid);
+				{http, Msg} ->
+				    ?ERROR("[download_handler] stream error: ~p", [Msg])
+			    end,
+			    {ok, Req1, Opts}
+		    end
 	    end
     end.

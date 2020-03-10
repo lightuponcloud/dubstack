@@ -32,7 +32,11 @@ prepare_object_record(Record0, DeletedObjects) ->
 	end,
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
     UploadTimestamp1 = calendar:datetime_to_gregorian_seconds(UploadTimestamp0) - 62167219200,
-    Bytes = utils:to_integer(proplists:get_value("x-amz-meta-bytes", Metadata)),
+    Bytes =
+	case proplists:get_value("x-amz-meta-bytes", Metadata) of
+	    undefined -> 0;  %% It might be undefined in case of corrupted metadata
+	    B -> utils:to_integer(B)
+	end,
     ContentType = proplists:get_value(content_type, Metadata, 0),
     Etag = proplists:get_value(etag, Metadata, ""),
     Md5 = string:strip(Etag, both, $"),

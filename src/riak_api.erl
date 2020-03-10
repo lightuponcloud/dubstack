@@ -237,7 +237,7 @@ fetch_object(MethodName, BucketId, Key, Options0)
 	    undefined ->
 		s3_request(MethodName, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config);
 	    true ->
-		Options1 = [{socket_opts, [{recbuf, 16#FFFFFF}, {sndbuf, 16#1FFFFFF}]},
+		Options1 = [{socket_opts, [{recbuf, 16#FFFFFF}, {sndbuf, 16#1FFFFFF}, {active, once}]},
 			    {body_format, binary},
 			    {sync, false},
 			    {stream, {self, once}}],
@@ -843,7 +843,7 @@ request_httpc(URL, Method, Hdrs, <<>>, Config, Options)
 	end,
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method, {URL, HdrsStr},
-	[{timeout, Timeout}], Options));
+	[{timeout, Timeout}, {connect_timeout, 5000}, {version, "HTTP/1.0"}], Options));
 
 request_httpc(URL, Method, Hdrs0, Body, Config, Options) ->
     Hdrs1 =
@@ -859,7 +859,7 @@ request_httpc(URL, Method, Hdrs0, Body, Config, Options) ->
     maybe_set_proxy(Config),
     response_httpc(httpc:request(Method,
                                  {URL, Hdrs3, ContentType, Body},
-                                 [{timeout, Timeout}], Options)).
+                                 [{timeout, Timeout}, {connect_timeout, 5000}], Options)).
 
 response_httpc({ok, {{_HTTPVer, Status, StatusLine}, Headers, Body}}) ->
     case Status of

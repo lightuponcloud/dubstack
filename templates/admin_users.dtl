@@ -7,6 +7,10 @@
 <script src="{{ static_root }}ancillary.js"></script>
 <script language="JavaScript">
 
+function gettext(msgid) {
+  return msgid;
+}
+
 function parse_user_form_error(data){
     if(data&&data.hasOwnProperty('errors')){
 	if(typeof data['errors'] == 'string'){
@@ -164,13 +168,13 @@ function edit_user(e, user_id){
 <div class="row"><label for="id_name">Full Name:</label><div><input name="name" id="id_name" value="'+name+'" class="custom-input-194x31"/> \
 <div style="margin-top:14px;"><span class="err" id="id_name_error"></span></div></div></div> \
 <div class="row"><label for="id_tel">Telephone:</label><div><input name="tel" id="id_tel" value="'+tel+'" class="custom-input-194x31" autofocus/></div></div> \
-<div class="row"><label for="id_groups">Groups:</label><div id="id_groups">'+groups_input+' \
+<div class="row"><label for="id_groups">Groups:</label><div id="id_groups"><input type="checkbox" id="id-select-all-groups"/> <b>'+gettext("Select all")+'</b><br/>'+groups_input+' \
 <div style="margin-top:14px;"><span class="err" id="id_groups_errors"></span></div></div></div> \
-<input type="checkbox" id="id_enabled" name="enabled" '+(enabled=="true"?"checked=checked":"")+'> Enabled<br/> \
-<br/><input type="checkbox" id="id_staff" name="staff" '+(staff=="true"?"checked=checked":"")+'> Staff<br/> \
+<input type="checkbox" id="id_enabled" name="enabled" '+(enabled=="true"?"checked=checked":"")+'> '+gettext("Enabled")+'<br/> \
+<br/><input type="checkbox" id="id_staff" name="staff" '+(staff=="true"?"checked=checked":"")+'> '+gettext("Staff")+'<br/> \
 <div><div style="margin-top:14px;"><span class="err" id="id_errors"></span></div> \
 <div class="row"><label for="submit_change"><span id="id-dialog-loading-message-text"></span></label><div> \
-<span class="pushbutton"><button type="button" class="form-short-small-button2" id="submit_change">Save</button></span> \
+<span class="pushbutton"><button type="button" class="form-short-small-button2" id="submit_change">'+gettext("Save")+'</button></span> \
 </div></div></div>';
 
  var title="New User";
@@ -213,6 +217,10 @@ function edit_user(e, user_id){
  $('#id_login').keyup(prevent_submit);
  $('#id_name').keydown(prevent_submit);
  $('#id_name').keyup(prevent_submit);
+
+ $('#id-select-all-groups').unbind().click(function(){
+   $('input[name^=group_]:checkbox').not(this).prop('checked', this.checked);
+ });
 
  $('#submit_change').unbind().click(function(){
     var tenant_id;

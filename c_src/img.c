@@ -31,6 +31,7 @@ typedef struct transform {
     unsigned long scale_height;
     unsigned char *tag; // PID
     int crop; // Crop image
+    int just_get_size; // Just return width and height of provided image
     size_t tag_size;
 } transform_se;
 
@@ -77,6 +78,7 @@ static int encode_error(transform_se *se, ei_x_buff *result, char *atom_name) {
 */
 int process_image(transform_se *se, ei_x_buff *result){
   int encode_stat = 0;
+  size_t width, height;
   if(se->from_size == 0){
     encode_stat = encode_error(se, result, "no_src_img_error");
     return encode_stat;
@@ -91,9 +93,26 @@ int process_image(transform_se *se, ei_x_buff *result){
   if (status == MagickFalse){
     encode_stat = encode_error(se, result, "blob_src_imagemagick_error");
     (void)DestroyMagickWand(magick_wand);
+    free(se->from);
+    free(se->tag);
     return encode_stat;
   }
-  if(se->watermark_size > 0){
+  if(se->just_get_size == 1){
+    width = MagickGetImageWidth(magick_wand);
+    height = MagickGetImageHeight(magick_wand);
+    if (ei_x_new_with_version(result) || ei_x_encode_tuple_header(result, 2)
+	|| ei_x_encode_binary(result, se->tag, se->tag_size)
+	|| ei_x_encode_tuple_header(result, 2)
+	|| ei_x_encode_ulong(result, width)
+	|| ei_x_encode_ulong(result, height))
+      encode_stat = encode_error(se, result, "size_encoding_error");
+
+    (void)DestroyMagickWand(magick_wand);
+    MagickWandTerminus();
+    free(se->from);
+    free(se->tag);
+    return encode_stat;
+  } else if(se->watermark_size > 0){
     // apply watermark
     MagickWand *magick_wand_watermark;
 
@@ -103,6 +122,8 @@ int process_image(transform_se *se, ei_x_buff *result){
       encode_stat = encode_error(se, result, "watermark_blob_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
+      free(se->from);
+      free(se->tag);
       return encode_stat;
     }
 
@@ -111,6 +132,8 @@ int process_image(transform_se *se, ei_x_buff *result){
       encode_stat = encode_error(se, result, "alpha_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
+      free(se->from);
+      free(se->tag);
       return encode_stat;
     }
 
@@ -119,40 +142,87 @@ int process_image(transform_se *se, ei_x_buff *result){
       encode_stat = encode_error(se, result, "composite_imagemagick_error");
       (void)DestroyMagickWand(magick_wand);
       (void)DestroyMagickWand(magick_wand_watermark);
+      free(se->from);
+      free(se->tag);
       return encode_stat;
     }
     (void)DestroyMagickWand(magick_wand_watermark);
   } else {
     if(se->scale_width > 0 && se->scale_height > 0){
       // resize
-      size_t width, height, new_width, new_height;
+      size_t new_width, new_height;
       width = MagickGetImageWidth(magick_wand);
       height = MagickGetImageHeight(magick_wand);
 
-      double src_ratio = (double)width / height;
-      double cal_ratio = (double)se->scale_width / se->scale_height;
+      MagickSetImageFormat(magick_wand, "JPEG");
+      double src_ratio = (double)width / (double)height;
+      double cal_ratio = (double)se->scale_width / (double)se->scale_height;
+
       if(cal_ratio > src_ratio){
 	status = MagickResizeImage(magick_wand, se->scale_width, (se->scale_width * height / width), TriangleFilter, 1.0);
+        if (status == MagickFalse){
+          encode_stat = encode_error(se, result, "imagemagick_resize_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
         if(se->crop == 1){
           width = MagickGetImageWidth(magick_wand);
           height = MagickGetImageHeight(magick_wand);
 
 	  new_height = ((height + se->scale_height)/2) - ((height - se->scale_height)/2);
-	  MagickCropImage(magick_wand, width, new_height, 0, (height - se->scale_height)/2);
+
+	  status = MagickCropImage(magick_wand, width, new_height, 0, (height - se->scale_height)/2);
+          if (status == MagickFalse){
+            encode_stat = encode_error(se, result, "imagemagick_crop_error");
+            (void)DestroyMagickWand(magick_wand);
+            free(se->from);
+            free(se->tag);
+            return encode_stat;
+          }
         }
       } else if(cal_ratio < src_ratio){
 	status = MagickResizeImage(magick_wand, se->scale_height * width / height, se->scale_height, TriangleFilter, 1.0);
+        if (status == MagickFalse){
+          encode_stat = encode_error(se, result, "imagemagick_resize_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
         if(se->crop == 1){
           width = MagickGetImageWidth(magick_wand);
           height = MagickGetImageHeight(magick_wand);
 
 	  new_width = ((width + se->scale_width)/2) - ((width -  se->scale_width)/2);
-	  MagickCropImage(magick_wand, new_width, height, (width -  se->scale_width)/2, 0);
+	  status = MagickCropImage(magick_wand, new_width, height, (width -  se->scale_width)/2, 0);
+          if (status == MagickFalse){
+            encode_stat = encode_error(se, result, "imagemagick_crop_error");
+            (void)DestroyMagickWand(magick_wand);
+            free(se->from);
+            free(se->tag);
+            return encode_stat;
+          }
 	}
       } else {
 	status = MagickResizeImage(magick_wand, se->scale_width, se->scale_height, TriangleFilter, 1.0);
+        if (status == MagickFalse){
+          encode_stat = encode_error(se, result, "imagemagick_resize_error");
+          (void)DestroyMagickWand(magick_wand);
+          free(se->from);
+          free(se->tag);
+          return encode_stat;
+        }
       }
       status = MagickSetImageCompressionQuality(magick_wand, 95);
+      if (status == MagickFalse){
+        encode_stat = encode_error(se, result, "imagemagick_compress_error");
+        (void)DestroyMagickWand(magick_wand);
+        free(se->from);
+        free(se->tag);
+        return encode_stat;
+      }
     }
   }
 
@@ -205,6 +275,7 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
   se->scale_width = 0;
   se->scale_height = 0;
   se->crop = 1;
+  se->just_get_size = 0;
 
   int i;
   for (i = 0; i < arity; i++){
@@ -268,6 +339,8 @@ int parse_transform(unsigned char * buf, int offset, int arity, transform_se *se
 	(void)ei_decode_ulong((const char *) buf, &offset, &(se->scale_height));
     } else if(strncmp("crop", last_atom, strlen(last_atom)) == 0){
 	(void)ei_decode_boolean((const char *) buf, &offset, &(se->crop));
+    } else if(strncmp("just_get_size", last_atom, strlen(last_atom)) == 0){
+	(void)ei_decode_boolean((const char *) buf, &offset, &(se->just_get_size));
     } else if(strncmp("tag", last_atom, strlen(last_atom)) == 0){
 	(void)ei_get_type((char *) buf, &offset, &type, (int *) &(se->tag_size));
 	if(ERL_BINARY_EXT != type){
