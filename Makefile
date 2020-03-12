@@ -3,7 +3,7 @@ PROJECT_DESCRIPTION = Rest interface for Riak CS
 PROJECT_VERSION = 0.1.0
 
 DEPS = cowboy erlydtl jsx ux lager
-LOCAL_DEPS = inets xmerl pbkdf2
+LOCAL_DEPS = inets xmerl
 DEP_PLUGINS = cowboy
 TEST_DEPS = meck
 

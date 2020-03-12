@@ -62,8 +62,8 @@ make
 In order to use specific version of erlang, you should set environment variables 
 *C_INCLUDE_PATH* and *LIBRARY_PATH*. For example:
 ```sh
-export C_INCLUDE_PATH=/usr/lib/erlang/usr/include
-export LIBRARY_PATH=/usr/lib/erlang/usr/lib
+export C_INCLUDE_PATH=/usr/lib/erlang/usr/include:/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6
+export LIBRARY_PATH=/usr/lib/erlang/usr/lib:/usr/include/ImageMagick-6
 ```
 
 #### 3. Edit configuration files
