@@ -91,13 +91,6 @@ move(Req0, State) ->
 	    NewName = element(2, RequestedKey),
 	    Copied1 = copy_handler:copy_objects(SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0,
 						ObjectKey, NewName, DstIndexContent, User),
-io:fwrite("!!!!!!!!!!!! DstBucketId: ~p~n", [DstBucketId]),
-io:fwrite("!!!!!!!!!!!! SrcPrefix0: ~p~n", [SrcPrefix0]),
-io:fwrite("!!!!!!!!!!!! DstPrefix0: ~p~n", [DstPrefix0]),
-io:fwrite("!!!!!!!!!!!! ObjectKey: ~p~n", [ObjectKey]),
-io:fwrite("!!!!!!!!!!!! NewName: ~p~n", [NewName]),
-io:fwrite("!!!!!!!!!!!! Copied1: ~p~n", [Copied1]),
-
 	    case utils:ends_with(ObjectKey, <<"/">>) of
 		true ->
 		    %% Values are the following:
