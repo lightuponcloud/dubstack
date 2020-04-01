@@ -226,6 +226,10 @@ User Management Interface
 
 ![User Record Editing Dialog](doc/admin_user_edit.png)
 
+# VM image
+
+The following image has Riak CS and the middleware installed, so you can try it out.
+![link ( 6.1GB )](https://lightupon.cloud/media/riak.qcow2)
 
 # Contributing
 
