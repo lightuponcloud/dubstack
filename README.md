@@ -1,6 +1,6 @@
 # DubStack
 
-This middleware is used to synchronize Riak CS contents with filesystem.
+This middleware is used to synchronize Riak CS contents with filesystem. Also it provides web UI for browsing files.
 
 ![Screenshot](doc/dubstack.png)
 
@@ -10,7 +10,7 @@ This middleware is used to synchronize Riak CS contents with filesystem.
 
     This is a server side of the file synchronization software.
     It allows not only file **upload**/**download**, but also file **lock**/**unlock**,
-    **delete**/**undelete** and restore previous versions.
+    **delete**/**undelete**, but to restore previous versions.
 
 2. **Simple authentication**
 
@@ -28,6 +28,7 @@ This middleware is used to synchronize Riak CS contents with filesystem.
     You can manage objects, users, their groups and tenants using browser or Android App.
 
 5. **Readable URLs**
+
     It transliterates UTF8 object names. For example pseudo-directory
     ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
     file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
@@ -65,6 +66,9 @@ In order to use specific version of erlang, you should set environment variables
 export C_INCLUDE_PATH=/usr/lib/erlang/usr/include:/usr/include/ImageMagick-6:/usr/include/x86_64-linux-gnu/ImageMagick-6
 export LIBRARY_PATH=/usr/lib/erlang/usr/lib:/usr/include/ImageMagick-6
 ```
+
+The following imagemagic packages are required:
+imagemagick-6.q16 libmagickcore-6-arch-config libmagickwand-6.q16-dev
 
 #### 3. Edit configuration files
 
@@ -183,7 +187,7 @@ Erlang applications are much easier to maintain.
 
 Typical setup:
 
-![Typical web application on Python](doc/typical_diagram.png)
+![Typical web application on Python](doc/ordinary_diagram.png)
 
 Erlang web application:
 
@@ -225,12 +229,6 @@ User Management Interface
 ![User Management](doc/admin_tenants.png)
 
 ![User Record Editing Dialog](doc/admin_user_edit.png)
-
-# VM image
-
-The following image has Riak CS and the middleware installed, so you can try it out.
-
-[link ( 6.1GB )](https://lightupon.cloud/media/riak.qcow2)
 
 # Contributing
 

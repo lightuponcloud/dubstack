@@ -8,7 +8,7 @@
          content_types_accepted/2,  forbidden/2, resource_exists/2,
 	 previously_existed/2]).
 -export([add_record/3, strip_hidden_part/1, fetch_full_object_history/2,
-	 validate_timestamp/4, validate_object_key/4, validate_post/3, handle_post/2]).
+	 validate_object_key/4, validate_post/3, handle_post/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -127,7 +127,7 @@ fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
     RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
     RiakResponse = riak_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, Marker0}]),
     case RiakResponse of
-	not_found -> [];
+	not_found -> [];  %% bucket not found
 	_ ->
 	    ObjectList1 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
 	    Marker1 = proplists:get_value(next_marker, RiakResponse),
@@ -207,41 +207,34 @@ log_restore_action(State) ->
     ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary},
     action_log:add_record(BucketId, Prefix, ActionLogRecord1).
 
-validate_timestamp(undefined, _BucketId, _Prefix, _RealKey) -> {error, 44};
-validate_timestamp(null, _BucketId, _Prefix, _RealKey) -> {error, 44};
-validate_timestamp(<<>>, _BucketId, _Prefix, _RealKey) -> {error, 44};
-validate_timestamp(Timestamp0, BucketId, Prefix, RealKey)
-	when erlang:is_binary(Timestamp0), erlang:is_list(RealKey),
-	     erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    Timestamp1 = erlang:binary_to_list(Timestamp0),
-    try erlang:list_to_integer(Timestamp1) of
-        _Int ->
-	    case Timestamp1 =:= RealKey of
-		true -> {error, 45};
-		false ->
-		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, Timestamp1),
-		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
-			not_found -> {error, 44};
-			Meta -> Meta
-		    end
-	    end
-    catch
-        error:badarg -> {error, 44}
+%%
+%% Returns true if a casual version exists.
+%%
+version_exists(BucketId, GUID, Version) when erlang:is_list(Version) ->
+    case indexing:get_object_index(BucketId, GUID) of
+	[] -> false;
+	List0 ->
+	    DVVs = lists:map(
+		fun(I) ->
+		    Attrs = element(2, I),
+		    proplists:get_value(dot, Attrs)
+		end, List0),
+	    lists:member(Version, DVVs)
     end.
 
 %%
 %% Check if object exists by provided prefix and object key.
 %% Also chek if real object exist for specified date.
 %%
-validate_object_key(_BucketId, _Prefix, undefined, _Timestamp) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, null, _Timestamp) -> {error, 17};
-validate_object_key(_BucketId, _Prefix, <<>>, _Timestamp) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, undefined, _Version) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, null, _Version) -> {error, 17};
+validate_object_key(_BucketId, _Prefix, <<>>, _Version) -> {error, 17};
 validate_object_key(_BucketId, _Prefix, _ObjectKey, undefined) -> {error, 17};
 validate_object_key(_BucketId, _Prefix, _ObjectKey, null) -> {error, 17};
 validate_object_key(_BucketId, _Prefix, _ObjectKey, <<>>) -> {error, 17};
-validate_object_key(BucketId, Prefix, ObjectKey, Timestamp)
+validate_object_key(BucketId, Prefix, ObjectKey, Version)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	     erlang:is_binary(ObjectKey), erlang:is_binary(Timestamp) ->
+	     erlang:is_binary(ObjectKey), erlang:is_list(Version) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> {error, 17};
@@ -250,11 +243,17 @@ validate_object_key(BucketId, Prefix, ObjectKey, Timestamp)
 	    case IsLocked of
 		"true" -> {error, 43};
 		_ ->
-		    ModifiedTime0 = proplists:get_value("x-amz-meta-modified-utc", Metadata0),
-		    GUID = proplists:get_value("x-amz-meta-guid", Metadata0),
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-		    case validate_timestamp(Timestamp, BucketId, RealPrefix, ModifiedTime0) of
-			{error, Number} -> {error, Number};
+		    GUID0 = proplists:get_value("x-amz-meta-guid", Metadata0),
+		    %% Old GUID, old bucket id and upload id are needed for 
+		    %% determining URI of the original object, before it was copied
+		    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata0),
+		    GUID1 =
+			case OldGUID =/= undefined andalso OldGUID =/= GUID0 of
+			    true -> OldGUID;
+			    false -> GUID0
+			end,
+		    case version_exists(BucketId, GUID1, Version) of
+			false -> {error, 44};
 			Metadata1 ->
 			    OrigName = proplists:get_value("x-amz-meta-orig-filename", Metadata0),
 			    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
@@ -274,6 +273,9 @@ validate_object_key(BucketId, Prefix, ObjectKey, Timestamp)
 	    end
     end.
 
+%%
+%% Restore previous version of file
+%%
 validate_post(Body, BucketId, Prefix) ->
     case jsx:is_json(Body) of
 	{error, badarg} -> {error, 21};
@@ -281,15 +283,19 @@ validate_post(Body, BucketId, Prefix) ->
 	true ->
 	    FieldValues = jsx:decode(Body),
 	    ObkectKey = proplists:get_value(<<"object_key">>, FieldValues),
-	    Timestamp = proplists:get_value(<<"timestamp">>, FieldValues),
-	    case validate_object_key(BucketId, Prefix, ObkectKey, Timestamp) of
-		{error, Number} -> {error, Number};
-		{Prefix, ObjectKey, Meta} -> {Prefix, ObjectKey, Meta}
+	    Version = proplists:get_value(<<"version">>, FieldValues),
+	    case upload_handler:validate_version(Version) of
+		{error, Number0} -> {error, Number0};
+		DVV ->
+		    case validate_object_key(BucketId, Prefix, ObkectKey, DVV) of
+			{error, Number} -> {error, Number};
+			{Prefix, ObjectKey, Meta} -> {Prefix, ObjectKey, Version, Meta}
+		    end
 	    end
     end.
 
 %%
-%% Restores previous version ob object
+%% Restores previous version of object
 %%
 handle_post(Req0, State0) ->
     BucketId = proplists:get_value(bucket_id, State0),
@@ -297,7 +303,7 @@ handle_post(Req0, State0) ->
     {ok, Body, Req1} = cowboy_req:read_body(Req0),
     case validate_post(Body, BucketId, Prefix) of
 	{error, Number} -> js_handler:bad_request(Req1, Number);
-	{Prefix, ObjectKey0, Meta} ->
+	{Prefix, ObjectKey0, Version, Meta} ->
 	    ObjectKey1 = erlang:binary_to_list(ObjectKey0),
 	    case riak_api:put_object(BucketId, Prefix, ObjectKey1, <<>>,
 				     [{acl, public_read}, {meta, Meta}]) of
@@ -307,7 +313,8 @@ handle_post(Req0, State0) ->
 			lock -> js_handler:too_many(Req0);
     			_ ->
 			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
-			    PrevDate = erlang:list_to_integer(proplists:get_value("modified-utc", Meta)),
+			    [VVTimestamp] = dvvset:values(Version),
+			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
 			    State1 = [{orig_name, OrigName},
 				      {prev_date, utils:format_timestamp(PrevDate)}],
                 	    log_restore_action(State0 ++ State1),
@@ -340,30 +347,30 @@ forbidden(Req0, _State) ->
 resource_exists(Req0, State) ->
     BucketId = erlang:binary_to_list(cowboy_req:binding(bucket_id, Req0)),
     User = proplists:get_value(user, State),
-    UserBelongsToGroup =
-	case User of
-	    undefined -> false;
-	    _ ->
-		Groups = User#user.groups,
-		TenantId = User#user.tenant_id,
-		lists:any(
-		    fun(Group) ->
-			utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id)
-		    end, Groups)
-	end,
-    case UserBelongsToGroup of
+    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    ParsedQs = cowboy_req:parse_qs(Req0),
-	    case list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)) of
-		{error, Number} ->
-		    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
-		    {false, Req1, []};
-		Prefix ->
-		    {true, Req0, [{user, User},
-			  {bucket_id, BucketId},
-			  {prefix, Prefix}]}
+	    UserBelongsToGroup =
+		case utils:is_public_bucket_id(BucketId) of
+		    true -> User#user.staff;  %% only staff user can see the action log of public bucket
+		    false -> lists:any(fun(Group) ->
+				utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+				User#user.groups)
+		end,
+	    case UserBelongsToGroup of
+		false ->{false, Req0, []};
+		true ->
+		    ParsedQs = cowboy_req:parse_qs(Req0),
+		    case list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)) of
+			{error, Number} ->
+			    Req1 = cowboy_req:set_resp_body(jsx:encode([{error, Number}]), Req0),
+			    {false, Req1, []};
+			Prefix ->
+			    {true, Req0, [{user, User},
+				{bucket_id, BucketId},
+				{prefix, Prefix}]}
+		    end
 	    end;
-	false -> {false, Req0, []}
+	false -> js_handler:forbidden(Req0, 7)
     end.
 
 previously_existed(Req0, _State) ->

@@ -20,7 +20,11 @@ init(Req0, _Opts) ->
 	false -> login(Req0, Settings);
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
-	    State = admin_users_handler:user_to_proplist(User) ++ [{token, SessionID0}],
+	    TenantId = User#user.tenant_id,
+	    Bits = [?RIAK_BACKEND_PREFIX, TenantId, ?PUBLIC_BUCKET_SUFFIX],
+	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits, "-", [])),
+	    State = admin_users_handler:user_to_proplist(User)
+		++ [{token, SessionID0}, {public_bucket_id, PublicBucketId}],
 	    first_page(Req0, Settings, State)
     end.
 
@@ -50,24 +54,15 @@ forbidden_response(Req0) ->
     {stop, Req1, []}.
 
 
-validate_post(Req0, Settings) ->
+validate_post(Req0) ->
     %% Same-domain requests should have referer set ( very rarely absent )
     case cowboy_req:header(<<"referer">>, Req0) of
 	undefined -> false;
 	_ ->
 	    {ok, KeyValues, _} = cowboy_req:read_urlencoded_body(Req0),
-	    CSRFCookieName = Settings#general_settings.csrf_cookie_name,
-	    #{CSRFCookieName := CSRFToken0} = cowboy_req:match_cookies(
-		[{Settings#general_settings.csrf_cookie_name, [], undefined}], Req0),
-	    IsCSRFValid =
-		case login_handler:check_csrf_token(CSRFToken0) of
-		    true -> true;
-		    false ->
-			%% Cookie was not set, check CSRF token from body of POST request
-			CSRFToken1 = proplists:get_value(<<"csrf_token">>, KeyValues),
-			login_handler:check_csrf_token(CSRFToken1)
-		end,
-	    case IsCSRFValid of
+	    %% Check CSRF token from body of POST request
+	    CSRFToken0 = proplists:get_value(<<"csrf_token">>, KeyValues),
+	    case login_handler:check_csrf_token(CSRFToken0) of
 		false -> false;
 		true -> {
 			    proplists:get_value(<<"login">>, KeyValues),
@@ -76,78 +71,50 @@ validate_post(Req0, Settings) ->
 	    end
     end.
 
-set_csrf_token(Req0, Settings) ->
-    CSRFCookieName = Settings#general_settings.csrf_cookie_name,
-    #{CSRFCookieName := CSRFToken0} = cowboy_req:match_cookies(
-	[{Settings#general_settings.csrf_cookie_name, [], undefined}], Req0),
-    CSRFToken1 =
-	case CSRFToken0 of
-	    undefined ->
-		login_handler:new_csrf_token();
-	    Token0 ->
-		case login_handler:check_csrf_token(Token0) of
-		    false -> login_handler:new_csrf_token();
-		    true -> Token0
-		end
-	end,
-    %% Set Session ID cookie
-    %% If HTTPS is used, add secure => true
-    CookieDomain = utils:to_binary(Settings#general_settings.domain),
-    {cowboy_req:set_resp_cookie(utils:to_binary(CSRFCookieName), CSRFToken1, Req0,
-	    #{max_age => ?CSRF_TOKEN_EXPIRATION_TIME,
-	      http_only => true,
-	      domain => CookieDomain,
-	      path => <<"/">>}), CSRFToken1}.
-
-
--spec error_response(any(), general_settings) -> any().
+-spec error_response(any(), #general_settings{}) -> any().
 
 error_response(Req0, Settings) ->
-    {Req1, CSRFToken0} = set_csrf_token(Req0, Settings),
+    CSRFToken0 = login_handler:new_csrf_token(),
     {ok, Body} = login_dtl:render([
 	{static_root, Settings#general_settings.static_root},
 	{root_path, Settings#general_settings.root_path},
 	{csrf_token, CSRFToken0},
 	{error, "Incorrect Credentials"}
     ]),
-    Req2 = cowboy_req:reply(200, #{
+    Req1 = cowboy_req:reply(200, #{
 	<<"content-type">> => <<"text/html">>
-    }, Body, Req1),
-    {ok, Req2, []}.
+    }, Body, Req0),
+    {ok, Req1, []}.
 
 
 login(Req0, Settings) ->
     case cowboy_req:method(Req0) of
 	<<"GET">> ->
-	    {Req1, CSRFToken0} = set_csrf_token(Req0, Settings),
+	    CSRFToken0 = login_handler:new_csrf_token(),
 	    {ok, Body} = login_dtl:render([
 		{static_root, Settings#general_settings.static_root},
 		{root_path, Settings#general_settings.root_path},
 		{csrf_token, CSRFToken0}
 	    ]),
-	    Req2 = cowboy_req:reply(200, #{
+	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>
-	    }, Body, Req1),
-	    {ok, Req2, []};
+	    }, Body, Req0),
+	    {ok, Req1, []};
 	<<"POST">> ->
-	    case validate_post(Req0, Settings) of
+	    case validate_post(Req0) of
 		false -> forbidden_response(Req0);
 		{Login, Password} ->
 		    case login_handler:check_credentials(Login, Password) of
 			false -> error_response(Req0, Settings);
 			not_found -> error_response(Req0, Settings);
 			User ->
-			    UUID4 = login_handler:new_token(Req0, User#user.id, User#user.tenant_id),
+			    UUID4 = login_handler:new_token(User#user.id, User#user.tenant_id),
 			    State = admin_users_handler:user_to_proplist(User) ++ [{token, UUID4}],
 			    %% Set Session ID cookie
 			    %% If HTTPS is used, add secure => true
-			    CookieDomain = utils:to_binary(Settings#general_settings.domain),
 			    SessionCookieName = utils:to_binary(Settings#general_settings.session_cookie_name),
 			    Req1 = cowboy_req:set_resp_cookie(SessionCookieName,
-				UUID4, Req0, #{max_age => ?SESSION_EXPIRATION_TIME,
-					       http_only => true,
-					       domain => CookieDomain,
-					       path => <<"/">>}),
+				UUID4, Req0, #{max_age => ?SESSION_EXPIRATION_TIME}),
 			    first_page(Req1, Settings, State)
 		    end
 	    end

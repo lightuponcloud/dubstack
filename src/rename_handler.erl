@@ -350,7 +350,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
 
     {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = riak_api:pick_object_key(
-	    BucketId, Prefix0, DstObjectName0, 0, undefined, UserName, IndexContent),
+	    BucketId, Prefix0, DstObjectName0, undefined, UserName, IndexContent),
     %% Check if target object exists and if it locked.
     %% If not, check if source object is locked.
     {IsLocked, LockUserId} =
@@ -464,8 +464,11 @@ allowed_methods(Req, State) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, State) ->
-    list_handler:is_authorized(Req0, State).
+is_authorized(Req0, _State) ->
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	Token -> login_handler:get_user_or_error(Req0, Token)
+    end.
 
 %%
 %% Checks if user has access

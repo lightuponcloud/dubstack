@@ -56,28 +56,28 @@ content_types_accepted(Req, State) ->
 to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     Prefix0 = proplists:get_value(prefix, State),
-    %% TODO: replace UTC time with DVV
-    {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:universal_time(),
-    UTCTimestamp = calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}}) - 62167219200,
-    User = admin_users_handler:user_to_proplist(proplists:get_value(user, State)),
-    Groups = proplists:get_value(groups, User),
+    Groups =
+	case proplists:get_value(user, State) of
+	    undefined -> [];
+	    User0 ->
+		User1 = admin_users_handler:user_to_proplist(User0),
+		proplists:get_value(groups, User1)
+	end,
     case riak_api:head_bucket(BucketId) of
 	not_found ->
 	    %% Bucket is valid, but it do not exist yet
 	    riak_api:create_bucket(BucketId),
-	    {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp}, {groups, Groups}]), Req0, []};
+	    {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 	_ ->
 	    Prefix1 = prefix_lowercase(Prefix0),
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
-		not_found -> {jsx:encode([{list, []}, {dirs, []}, {server_utc, UTCTimestamp},
-			    		  {groups, Groups}]), Req0, []};
+		not_found -> {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
 		    {jsx:encode([
 			{list, proplists:get_value(list, List0)},
 			{dirs, proplists:get_value(dirs, List0)},
-			{server_utc, UTCTimestamp},
 			{groups, Groups}
 		    ]), Req0, []}
 	    end
@@ -85,18 +85,13 @@ to_json(Req0, State) ->
 
 %%
 %% Checks if provided token is correct.
+%% Extracts token from request headers and looks it up in "security" bucket.
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
-	undefined -> js_handler:unauthorized(Req0, 28);
-	Token ->
-	    case login_handler:check_token(Token) of
-		not_found -> js_handler:unauthorized(Req0, 28);
-		expired -> js_handler:unauthorized(Req0, 28);
-		User -> {true, Req0, User}
-	    end
+	undefined -> {true, Req0, undefined};
+	Token -> login_handler:get_user_or_error(Req0, Token)
     end.
 
 %%
@@ -109,16 +104,30 @@ forbidden(Req0, User) ->
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
+    TenantId =
+	case User of
+	    undefined -> undefined;
+	    _ -> User#user.tenant_id
+	end,
+    case utils:is_valid_bucket_id(BucketId, TenantId) of
 	true ->
-	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-		User#user.groups),
+	    UserBelongsToGroup =
+		case User of
+		    undefined -> undefined;
+		    _ -> lists:any(
+			    fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
+			    User#user.groups)
+		end,
 	    case UserBelongsToGroup of
-		false -> 
-		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
-		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
+		false ->
+		    case utils:is_public_bucket_id(BucketId) of
+			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
+			false ->
+			    PUser = admin_users_handler:user_to_proplist(User),
+			    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser))
+		    end;
+		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
+		undefined -> {false, Req0, [{bucket_id, BucketId}]}
 	    end;
 	false -> js_handler:forbidden(Req0, 7)
     end.
@@ -146,10 +155,11 @@ previously_existed(Req0, _State) ->
 parse_object_record(Metadata, Options) ->
     OptionMetaMap = [
 	{orig_name, "x-amz-meta-orig-filename", "orig-filename"},
-	{last_modified_utc, "x-amz-meta-modified-utc", "modified-utc"},
+	{version, "x-amz-meta-version", "version"},
 	{upload_time, "x-amz-meta-upload-time", "upload-time"},
 	{bytes, "x-amz-meta-bytes", "bytes"},
 	{guid, "x-amz-meta-guid", "guid"},
+	{upload_id, "x-amz-meta-upload-id", "upload-id"},
 	{copy_from_guid, "x-amz-meta-copy-from-guid", "copy-from-guid"},
 	{copy_from_bucket_id, "x-amz-meta-copy-from-bucket-id", "copy-from-bucket-id"},
 	{is_deleted, "x-amz-meta-is-deleted", "is-deleted"},
@@ -224,42 +234,45 @@ validate_patch(Body, State) ->
 %% PATCH request is used to mark objects as locked/unlocked/not deleted.
 %%
 patch_resource(Req0, State) ->
-    {ok, Body, Req1} = cowboy_req:read_body(Req0),
-    case validate_patch(Body, State) of
-	{error, Number} -> js_handler:bad_request(Req1, Number);
-	{Prefix, ObjectsList, Operation} ->
-	    User = proplists:get_value(user, State),
-	    BucketId = proplists:get_value(bucket_id, State),
-	    case Operation of
-		lock ->
-		    UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, true) || K <- ObjectsList],
-		    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
-		    Req2 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req1),
-		    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
-				   || I <- UpdatedOnes1],
-		    case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
-			lock -> js_handler:too_many(Req0);
-			_ -> {true, Req2, []}
-		    end;
-		unlock ->
-		    UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, false) || K <- ObjectsList],
-		    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
-		    Req2 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req1),
-		    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
-				   || I <- UpdatedOnes1],
-		    case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
-			lock -> js_handler:too_many(Req0);
-			_ -> {true, Req2, []}
-		    end;
-		undelete ->
-		    ModifiedKeys0 = [undelete(BucketId, Prefix, K) || K <- ObjectsList],
-		    ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
-				     || I <- ModifiedKeys0, I =/= not_found],
-		    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
-			lock -> js_handler:too_many(Req0);
-			_ -> {true, Req1, []}
-		    end
+    case proplists:get_value(user, State) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	User ->
+	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
+	    case validate_patch(Body, State) of
+		{error, Number} -> js_handler:bad_request(Req1, Number);
+		{Prefix, ObjectsList, Operation} ->
+		    BucketId = proplists:get_value(bucket_id, State),
+		    patch_operation(Req0, Operation, BucketId, Prefix, User, ObjectsList)
 	    end
+    end.
+
+patch_operation(Req0, lock, BucketId, Prefix, User, ObjectsList) ->
+    UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, true) || K <- ObjectsList],
+    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
+    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req0),
+    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
+		   || I <- UpdatedOnes1],
+    case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
+	lock -> js_handler:too_many(Req1);
+	_ -> {true, Req1, []}
+    end;
+patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
+    UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, false) || K <- ObjectsList],
+    UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
+    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req0),
+    UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
+		   || I <- UpdatedOnes1],
+    case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
+	lock -> js_handler:too_many(Req1);
+	_ -> {true, Req1, []}
+    end;
+patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
+    ModifiedKeys0 = [undelete(BucketId, Prefix, K) || K <- ObjectsList],
+    ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
+		     || I <- ModifiedKeys0, I =/= not_found],
+    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
+	lock -> js_handler:too_many(Req0);
+	_ -> {true, Req0, []}
     end.
 
 %% TODO: test this
@@ -281,7 +294,6 @@ undelete(BucketId, Prefix, ObjectKey) ->
 		_ -> error
 	    end
     end.
-
 
 %%
 %% Update lock on object by replacing it with new metadata.
@@ -523,14 +535,21 @@ handle_post(Req0, State0) ->
     case validate_post(Body, BucketId) of
 	{error, Number} -> js_handler:bad_request(Req1, Number);
 	{PrefixedDirectoryName, Prefix, DirectoryName} ->
-	    create_pseudo_directory(Req1, [
-		{prefixed_directory_name, PrefixedDirectoryName},
-		{prefix, Prefix},
-		{directory_name, DirectoryName},
-		{user, proplists:get_value(user, State0)},
-		{bucket_id, BucketId}])
+	    case proplists:get_value(user, State0) of
+		undefined -> js_handler:unauthorized(Req0, 28);
+		User ->
+		    case utils:is_public_bucket_id(BucketId) andalso User#user.staff =:= false of
+			true -> js_handler:unauthorized(Req0, 37);
+			false ->
+			    create_pseudo_directory(Req1, [
+				{prefixed_directory_name, PrefixedDirectoryName},
+				{prefix, Prefix},
+				{directory_name, DirectoryName},
+				{user, User},
+				{bucket_id, BucketId}])
+		    end
+	    end
     end.
-
 
 %%
 %% Checks if valid bucket id and JSON request provided.
@@ -559,31 +578,35 @@ basic_delete_validations(Req0, State) ->
 %% Checks if list of objects or pseudo-directories provided
 %%
 validate_delete(Req0, State) ->
-    case basic_delete_validations(Req0, State) of
-	{error, Number} -> {error, Number};
-	{Req1, BucketId, Prefix, ObjectKeys0} ->
-	    List0 = indexing:get_index(BucketId, Prefix),
-	    %% Extract pseudo-directories from provided object keys
-	    PseudoDirectories = lists:filter(
-		fun(I) ->
-		    case utils:ends_with(I, <<"/">>) of
-			true ->
-			    try utils:unhex(I) of
-				Name -> indexing:pseudo_directory_exists(List0, Name) =/= false
-			    catch error:badarg -> false end;
-			false -> false
+    case proplists:get_value(user, State) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	_ ->
+	    case basic_delete_validations(Req0, State) of
+		{error, Number} -> {error, Number};
+		{Req1, BucketId, Prefix, ObjectKeys0} ->
+		    List0 = indexing:get_index(BucketId, Prefix),
+		    %% Extract pseudo-directories from provided object keys
+		    PseudoDirectories = lists:filter(
+			fun(I) ->
+			    case utils:ends_with(I, <<"/">>) of
+				true ->
+				    try utils:unhex(I) of
+					Name -> indexing:pseudo_directory_exists(List0, Name) =/= false
+				    catch error:badarg -> false end;
+				false -> false
+			    end
+			end, ObjectKeys0),
+		    ObjectKeys1 = lists:filter(
+			fun(I) ->
+			    case indexing:get_object_record(List0, I) of
+				[] -> false;
+				_ -> utils:is_hidden_object([{key, erlang:binary_to_list(I)}]) =:= false
+			    end
+			end, ObjectKeys0),
+		    case length(PseudoDirectories) =:= 0 andalso length(ObjectKeys1) =:= 0 of
+			true -> {error, 34};
+			false -> {Req1, BucketId, Prefix, PseudoDirectories, ObjectKeys1}
 		    end
-		end, ObjectKeys0),
-	    ObjectKeys1 = lists:filter(
-		fun(I) ->
-		    case indexing:get_object_record(List0, I) of
-			[] -> false;
-			_ -> utils:is_hidden_object([{key, erlang:binary_to_list(I)}]) =:= false
-		    end
-		end, ObjectKeys0),
-	    case length(PseudoDirectories) =:= 0 andalso length(ObjectKeys1) =:= 0 of
-		true -> {error, 34};
-		false -> {Req1, BucketId, Prefix, PseudoDirectories, ObjectKeys1}
 	    end
     end.
 

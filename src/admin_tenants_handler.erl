@@ -120,7 +120,7 @@ content_types_provided(Req, State) ->
 get_tenants_list(TenantList0, Marker0) ->
     RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?TENANT_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
-	not_found -> [];
+	not_found -> [];  %% bucket not found
 	_ ->
 	    Contents = proplists:get_value(contents, RiakResponse),
 	    Marker1 = proplists:get_value(next_marker, RiakResponse),
@@ -175,25 +175,20 @@ to_json(Req0, State) ->
 %%
 to_html(Req0, State) ->
     Settings = #general_settings{},
-    SessionId = proplists:get_value(session_id, State),
-    case login_handler:check_session_id(SessionId) of
+    User = proplists:get_value(user, State),
+    case User#user.staff of
 	false -> js_handler:redirect_to_login(Req0);
-	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
-	User ->
-	    case User#user.staff of
-		false -> js_handler:redirect_to_login(Req0);
-		true ->
-		    TenantsList = [tenant_to_proplist(T) || T <- get_tenants_list([], undefined)],
-		    State1 = admin_users_handler:user_to_proplist(User),
-		    {ok, Body} = admin_tenants_dtl:render([
-			{brand_name, Settings#general_settings.brand_name},
-			{static_root, Settings#general_settings.static_root},
-			{root_path, Settings#general_settings.root_path},
-			{tenants, TenantsList},
-			{tenants_count, length(TenantsList)}
-		    ] ++ State1),
-		    {Body, Req0, []}
-	    end
+	true ->
+	    TenantsList = [tenant_to_proplist(T) || T <- get_tenants_list([], undefined)],
+	    State1 = admin_users_handler:user_to_proplist(User),
+	    {ok, Body} = admin_tenants_dtl:render([
+		{brand_name, Settings#general_settings.brand_name},
+		{static_root, Settings#general_settings.static_root},
+		{root_path, Settings#general_settings.root_path},
+		{tenants, TenantsList},
+		{tenants_count, length(TenantsList)}
+	    ] ++ State1),
+	    {Body, Req0, []}
     end.
 
 %%
@@ -204,38 +199,50 @@ to_html(Req0, State) ->
 %%
 forbidden(Req0, _State) ->
     Settings = #general_settings{},
-    case ?ANONYMOUS_USER_CREATION of
-	true ->
-	    User0 = #user{
-		id = admin,
-		name = "Administrator",
-		tenant_id = "nonexistent",
-		tenant_name = "Non-existent",
-		tenant_enabled = true,
-		login = Settings#general_settings.admin_email,
-		enabled = true,
-		staff = true
-	    },
-	    {false, Req0, [{user, User0}]};
-	false ->
-	    case utils:get_token(Req0) of
-		undefined ->
-		    SessionCookieName = Settings#general_settings.session_cookie_name,
-		    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-		    %% Response depends on content type
-		    {false, Req0, [{session_id, SessionID0}]};
-		Token -> 
-		    %% Extracts token from request headers and looks it up in "security" bucket
-		    case login_handler:check_token(Token) of
-			not_found -> js_handler:forbidden(Req0, 28);
-			expired -> js_handler:forbidden(Req0, 38);
-			User1 ->
-			    case User1#user.staff of
-				true -> {false, Req0, [{user, User1}]};
-				false -> js_handler:forbidden(Req0, 39)
-			    end
-		    end
-	    end
+    State1 = 
+	case utils:get_token(Req0) of
+	    undefined ->
+		SessionCookieName = Settings#general_settings.session_cookie_name,
+		#{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
+		%% Response depends on content type
+		case ?ANONYMOUS_USER_CREATION of
+		    true ->
+			Login = utils:hex(erlang:list_to_binary(Settings#general_settings.admin_email)),
+			User0 = #user{
+			    id = "admin",
+			    name = "41646d696e6973747261746f72",  % Administrator
+			    tenant_id = "nonexistent",
+			    tenant_name = "4e6f6e2d6578697374656e74", % Non-existent
+			    tenant_enabled = true,
+			    login = Login,
+			    enabled = true,
+			    staff = true
+			},
+			[{session_id, SessionID0}, {user, User0}];
+		    false ->
+			case login_handler:check_session_id(SessionID0) of
+			    false -> js_handler:redirect_to_login(Req0);
+			    {error, Code} -> js_handler:incorrect_configuration(Req0, Code);
+			    User1 -> [{session_id, SessionID0}, {user, User1}]
+			end
+		end;
+	    Token -> 
+		%% Extracts token from request headers and looks it up in "security" bucket
+		case login_handler:check_token(Token) of
+		    not_found -> not_found;
+		    expired -> expired;
+		    User2 ->
+			case User2#user.staff of
+			    true -> [{user, User2}];
+			    false -> not_staff
+			end
+		end
+	end,
+    case State1 of
+	not_found -> js_handler:forbidden(Req0, 28);
+	expired -> js_handler:forbidden(Req0, 38);
+	not_staff -> js_handler:forbidden(Req0, 39);
+	_ -> {false, Req0, State1}
     end.
 
 %%
@@ -267,11 +274,11 @@ validate_tenant_id(TenantId0) when erlang:is_list(TenantId0) ->
     case utils:alphanumeric(TenantId0) of
 	<<>> -> {error, {tenant_id, <<"Tenant name error. Its latin representation should not be empty.">>}};
 	TenantId1 ->
-	    case byte_size(TenantId1) > ?MAXIMUM_TENANT_NAME of
+	    case byte_size(TenantId1) > ?MAXIMUM_TENANT_NAME_LENGTH of
 		true ->
 		    {error, {tenant_id, erlang:list_to_binary([<<"Please choose a shorter tenant name. ">>,
 				<<"Note, its latin representation should not exceed ">>,
-				utils:to_binary(?MAXIMUM_TENANT_NAME), <<" characters.">>])}};
+				utils:to_binary(?MAXIMUM_TENANT_NAME_LENGTH), <<" characters.">>])}};
 		false -> unicode:characters_to_list(TenantId1)
 	    end
     end.
@@ -308,11 +315,11 @@ validate_group_id([]) ->
     {error, "Group name error. Its latin representation should not be empty."};
 validate_group_id(GroupId0) when erlang:is_binary(GroupId0) ->
     GroupIdLength = byte_size(GroupId0),
-    case GroupIdLength > ?MAXIMUM_GROUP_NAME of
+    case GroupIdLength > ?MAXIMUM_GROUP_NAME_LENGTH of
 	true ->
 	    {error, lists:flatten(["Please choose a shorter group name. ",
 			"Its latin representation should not exceed ",
-			utils:to_list(?MAXIMUM_GROUP_NAME), " characters. '",
+			utils:to_list(?MAXIMUM_GROUP_NAME_LENGTH), " characters. '",
 			unicode:characters_to_list(GroupId0), "' has ",
 			utils:to_list(GroupIdLength), " characters."])};
 	false -> unicode:characters_to_list(GroupId0)
@@ -343,7 +350,7 @@ validate_group_name(GroupName0, TenantGroups)
 
 %%
 %% Checks if every group in list meets two conditions:
-%%	- length of group is less than or equal to ?MAXIMUM_GROUP_NAME
+%%	- length of group is less than or equal to ?MAXIMUM_GROUP_NAME_LENGTH
 %%	- group name consists of printable characters
 %%	  ( those characters that can be used for "slug" )
 %%	- ther'a no duplicate groups
@@ -468,8 +475,7 @@ validate_patch(Tenant, Body) ->
 
 new_tenant(Req0, Tenant0) ->
     case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-	not_found ->
-	    riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+	not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
 	_ -> ok
     end,
     PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, Tenant0#tenant.id),

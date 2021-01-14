@@ -1,12 +1,14 @@
 %%
-%% Allows to upload objects to Riak CS.
+%% Differential synchronization API endpoint.
+%% Allows to upload objects to the Riak CS.
 %%
 -module(upload_handler).
 -behavior(cowboy_handler).
 
 -export([init/2, resource_exists/2, content_types_accepted/2, handle_post/2,
 	 allowed_methods/2, previously_existed/2, allow_missing_post/2,
-	 content_types_provided/2, is_authorized/2, forbidden/2, to_json/2, extract_rfc2231_filename/1]).
+	 content_types_provided/2, is_authorized/2, forbidden/2, to_json/2,
+	 extract_rfc2231_filename/1, validate_version/1]).
 
 -include("riak.hrl").
 -include("entities.hrl").
@@ -47,51 +49,44 @@ allowed_methods(Req, State) ->
 %%
 %% Checks if content-range header matches size of uploaded data
 %%
+validate_data_size(0, _StartByte, _EndByte) -> true;  % empty requests are accepted for checks
 validate_data_size(DataSize, StartByte, EndByte) ->
-    case EndByte of
-	undefined -> ok;  % content-range header is not required for small files
-	_ ->
-	    case (EndByte - StartByte + 1 =/= DataSize) of
-		true -> {error, 1};
-		false -> true
-	    end
+    case (EndByte - StartByte + 1 =/= DataSize) of
+	true -> {error, 1};
+	false -> true
     end.
 
 %%
-%% Checks if modification time is a valid positive integer timestamp
+%% Checks if dotted version vector is valid ( base64-encoded JSON )
 %%
-%% modified_utc is required
-%%
-validate_modified_time(undefined, required) ->  {error, 22};
-validate_modified_time(undefined, not_required) ->  undefined;
-validate_modified_time(ModifiedTime0, _IsRequired) ->
+validate_version(undefined) -> {error, 44};
+validate_version(null) -> {error, 44};
+validate_version(<<>>) -> {error, 44};
+validate_version(Base64DVV) ->
     try
-	ModifiedTime1 = utils:to_integer(ModifiedTime0),
-	ModifiedTime2 = calendar:gregorian_seconds_to_datetime(ModifiedTime1),
-	{{Year, Month, Day}, {Hour, Minute, Second}} = ModifiedTime2,
-	calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Minute, Second}})
-    catch error:badarg ->
+	JSON = base64:decode(Base64DVV),
+	case jsx:is_json(JSON) of
+	    {error, badarg} -> {error, 21};
+	    false -> {error, 21};
+	    true ->
+		DVV = jsx:decode(JSON),
+		case DVV of
+		    [_, _] ->
+			TiimeValid = lists:all(
+			    fun(I) ->
+				try utils:to_integer(I) of
+				    _ -> true
+				catch error:undef -> false end
+			    end, dvvset:values(DVV)),
+			case TiimeValid of
+			    true -> DVV;
+			    false -> {error, 22}
+			end;
+		    _ -> {error, 22}
+		end
+	end
+    catch error:_ ->
         {error, 22}
-    end.
-
-%%
-%% Checks timestamp and GUID, if provided.
-%%
-validate_modified_time(BucketId, GUID, ModifiedTime0, IsRequired)
-	when erlang:is_list(GUID) orelse GUID =:= undefined ->
-    case validate_modified_time(ModifiedTime0, IsRequired) of
-	{error, Number} -> {error, Number};
-	undefined -> undefined;
-	ModifiedTime1 ->
-	    case GUID of
-		undefined -> ModifiedTime1;
-		_ ->
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-		    case riak_api:list_objects(BucketId, [{prefix, RealPrefix}, {marker, undefined}]) of
-			not_found -> {error, 42};
-			_ -> ModifiedTime1
-		    end
-	    end
     end.
 
 %%
@@ -110,7 +105,7 @@ validate_filename(FileName)
              FileName =:= <<".dropbox.attr">> ->
     {error, 47};
 validate_filename(FileName) ->
-    ProhibitedChrs = [<<"<">>, <<">">>, <<":">>, <<"\"">>, <<"|">>, <<"?">>, <<"*">>],
+    ProhibitedChrs = [<<"<">>, <<">">>, <<":">>, <<$">>, <<"|">>, <<"?">>, <<"*">>],
     NoProhibitedChrs = lists:all(
         fun(C) ->
             binary:matches(FileName, C) =:= []
@@ -121,12 +116,11 @@ validate_filename(FileName) ->
             case length(unicode:characters_to_list(FileName)) > 260 of
                 true -> {error, 48};
                 false ->
-                    ProhibitedTrailingChrs = [<<".">>, <<" ">>,
-                        erlang:list_to_binary(?RIAK_LOCK_SUFFIX)],
+                    ProhibitedTrailingChrs = [<<".">>, <<" ">>, erlang:list_to_binary(?RIAK_LOCK_SUFFIX)],
                     NoProhibitedTrailingChrs = lists:all(
                         fun(C) ->
                             utils:ends_with(FileName, C) =:= false
-                    end, ProhibitedTrailingChrs),
+                	end, ProhibitedTrailingChrs),
                     case NoProhibitedTrailingChrs of
                         false -> {error, 47};
                         true -> FileName
@@ -144,6 +138,99 @@ validate_integer_field(Value) when erlang:is_binary(Value) ->
 	V -> V
     catch error:badarg ->
 	undefined
+    end.
+
+validate_md5(undefined) -> {error, 40};
+validate_md5(null) -> {error, 40};
+validate_md5(<<>>) -> {error, 40};
+validate_md5(Value) ->
+    try utils:unhex(Value) of
+	_Md5 -> Value
+    catch
+	error:_ -> {error, 40}
+    end.
+
+validate_guid(undefined) -> undefined;
+validate_guid(<<>>) -> undefined;
+validate_guid(null) -> undefined;
+validate_guid(GUID) ->
+    case byte_size(GUID) of
+	36 ->
+	    %% the third group of characters must start with the number 4
+	    %% fourth group of characters must start with 8, 9, a or b
+	    << _:14/binary, Char0:1/binary, _:4/binary, Char1:1/binary, _/binary >> = GUID,
+	    case Char0 of
+		<<"4">> ->
+		    case Char1 of
+			<<"8">> -> unicode:characters_to_list(GUID);
+			<<"9">> -> unicode:characters_to_list(GUID);
+			<<"a">> -> unicode:characters_to_list(GUID);
+			<<"b">> -> unicode:characters_to_list(GUID);
+			_ -> {error, 42}
+		    end;
+		_ -> {error, 42}
+	    end;
+	_ -> {error, 42}
+    end.
+
+parse_etags([K,V | T]) -> [{
+	utils:to_integer(K),
+	utils:to_list(V)
+    } | parse_etags(T)];
+parse_etags([]) -> [].
+
+%%
+%% Checks if etags field contains valid md5 
+%%
+validate_etags(undefined) -> undefined;  %% Client is testing if last chunk should be uploaded
+validate_etags(Etags) ->
+    try parse_etags(binary:split(Etags, <<$,>>, [global])) of
+	Value -> Value
+    catch error:_Error -> {error, 51} end.
+
+%%
+%% Checks if upload id is specified for parts > 1
+%% as only first chunk is not required to have upload_id.
+%%
+validate_upload_id(undefined) -> undefined;
+validate_upload_id([]) -> undefined;
+validate_upload_id(<<>>) -> undefined;
+validate_upload_id(null) -> undefined;
+validate_upload_id(Value) -> erlang:binary_to_list(Value).
+
+validate_upload_id(Value, 1) -> validate_upload_id(Value);
+validate_upload_id(Value, _) ->
+    case validate_upload_id(Value) of
+	undefined -> {error, 25};
+	V -> V
+    end.
+
+validate_content_range(Req) ->
+    PartNumber =
+	try utils:to_integer(cowboy_req:binding(part_num, Req)) of
+	    N -> N
+	catch error:_ -> 1
+	end,
+    UploadId0 = validate_upload_id(cowboy_req:binding(upload_id, Req), PartNumber),
+    case cowboy_req:header(<<"content-range">>, Req) of
+	undefined -> {error, 52};
+	null -> {error, 52};
+	Value ->
+	    try cow_http_hd:parse_content_range(Value) of
+		{bytes, Start, End, Total} ->
+		    case (Total > ?FILE_MAXIMUM_SIZE) orelse (End - Start > ?FILE_UPLOAD_CHUNK_SIZE) of
+			true -> {error, 24};
+			false ->
+			    case UploadId0 of
+				{error, Number} -> {error, Number};
+				_ -> [{part_number, PartNumber}, {upload_id, UploadId0},
+				      {start_byte, Start}, {end_byte, End},
+				      {total_bytes, Total}]
+			    end
+		    end
+	    catch error:function_clause ->
+		{error, 25}
+	    end
     end.
 
 add_action_log_record(State) ->
@@ -178,7 +265,7 @@ add_action_log_record(State) ->
 %%
 extract_rfc2231_filename(FormDataParams) ->
     case proplists:get_value(<<"filename*">>, FormDataParams) of
-	undefined -> proplists:get_value(<<"filename">>, FormDataParams);  %% TODO: remove that
+	undefined -> proplists:get_value(<<"filename">>, FormDataParams);
 	FileName2 ->
 	    FileNameByteSize = byte_size(FileName2),
 	    if FileNameByteSize < 8 -> undefined;
@@ -195,13 +282,11 @@ extract_rfc2231_filename(FormDataParams) ->
 %%
 %% Parse POST fields.
 %%
-%% modified_utc -- timestamp (UTC)
+%% version -- base64-json-encoded dotted version vector
+%% md5 -- chunk's checksum
 %% etags[] -- list of MD5
 %% prefix -- hex-encoded directory name
-%% files[] --
-%% guid -- the key in object storage. It also used to track history of file
-%% last_seen_modified_utc -- modified time client have seen previously.
-%%                           It is used for finding conflicts.
+%% files[] -- binary blob
 %%
 acc_multipart(Req0, Acc) ->
     case cowboy_req:read_part(Req0) of
@@ -213,12 +298,12 @@ acc_multipart(Req0, Acc) ->
 		{_, FieldName0} = lists:keyfind(<<"name">>, 1, Params),
 		FieldName1 =
 		    case FieldName0 of
-			<<"modified_utc">> -> last_modified_utc;
-			<<"etags[]">> -> etags;
+			<<"version">> -> version;
+			<<"md5">> -> md5;        %% chunk md5
+			<<"etags[]">> -> etags;  %% md5 checksums of all chunks
 			<<"prefix">> -> prefix;
 			<<"files[]">> -> blob;
-			<<"guid">> -> guid;
-			<<"last_seen_modified_utc">> -> last_seen_modified_utc;
+			<<"guid">> -> guid;      %% for tracking history
 			<<"width">> -> width;
 			<<"height">> -> height;
 			_ -> undefined
@@ -243,37 +328,29 @@ stream_body(Req0, Acc) ->
     end.
 
 %%
-%% Validates provided content range values and calls 'upload_to_riak()'
+%% Validates provided parameters and calls 'upload_to_riak()'
 %%
 handle_post(Req0, State) ->
     case cowboy_req:method(Req0) of
 	<<"POST">> ->
 	    {FieldValues, Req1} = acc_multipart(Req0, []),
 	    FileName0 = validate_filename(proplists:get_value(filename, FieldValues)),
-	    Etags = proplists:get_value(etags, FieldValues),
 	    BucketId = proplists:get_value(bucket_id, State),
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
-	    %% Current server UTC time
-	    %% It is used by desktop client. TODO: use DVV instead
-	    GUID0 =
-		case proplists:get_value(guid, FieldValues) of
-		    undefined -> undefined;
-		    <<>> -> undefined;
-		    G -> unicode:characters_to_list(G)
-		end,
-	    ModifiedTime = validate_modified_time(BucketId, GUID0,
-						  proplists:get_value(last_modified_utc, FieldValues), required),
-	    LastSeenModifiedTime = validate_modified_time(BucketId, GUID0,
-							  proplists:get_value(last_seen_modified_utc, FieldValues),
-							  not_required),
+	    GUID = validate_guid(proplists:get_value(guid, FieldValues)),
+	    UploadTime = erlang:round(utils:timestamp()/1000),
+	    Version = validate_version(proplists:get_value(version, FieldValues)),
 	    Blob = proplists:get_value(blob, FieldValues),
+	    Md5 = validate_md5(proplists:get_value(md5, FieldValues)),
 	    StartByte = proplists:get_value(start_byte, State),
 	    EndByte = proplists:get_value(end_byte, State),
-	    DataSizeOK =
+	    DataSizeOk =
 		case Blob of
 		    undefined -> true;
-		    _ -> validate_data_size(size(Blob), StartByte, EndByte)
+		    _ -> validate_data_size(byte_size(Blob), StartByte, EndByte)
 		end,
+	    TotalBytes = proplists:get_value(total_bytes, State),
+	    Etags = validate_etags(proplists:get_value(etags, FieldValues)),
 	    Width0 = validate_integer_field(proplists:get_value(width, FieldValues)),
 	    Height0 = validate_integer_field(proplists:get_value(height, FieldValues)),
 	    %% Both width and height of image must be specified
@@ -282,58 +359,611 @@ handle_post(Req0, State) ->
 		    true -> {Width0, Height0};
 		    false -> {undefined, undefined}
 		end,
-	    case lists:keyfind(error, 1, [FileName0, Prefix0, ModifiedTime, LastSeenModifiedTime, DataSizeOK]) of
+	    case lists:keyfind(error, 1, [FileName0, Prefix0, GUID, Version, DataSizeOk, TotalBytes, Md5, Etags]) of
 		{error, Number} -> js_handler:bad_request(Req1, Number);
 		false ->
-		    UploadTime = erlang:round(utils:timestamp()/1000),
 		    NewState = [
 			{etags, Etags},
 			{prefix, Prefix0},
 			{file_name, FileName0},
-			{last_modified_utc, ModifiedTime},
-			{last_seen_modified_utc, LastSeenModifiedTime},
-			{guid, GUID0},
+			{version, Version},
+			{md5, Md5},
+			{guid, GUID},
 			{upload_time, UploadTime},
 			{width, Width1},
 			{height, Height1}
 		    ] ++ State,
-		    upload_to_riak(Req1, NewState, Blob)
+		    %% If object is locked and current user is now owner of the lock, return lock info
+		    lock_check(Req0, NewState, Blob)
 	    end;
 	_ -> js_handler:bad_request(Req0, 2)
     end.
 
 %%
-%% Compares binary's Md5 and Etag.
+%% Check if object is locked and returns JSON-serializable response.
+%% Otherwise returns undefined.
 %%
-%% Returns false in case Etag:
-%% - Not valid
-%% - Not specified
-%% - Not equal to Md5(BinaryData)
+-spec get_object_lock(list()|undefined, list()) -> {list()|undefined}.
+
+get_object_lock(undefined, _UserId) -> undefined;
+get_object_lock(ExistingObject, UserId) when ExistingObject#object.is_locked =:= true ->
+    LockUserId = ExistingObject#object.lock_user_id,
+    case LockUserId =/= undefined andalso UserId =/= LockUserId of
+	false -> undefined;
+	true ->
+	    LockUserName = ExistingObject#object.lock_user_name,
+	    LockModifiedTime = ExistingObject#object.lock_modified_utc,
+	    LockUserTel0 = ExistingObject#object.lock_user_tel,
+	    LockUserTel1 =
+                case LockUserTel0 of
+                    undefined -> null;
+                    V -> V
+                end,
+	    [{is_locked, <<"true">>},
+	     {lock_user_id, erlang:list_to_binary(LockUserId)},
+	     {lock_user_name, LockUserName},
+	     {lock_user_tel, LockUserTel1},
+	     {lock_modified_utc, LockModifiedTime}]
+    end;
+get_object_lock(_ExistingObject, _UserId) -> undefined.
+
 %%
+%% After we have picked the name for the upload object, we need GUID as well.
+%% It will be used to track history of all operations on object: rename, replace, move, copy, etc.
 %%
-validate_md5(undefined, BinaryData) when erlang:is_binary(BinaryData) -> false;
-validate_md5(Etag0, BinaryData) when erlang:is_binary(BinaryData) ->
-    try utils:unhex(Etag0) of
-	Etag1 ->
-	    Md5 = riak_crypto:md5(BinaryData),
-	    Etag1 =:= Md5
-    catch
-	error:_ -> false
+%% The destination object GUID can be different ( e.g. user could edit a conflicted copy ).
+%% We need an original GUID, in order to keep track of changes and to remove previous version.
+-spec get_guid(GUID, ExistingGUID, IsConflict) -> any() when
+    GUID :: string(),         %% GUID provided in request
+    ExistingGUID :: string(), %% GUID from existing object, found by pick_object_key()
+    IsConflict :: boolean().  %% flag indicating a conflicted version
+
+get_guid(undefined, undefined, false) -> erlang:binary_to_list(riak_crypto:uuid4());
+get_guid(undefined, ExistingGUID, false) -> ExistingGUID;
+get_guid(GUID, undefined, false) -> GUID;
+get_guid(GUID, GUID, false) -> GUID;
+%% For some reason client uploads file with a different GUID. Use an existing one.
+get_guid(_GUID, ExistingGUID, false) -> ExistingGUID;
+
+get_guid(undefined, ExistingGUID, true) -> ExistingGUID;
+get_guid(GUID, GUID, true) -> GUID;
+%% Conflict detected when client tried to upload file with GUID
+get_guid(_GUID, _ExistingGUID, true) -> erlang:binary_to_list(riak_crypto:uuid4()).
+
+%%
+%% Contents of the object storage could have canged since the list command was called.
+%% Therefore we need to find a recent GUID.
+%%
+existing_guid(_BucketId, _Prefix, undefined) -> undefined;
+existing_guid(BucketId, Prefix, ExistingObject) ->
+    ObjectKey = ExistingObject#object.key,
+    case riak_api:head_object(BucketId, utils:prefixed_object_key(Prefix, ObjectKey)) of
+	not_found -> undefined;
+	ConflictedMeta -> proplists:get_value("x-amz-meta-guid", ConflictedMeta)
     end.
 
 %%
-%% Creates link to actual object, updates index.
+%% Returns locked response if object lock exists.
+%% Otherwise proceeds to the next check.
 %%
-update_index(Req0, State0) ->
+lock_check(Req0, State0, BinaryData) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    FileName = proplists:get_value(file_name, State0),
+    Version = proplists:get_value(version, State0),
+    IndexContent = indexing:get_index(BucketId, Prefix),
+    User = proplists:get_value(user, State0),
+    UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
+    {_ObjectKey, _OrigName, _IsNewVersion, ExistingObject, IsConflict} = riak_api:pick_object_key(
+	BucketId, Prefix, FileName, Version, UserName, IndexContent),
+    case get_object_lock(ExistingObject, User#user.id) of
+	undefined ->
+	    PartNumber = proplists:get_value(part_number, State0),
+	    case PartNumber of
+		1 ->
+		    %% The GUID from client could be outdated for that object, so it has to be updated
+		    ExistingGUID = existing_guid(BucketId, Prefix, ExistingObject),
+		    GUID = get_guid(proplists:get_value(guid, State0), ExistingGUID, IsConflict),
+		    State1 = lists:keyreplace(guid, 1, State0, {guid, GUID}),
+		    check_part(Req0, BinaryData, State1 ++ [{object, ExistingObject}]);
+		_ -> check_part(Req0, BinaryData, State0 ++ [{object, ExistingObject}])
+	    end;
+	LockData ->
+	    Req1 = cowboy_req:reply(423, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode(LockData), Req0),
+	{stop, Req1, []}
+    end.
+
+%%
+%% Checks the following
+%% - correct bucket and prefix were specified
+%% - appropriate GUID specified for the upload id
+%% - version corresponds to what is stored by upload id
+%%
+check_upload_id(undefined, State) -> State;
+check_upload_id(null, State) -> State;
+check_upload_id([], State) -> State;
+check_upload_id(UploadId, State0) ->
+    case riak_api:head_object(?UPLOADS_BUCKET_NAME, UploadId) of
+	not_found -> {error, 5};
+	Meta ->
+	    UploadObjectMeta = list_handler:parse_object_record(Meta, []),
+	    BucketId = proplists:get_value(bucket_id, State0),
+	    Prefix = proplists:get_value(prefix, State0),
+	    GUID = proplists:get_value(guid, State0),
+	    MetaGUID = proplists:get_value("x-amz-meta-guid", Meta),
+	    IsCorrectBucketId =
+		case proplists:get_value("x-amz-meta-bucket_id", Meta) of
+		    BucketId -> true;
+		    _ -> {error, 37}
+		end,
+	    IsCorrectPrefix =
+		case proplists:get_value("x-amz-meta-prefix", Meta) of
+		    Prefix -> true;
+		    _ -> {error, 36}
+		end,
+	    IsCorrectGUID =
+		case GUID of
+		    undefined -> true;
+		    GUID ->
+			case MetaGUID of
+			    GUID -> true;
+			    _ -> {error, 4}
+			end
+		end,
+	    Version0 = proplists:get_value("version", UploadObjectMeta),
+	    Version1 = jsx:decode(base64:decode(Version0)),
+	    IsCorrectVersion =
+		case proplists:get_value(version, State0) of
+		    Version1 -> true;
+		    _ -> {error, 22}
+		end,
+	    case lists:keyfind(error, 1, [IsCorrectBucketId, IsCorrectPrefix, IsCorrectVersion, IsCorrectGUID]) of
+		{error, Number} -> {error, Number};
+		false ->
+		    State1 = lists:keyreplace(guid, 1, State0, {guid, MetaGUID}),
+		    lists:keyreplace(version, 1, State1, {version, Version1})
+	    end
+    end.
+
+%%
+%% Adds an upload object, in order to register a new upload
+%%
+-spec create_upload_id(UploadId, State0) -> ok|any() when
+    UploadId :: undefined|string(),
+    State0 :: proplist().
+create_upload_id(undefined, State0) ->
+    ExistingObject = proplists:get_value(object, State0),
+    Meta0 =
+	case ExistingObject of
+	    undefined -> [];
+	    _ ->
+		case ExistingObject#object.is_locked of
+		    true ->
+			[{is_locked, true},
+			 {lock_user_id, ExistingObject#object.lock_user_id},
+			 {lock_user_name, ExistingObject#object.lock_user_name},
+			 {lock_user_tel, ExistingObject#object.lock_user_tel},
+			 {lock_modified_utc, ExistingObject#object.lock_modified_utc}];
+		    false -> []
+		end
+	end,
+    FileName = proplists:get_value(file_name, State0),
+    Version0 = proplists:get_value(version, State0),
+    Version1 = base64:encode(jsx:encode(Version0)),
+    UploadTime = proplists:get_value(upload_time, State0),
+    GUID =
+	case proplists:get_value(guid, State0) of
+	    undefined -> erlang:binary_to_list(riak_crypto:uuid4());
+	    G -> G
+	end,
+    User = proplists:get_value(user, State0),
+    TotalBytes = proplists:get_value(total_bytes, State0),
+    Meta1 = list_handler:parse_object_record([], Meta0 ++ [
+	{orig_name, utils:hex(FileName)},
+	{version, Version1},
+	{upload_time, UploadTime},
+	{guid, GUID},
+	{author_id, User#user.id},
+	{author_name, User#user.name},
+	{author_tel, User#user.tel},
+	{is_deleted, false},
+	{bytes, utils:to_list(TotalBytes)},
+	{width, proplists:get_value(width, State0)},
+	{height, proplists:get_value(height, State0)}
+    ]),
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    Meta2 = [{"prefix", Prefix}, {"bucket_id", BucketId}],
+    Options = [{acl, public_read}, {meta, Meta1 ++ Meta2}],
+    UploadId = erlang:binary_to_list(riak_crypto:uuid4()),
+    Response = riak_api:put_object(?UPLOADS_BUCKET_NAME, undefined, UploadId, <<>>, Options),
+    {GUID, UploadId, Response};
+create_upload_id(UploadId, State) ->
+    GUID = proplists:get_value(guid, State),
+    {GUID, UploadId, ok}.
+
+%%
+%% Check if we have file part with that md5 already. Copy that part in that case.
+%%
+check_part(Req0, <<>>, State0) ->
+    case riak_api:head_bucket(?UPLOADS_BUCKET_NAME) of
+    	not_found -> riak_api:create_bucket(?UPLOADS_BUCKET_NAME);
+	_ -> ok
+    end,
+    BucketId = proplists:get_value(bucket_id, State0),
+    GUID0 = proplists:get_value(guid, State0),
+    Md5 = proplists:get_value(md5, State0),
+    PartNumber = proplists:get_value(part_number, State0),
+    case PartNumber of
+	1 ->
+	    List0 = find_chunk(BucketId, GUID0, Md5),
+	    upload_part(Req0, <<>>, List0, State0);
+	_ ->
+	    %% Check if a correct upload id was provided
+	    UploadId = proplists:get_value(upload_id, State0),
+	    case check_upload_id(UploadId, State0) of
+		{error, Number} -> js_handler:bad_request(Req0, Number);
+		State1 ->
+		    GUID1 = proplists:get_value(guid, State1),
+		    List1 = find_chunk(BucketId, GUID1, Md5),
+		    upload_part(Req0, <<>>, List1, State1)
+	    end
+    end;
+%%
+%% Checks if provided upload ID exists first.
+%% If not, then copy chunk internally.
+%% Otherwise put `BinaryData` to Riak CS
+%%
+check_part(Req0, BinaryData, State0) ->
+    IsCorrectMd5 =
+	case proplists:get_value(md5, State0) of
+	    undefined -> false;
+	    Md5 ->
+		Checksum = utils:hex(riak_crypto:md5(BinaryData)),
+		erlang:list_to_binary(Checksum) =:= Md5
+	end,
+    case IsCorrectMd5 of
+	false -> js_handler:bad_request(Req0, 40);
+	true ->
+	    PartNumber = proplists:get_value(part_number, State0),
+	    case PartNumber of
+		1 -> upload_part(Req0, BinaryData, State0);
+		_ ->
+		    UploadId = proplists:get_value(upload_id, State0),
+		    case check_upload_id(UploadId, State0) of
+			{error, Number} -> js_handler:bad_request(Req0, Number);
+			State1 -> upload_part(Req0, BinaryData, State1)
+		    end
+	    end
+    end.
+
+%%
+%% Looks up an existing chunk of data, by inspecting previous versions of object.
+%%
+find_chunk(_BucketId, undefined, _Md5) -> [];
+find_chunk(BucketId, GUID, Md5) ->
+    find_chunk(BucketId, GUID, <<>>, Md5).
+find_chunk(BucketId, GUID, UploadId, Md5) ->
+    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    %% go through GUIDs ( object history history unique identifiers )
+    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, PrefixedGUID}]) of
+	not_found -> [];
+	RiakResponse0 ->
+	    lists:filtermap(
+		fun(I) ->
+		    Prefix = proplists:get_value(prefix, I),
+		    Suffix = lists:last(string:tokens(Prefix, "/")),
+		    case Suffix of
+			UploadId -> false;  %% do not look at the current upload chunks
+			_ ->
+			    %% iterate through upload ids within history
+			    RiakResponse1 = riak_api:list_objects(BucketId,
+				    [{prefix, Prefix}, {max_keys, MaxKeys}]),
+			    Contents =
+				case RiakResponse1 of
+				    not_found -> [];
+				    _ -> proplists:get_value(contents, RiakResponse1)
+				end,
+			    Matches = lists:filtermap(
+				fun(K) ->
+				    ObjectKey = proplists:get_value(key, K),
+				    case utils:ends_with(ObjectKey, Md5) of
+					true -> {true, ObjectKey};
+					false -> false
+				    end
+				end, Contents),
+			    case Matches of
+				[] -> false;
+				[H|_T] -> {true, H}
+			    end
+		    end
+		end, proplists:get_value(common_prefixes, RiakResponse0))
+    end.
+
+%%
+%% If the final part provided, finalize the upload by updating index,
+%% otherwise respond with ``RespCode`` http status code.
+%%
+upload_response(Req0, GUID, UploadId, RespCode, State0) ->
+    Md5 = proplists:get_value(md5, State0),
+    EndByte = proplists:get_value(end_byte, State0),
+    TotalBytes = proplists:get_value(total_bytes, State0),
+    Etags0 = proplists:get_value(etags, State0),
+    case (EndByte+1 =:= TotalBytes) of
+	true ->
+	    case Etags0 of
+		undefined -> js_handler:bad_request(Req0, 51);
+		_ ->
+		    State1 = lists:keyreplace(upload_id, 1, State0, {upload_id, UploadId}),
+		    State2 = lists:keyreplace(guid, 1, State1, {guid, GUID}),
+		    complete_upload(Req0, Etags0, RespCode, State2)
+	    end;
+	false ->
+	    Req1 = cowboy_req:reply(RespCode, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([
+		{end_byte, EndByte},
+		{guid, unicode:characters_to_binary(GUID)},
+		{upload_id, unicode:characters_to_binary(UploadId)},
+		{md5, Md5}
+	    ]), Req0),
+	    {stop, Req1, []}
+    end.
+
+%%
+%% Final response, sent after last part uploaded
+%%
+upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, LockedUserName, LockedUserTel, RespCode, State0) ->
     User = proplists:get_value(user, State0),
     BucketId = proplists:get_value(bucket_id, State0),
     Prefix = proplists:get_value(prefix, State0),
-    ModifiedTime0 = proplists:get_value(last_modified_utc, State0),
+    Version = proplists:get_value(version, State0),
+    UploadId = proplists:get_value(upload_id, State0),
     UploadTime = proplists:get_value(upload_time, State0),
     TotalBytes = proplists:get_value(total_bytes, State0),
     GUID = proplists:get_value(guid, State0),
     ObjectKey0 = proplists:get_value(object_key, State0),
-    OrigName0 = proplists:get_value(orig_name, State0),
+    State1 = [
+	{bucket_id, BucketId},
+	{prefix, Prefix},
+	{upload_time, erlang:integer_to_list(UploadTime)},
+	{orig_name, OrigName},
+	{total_bytes, TotalBytes},
+	{user, proplists:get_value(user, State0)}
+    ],
+    add_action_log_record(State1),
+    IsLocked1 =
+	case IsLocked of
+	    undefined -> false;
+	    _ -> IsLocked
+	end,
+    AuthorTel =
+	case User#user.tel of
+	    undefined -> null;
+	    [] -> null;
+	    _ -> unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))
+	end,
+    UploadId = proplists:get_value(upload_id, State0),
+    riak_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId),
+    Req1 = cowboy_req:reply(RespCode, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([
+	{guid, unicode:characters_to_binary(GUID)},
+	{orig_name, OrigName},
+	{version, base64:encode(jsx:encode(Version))},
+	{object_key, erlang:list_to_binary(ObjectKey0)},
+	{upload_id, erlang:list_to_binary(UploadId)},
+	{end_byte, proplists:get_value(end_byte, State0, null)},
+	{md5, proplists:get_value(md5, State0, null)},
+	{upload_time, UploadTime},
+	{author_id, erlang:list_to_binary(User#user.id)},
+	{author_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.name)))},
+	{author_tel, AuthorTel},
+	{is_locked, IsLocked1},
+	{lock_modified_utc, value_or_null(LockModifiedTime)},
+	{lock_user_id, to_binary(LockedUserId)},
+	{lock_user_name, to_binary(LockedUserName)},
+	{lock_user_tel, to_binary(LockedUserTel)},
+	{is_deleted, false},
+	{bytes, TotalBytes},
+	{width, value_or_null(proplists:get_value(width, State0))},
+	{height, value_or_null(proplists:get_value(height, State0, null))}
+    ]), Req0),
+    {stop, Req1, []}.
+
+
+%%
+%% In case data was not provided and upload id has not been created, reply 200.
+%%
+upload_part(Req0, <<>>, [], State0) ->
+    GUID =
+	case proplists:get_value(guid, State0) of
+	    undefined -> erlang:binary_to_list(riak_crypto:uuid4());
+	    G -> G
+	end,
+    EndByte = proplists:get_value(end_byte, State0),
+    Md5 = proplists:get_value(md5, State0),
+    UploadId =
+	case proplists:get_value(upload_id, State0) of
+	    undefined -> null;
+	    Id -> unicode:characters_to_binary(Id)
+	end,
+    %% Reply 200, -- "go ahead and upload that chunk"
+    Req1 = cowboy_req:reply(200, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([
+	{end_byte, EndByte},
+	{guid, unicode:characters_to_binary(GUID)},
+	{upload_id, UploadId},
+	{md5, Md5}
+    ]), Req0),
+    {stop, Req1, []};
+
+%%
+%% Tries to copy an existing chunk to the destination
+%%
+upload_part(Req0, <<>>, [PrefixedSrcObjectKey|_], State0) ->
+    case create_upload_id(proplists:get_value(upload_id, State0), State0) of
+	{GUID, UploadId, ok} ->
+	    BucketId = proplists:get_value(bucket_id, State0),
+	    Md5 = proplists:get_value(md5, State0),
+	    PartNumber = proplists:get_value(part_number, State0),
+
+	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    DstRealPrefix = utils:prefixed_object_key(RealPrefix, UploadId),
+	    DstObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
+	    PrefixedDstObjectKey = utils:prefixed_object_key(DstRealPrefix, DstObjectKey),
+	    CopyResult = riak_api:copy_object(BucketId, PrefixedDstObjectKey,
+					      BucketId, PrefixedSrcObjectKey),
+	    case CopyResult of
+		[{content_length,_}] ->
+		    %% Tell the client to not upload the chunk, as we have it
+		    upload_response(Req0, GUID, UploadId, 206, State0);
+		{error, _} ->
+		    %% For some reason source object has disappeared, tell the client to upload
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode([
+			{guid, unicode:characters_to_binary(GUID)},
+			{upload_id, UploadId},
+			{md5, Md5}
+		    ]), Req0),
+		    {stop, Req1, []}
+	    end;
+	{error, Number} -> js_handler:bad_request(Req0, Number);
+	_ -> js_handler:too_many(Req0)  %% put operation failed
+    end.
+
+%%
+%% Uploads binary chunk to Riak CS.
+%%
+upload_part(Req0, BinaryData, State0) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    Md5 = proplists:get_value(md5, State0),
+    PartNumber = proplists:get_value(part_number, State0),
+    case riak_api:head_bucket(BucketId) of
+    	not_found -> riak_api:create_bucket(BucketId);
+	_ -> ok
+    end,
+    case create_upload_id(proplists:get_value(upload_id, State0), State0) of
+	{GUID, UploadId, ok} ->
+	    ObjectKey = lists:concat([erlang:integer_to_list(PartNumber), "_", erlang:binary_to_list(Md5)]),
+	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, UploadId),
+	    case riak_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, [{acl, public_read}]) of
+		ok -> upload_response(Req0, GUID, UploadId, 200, State0);
+		_ -> js_handler:too_many(Req0)
+	    end;
+	{error, Number} -> js_handler:bad_request(Req0, Number);
+	_ -> js_handler:too_many(Req0)  %% put operation failed
+    end.
+
+%%
+%% Check MD5's and finalize upload by updating object
+%%
+complete_upload(Req0, Etags0, RespCode, State0) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    GUID = proplists:get_value(guid, State0),
+    UploadId = proplists:get_value(upload_id, State0),
+    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, UploadId) ++ "/",
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    case riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]) of
+	not_found -> js_handler:too_many(Req0);
+	RiakResponse ->
+	    List0 = [lists:last(string:tokens(proplists:get_value(key, I), "/"))
+		     || I <- proplists:get_value(contents, RiakResponse)],
+	    List1 = lists:filtermap(
+		fun(I) ->
+		    case string:tokens(I, "_") of
+			[PN, Checksum] -> {true, {erlang:list_to_integer(PN), Checksum}};
+			_ -> false
+		    end
+		end, List0),
+	    case sets:from_list(List1) =:= sets:from_list(Etags0) of
+		false -> js_handler:bad_request(Req0, 51);
+		true -> complete_upload(Req0, RespCode, State0)
+	    end
+    end.
+
+complete_upload(Req0, RespCode, State0) ->
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    FileName = proplists:get_value(file_name, State0),
+    GUID = proplists:get_value(guid, State0),
+    UploadId = proplists:get_value(upload_id, State0),
+    User = proplists:get_value(user, State0),
+    UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
+    TotalBytes = proplists:get_value(total_bytes, State0),
+    Version0 = proplists:get_value(version, State0),
+    ExistingObject = proplists:get_value(object, State0),
+
+    IndexContent = indexing:get_index(BucketId, Prefix),
+    {ObjectKey0, OrigName0, _IsNewVersion, _ExistingObject, IsConflict} = riak_api:pick_object_key(BucketId, Prefix,
+	FileName, Version0, UserName, IndexContent),
+    Meta0 = [
+	{"orig-filename", utils:hex(OrigName0)},
+	{"version", base64:encode(jsx:encode(Version0))},
+	{"upload-time", proplists:get_value(upload_time, State0)},
+	{"guid", GUID},
+	{"author-id", User#user.id},
+	{"author-name", User#user.name},
+	{"author-tel", User#user.tel},
+	{"is-deleted", false},
+	{"bytes", utils:to_list(TotalBytes)},
+	{"width", proplists:get_value(width, State0)},
+	{"height", proplists:get_value(height, State0)},
+	{"is-locked", false}
+    ],
+    Options = [{acl, public_read}, {meta, Meta0}],
+    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
+	ok ->
+	    case ExistingObject of
+		undefined -> ok;
+		_ ->
+		    case IsConflict of
+			true ->
+			    %% delete older conflict
+			    delete_previous_one(BucketId, GUID, UploadId, Version0);
+			false ->
+			    case ExistingObject#object.guid of
+				GUID -> delete_previous_one(BucketId, ExistingObject#object.guid, UploadId, Version0);
+				_ -> ok %% GUID has changed, do nothing
+			    end
+		    end
+	    end,
+	    State1 = lists:keyreplace(guid, 1, State0, {guid, GUID}),
+	    update_index(Req0, OrigName0, RespCode, State1 ++ [{object_key, ObjectKey0}, {is_conflict, IsConflict}]);
+	_ -> js_handler:incorrect_configuration(Req0, "Something's went horribly wrong.")
+    end.
+
+value_or_null(null) -> null;
+value_or_null(undefined) -> null;
+value_or_null(Value) -> Value.
+
+to_binary(null) -> null;
+to_binary(undefined) -> null;
+to_binary(Value) -> erlang:list_to_binary(Value).
+
+hex_or_undefined(undefined) -> undefined;
+hex_or_undefined(Value) -> utils:hex(Value).
+
+%%
+%% Creates link to actual object, updates index.
+%%
+update_index(Req0, OrigName0, RespCode, State0) ->
+    User = proplists:get_value(user, State0),
+    BucketId = proplists:get_value(bucket_id, State0),
+    Prefix = proplists:get_value(prefix, State0),
+    Version = proplists:get_value(version, State0),
+    UploadId = proplists:get_value(upload_id, State0),
+    UploadTime = proplists:get_value(upload_time, State0),
+    TotalBytes = proplists:get_value(total_bytes, State0),
+    GUID = proplists:get_value(guid, State0),
+    ObjectKey0 = proplists:get_value(object_key, State0),
     IsConflict = proplists:get_value(is_conflict, State0),
     {IsLocked0, LockModifiedTime0, LockedUserId0, LockedUserName0, LockedUserTel0} =
 	case proplists:get_value(object, State0) of
@@ -348,22 +978,15 @@ update_index(Req0, State0) ->
 			      ExistingObject#object.lock_user_tel}
 		end
 	end,
-    LockedUserName1 =
-	case LockedUserName0 of
-	    undefined -> undefined;
-	    _ -> utils:hex(LockedUserName0)
-	end,
-    LockedUserTel1 =
-	case LockedUserTel0 of
-	    undefined -> undefined;
-	    _ -> utils:hex(LockedUserTel0)
-	end,
+    LockedUserName1 = hex_or_undefined(LockedUserName0),
+    LockedUserTel1 = hex_or_undefined(LockedUserTel0),
     %% Put link to the real object at the specified prefix
     Meta = list_handler:parse_object_record([], [
 	    {orig_name, utils:hex(OrigName0)},
-	    {last_modified_utc, ModifiedTime0},
+	    {version, base64:encode(jsx:encode(Version))},
 	    {upload_time, UploadTime},
 	    {guid, GUID},
+	    {upload_id, UploadId},
 	    {author_id, User#user.id},
 	    {author_name, User#user.name},
 	    {author_tel, User#user.tel},
@@ -376,22 +999,19 @@ update_index(Req0, State0) ->
 	    {bytes, utils:to_list(TotalBytes)}
 	]),
     MimeType = utils:mime_type(ObjectKey0),
-    %% get image width and heignt if it is less than 50 MB
+    %% get width and height of image, if it is less than 50 MB
     WidthHeight =
 	case TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES orelse utils:starts_with(MimeType, <<"image/">>) =:= false of
 	    true ->
 		[{"width", proplists:get_value(width, State0)},
-		{"height", proplists:get_value(height, State0)}];
+		 {"height", proplists:get_value(height, State0)}];
 	    false ->
-		{OldBucketId, RealPath} = download_handler:real_path(BucketId,
-		    [{"x-amz-meta-guid", GUID}, {"x-amz-meta-modified-utc", utils:to_list(ModifiedTime0)}]),
-		case riak_api:get_object(OldBucketId, RealPath) of
+		case riak_api:get_object(BucketId, GUID, UploadId) of
 		    not_found ->
 			[{"width", proplists:get_value(width, State0)},
 			 {"height", proplists:get_value(height, State0)}];
 		    RiakResponse ->
-			Content = proplists:get_value(content, RiakResponse),
-			Reply0 = img:scale([{from, Content}, {just_get_size, true}]),
+			Reply0 = img:scale([{from, RiakResponse}, {just_get_size, true}]),
 			case Reply0 of
 			    {error, _Reason} ->
 				[{"width", proplists:get_value(width, State0)},
@@ -400,500 +1020,61 @@ update_index(Req0, State0) ->
 			end
 		end
 	end,
-    Options = [{acl, public_read}, {meta, Meta++WidthHeight}],
-    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
-	ok ->
-	    %% Update pseudo-directory index for faster listing.
-	    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey0]}]) of
-		lock -> js_handler:too_many(Req0);
-		_ ->
-		    %% Update Solr index if file type is supported
-		    %% TODO: uncomment the following
-		    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
-		    %% {prefix, Prefix},
-		    %% {total_bytes, TotalBytes}]),
-		    State1 = [
-			{bucket_id, BucketId},
-			{prefix, Prefix},
-			{upload_time, erlang:integer_to_list(UploadTime)},
-			{orig_name, OrigName0},
-			{total_bytes, TotalBytes},
-			{user, proplists:get_value(user, State0)}
-		    ],
-		    add_action_log_record(State1),
-		    LockedUserTel2 =
-			case LockedUserTel1 of
-			    undefined -> null;
-			    Tel -> erlang:list_to_binary(Tel)
-			end,
-		    LockedUserName2 =
-			case LockedUserName1 of
-			    undefined -> null;
-			    _ -> erlang:list_to_binary(LockedUserName1)
-			end,
-		    LockedUserId1 =
-			case LockedUserId0 of
-			    undefined -> null;
-			    _ -> erlang:list_to_binary(LockedUserId0)
-			end,
-		    LockModifiedTime1 =
-			case LockModifiedTime0 of
-			    undefined -> null;
-			    _ -> LockModifiedTime0
-			end,
-		    IsLocked1 =
-			case IsLocked0 of
-			    undefined -> false;
-			    _ -> IsLocked0
-			end,
-		    AuthorTel =
-			case User#user.tel of
-			    undefined -> null;
-			    _ -> unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))
-			end,
-		    UploadId =
-			case proplists:get_value(upload_id, State0) of
-			    undefined -> null;
-			    UID -> UID
-			end,
-		    Req1 = cowboy_req:set_resp_body(jsx:encode([
-			{guid, unicode:characters_to_binary(GUID)},
-			{orig_name, OrigName0},
-			{last_modified_utc, ModifiedTime0},
-			{object_key, erlang:list_to_binary(ObjectKey0)},
-			{upload_id, UploadId},
-			{end_byte, proplists:get_value(end_byte, State0, null)},
-			{md5, proplists:get_value(md5, State0, null)},
-			{upload_time, UploadTime},
-			{author_id, erlang:list_to_binary(User#user.id)},
-			{author_name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.name)))},
-			{author_tel, AuthorTel},
-			{is_locked, IsLocked1},
-			{lock_modified_utc, LockModifiedTime1},
-			{lock_user_id, LockedUserId1},
-			{lock_user_name, LockedUserName2},
-			{lock_user_tel, LockedUserTel2},
-			{is_deleted, false},
-			{bytes, TotalBytes},
-			{width, proplists:get_value(width, State0, null)},
-			{height, proplists:get_value(height, State0, null)}
-		    ]), Req0),
-
-		    {true, Req1, []}
-	    end;
-	{error, Reason} ->
-	    ?WARN("[upload_handler] Error: ~p~n", [Reason]),
-	    js_handler:incorrect_configuration(Req0, 5)
+    case indexing:add_dvv(BucketId, GUID, UploadId, Version, User#user.id, User#user.name) of
+	lock -> js_handler:too_many(Req0);
+	_ ->
+	    Options = [{acl, public_read}, {meta, Meta++WidthHeight}],
+	    case riak_api:put_object(BucketId, Prefix, ObjectKey0, <<>>, Options) of
+		ok ->
+		    %% Update pseudo-directory index for faster listing.
+		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey0]}]) of
+			lock -> js_handler:too_many(Req0);
+			_ ->
+			    %% Update Solr index if file type is supported
+			    %% TODO: uncomment the following
+			    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
+			    %% {prefix, Prefix},
+			    %% {total_bytes, TotalBytes}]),
+			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0, LockedUserId0, LockedUserName0, LockedUserTel0, RespCode, State0)
+		    end;
+		{error, Reason} ->
+		    ?WARN("[upload_handler] Error: ~p~n", [Reason]),
+		    js_handler:incorrect_configuration(Req0, 5)
+	    end
     end.
 
 %%
-%% Deletes previous version of object for the same date, 
-%% if ther'a no links on previous version. This is the case when .stop file exists.
+%% Deletes previous version of object for the same date,
+%% If ther'a no links on previous version ( this is the case when .stop file exists )
 %%
-delete_previous_one(_BucketId, undefined, _NewModifiedTime, _OldGUID, _NewGUID) -> ok;
-delete_previous_one(BucketId, OldModifiedTime, NewModifiedTime, OldGUID, NewGUID)
-	when erlang:is_list(BucketId), erlang:is_integer(OldModifiedTime), erlang:is_integer(NewModifiedTime),
-	     erlang:is_list(OldGUID), erlang:is_list(NewGUID) ->
-    OldDate = utils:format_timestamp(OldModifiedTime),
-    NewDate = utils:format_timestamp(NewModifiedTime),
-    case OldDate =:= NewDate of
-	false -> ok;
-	true ->
-	    %% New object could be conflicted. In that case a new GUID should be created
-	    case OldGUID =:= NewGUID of
-		true ->
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-		    ExistingLastModified = erlang:integer_to_list(OldModifiedTime),
-		    PrefixedStopSignName = utils:prefixed_object_key(RealPrefix, ExistingLastModified++".stop"),
-		    case riak_api:head_object(BucketId, PrefixedStopSignName) of
-			not_found ->
-			    PrefixedRealPath = utils:prefixed_object_key(RealPrefix, ExistingLastModified),
-			    ?WARN("Removing ~p~n", [PrefixedRealPath]),
-			    riak_api:delete_object(BucketId, PrefixedRealPath);
-			_ -> ok
-		    end;
-		false -> ok %% GUID has changed, do nothing
-	    end
-    end.
+delete_previous_one(BucketId, GUID, UploadId, Version) ->
+    RemovedUploadId = indexing:remove_previous_version(BucketId, GUID, UploadId, Version),
+    case RemovedUploadId of
+	undefined -> ok;
+	_ ->
+	    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, RemovedUploadId) ++ "/",
+	    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+	    RiakResponse = riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
+	    List0 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
 
-get_locked_flags(ExistingObject, OrigName0) ->
-    case ExistingObject =:= undefined of
-	true -> [];
-	false ->
-	    case ExistingObject#object.orig_name =:= OrigName0 of
-		false -> [];
-		true -> %% name has not changed, copy lock attributes
-		    LockUserTel =
-			case ExistingObject#object.lock_user_tel of
-			    undefined -> undefined;
-			    _ -> utils:hex(ExistingObject#object.lock_user_tel)
-			end,
-		    [{is_locked, ExistingObject#object.is_locked},
-		     {lock_modified_utc, ExistingObject#object.lock_modified_utc},
-		     {lock_user_id, ExistingObject#object.lock_user_id},
-		     {lock_user_name, utils:hex(ExistingObject#object.lock_user_name)},
-		     {lock_user_tel, LockUserTel}]
-	    end
-    end.
-
-get_guid(_OldGUID, undefined, undefined, _IsConflict) -> erlang:binary_to_list(riak_crypto:uuid4());
-get_guid(_OldGUID, NewGUID, undefined, _IsConflict) -> NewGUID;
-get_guid(_OldGUID, _NewGUID, ExistingObject, false) -> ExistingObject#object.guid;
-%% User could have edited conflicted copy. In that case
-%% GUID remains the same as previous conflicted copy.
-get_guid(undefined, _NewGUID, _ExistingObject, true) -> erlang:binary_to_list(riak_crypto:uuid4());
-get_guid(OldGUID, _NewGUID, _ExistingObject, true) -> OldGUID.
-
-upload_to_riak(Req0, State0, BinaryData) ->
-    BucketId = proplists:get_value(bucket_id, State0),
-    Prefix = proplists:get_value(prefix, State0),
-    FileName = proplists:get_value(file_name, State0),
-    ModifiedTime0 = proplists:get_value(last_modified_utc, State0),
-    LastSeenModifiedTime = proplists:get_value(last_seen_modified_utc, State0),
-    User = proplists:get_value(user, State0),
-    %% Create a bucket if it do not exist
-    case riak_api:head_bucket(BucketId) of
-	not_found -> riak_api:create_bucket(BucketId);
-	_ -> ok
-    end,
-    IndexContent = indexing:get_index(BucketId, Prefix),
-    UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
-    {ObjectKey0, OrigName0, IsNewVersion0, ExistingObject0, IsConflict} = riak_api:pick_object_key(BucketId, Prefix,
-	FileName, ModifiedTime0, LastSeenModifiedTime, UserName, IndexContent),
-    {IsLocked, LockUserId, LockUserName, LockUserTel0, LockModifiedTime} =
-	case ExistingObject0 of
-	    undefined -> {false, undefined, undefined, undefined, undefined};
-	    _ -> {ExistingObject0#object.is_locked,
-		  ExistingObject0#object.lock_user_id,
-		  ExistingObject0#object.lock_user_name,
-		  ExistingObject0#object.lock_user_tel,
-		  ExistingObject0#object.lock_modified_utc
-		}
-	end,
-    case IsNewVersion0 of
-	false -> js_handler:not_modified(Req0);
-	true ->
-	    State1 = [{is_conflict, IsConflict}],
-	    case IsLocked of
-		true ->
-		    case LockUserId =/= undefined andalso User#user.id =/= LockUserId of
-			true ->
-                            LockUserTel1 =
-                                case LockUserTel0 of
-                                    undefined -> null;
-                                    V -> V
-                                end,
-			    LockData = [{is_locked, <<"true">>},
-					{lock_user_id, erlang:list_to_binary(LockUserId)},
-					{lock_user_name, LockUserName},
-					{lock_user_tel, LockUserTel1},
-					{lock_modified_utc, LockModifiedTime}],
-			    Req1 = cowboy_req:reply(423, #{
-				<<"content-type">> => <<"application/json">>
-			    }, jsx:encode(LockData), Req0),
-			    {stop, Req1, []};
-			false ->
-			    ExistingObject1 = ExistingObject0#object{is_locked="true"},
-			    upload_to_riak(Req0, State0 ++ State1, BinaryData, ExistingObject1, ObjectKey0, OrigName0)
-		    end;
-		_ -> upload_to_riak(Req0, State0 ++ State1, BinaryData, ExistingObject0, ObjectKey0, OrigName0)
-	    end
-    end.
-
-upload_to_riak(Req0, State0, BinaryData, ExistingObject, ObjectKey0, OrigName0) ->
-    BucketId = proplists:get_value(bucket_id, State0),
-    ModifiedTime0 = proplists:get_value(last_modified_utc, State0),
-    User = proplists:get_value(user, State0),
-    AuthorId =
-	case ExistingObject of
-	    undefined -> User#user.id;
-	    _ -> ExistingObject#object.author_id
-	end,
-    AuthorName =
-	case ExistingObject of
-	    undefined -> User#user.name;
-	    _ -> utils:hex(ExistingObject#object.author_name)
-	end,
-    AuthorTel =
-	case ExistingObject of
-	    undefined -> User#user.tel;
-	    _ -> utils:hex(ExistingObject#object.author_tel)
-	end,
-    IsConflict = proplists:get_value(is_conflict, State0),
-    Prefix = proplists:get_value(prefix, State0),
-    %% The destination object GUID can be different, for example, after user has edited conflict copy
-    {ObjectToOverwriteGUID, ObjectToOverwriteTime} =
-	case riak_api:head_object(BucketId, utils:prefixed_object_key(Prefix, ObjectKey0)) of
-	    not_found -> {undefined, undefined};
-	    ConflictedMeta ->
-		OrigName1 = utils:unhex(erlang:list_to_binary(
-		    proplists:get_value("x-amz-meta-orig-filename", ConflictedMeta))),
-		case OrigName1 =:= OrigName0 of
-		    true -> {proplists:get_value("x-amz-meta-guid", ConflictedMeta),
-			     erlang:list_to_integer(proplists:get_value("x-amz-meta-modified-utc", ConflictedMeta))};
-		    false -> {undefined, undefined}  %% object with a new name has been uploaded
-		end
-
-	end,
-    GUID = get_guid(ObjectToOverwriteGUID, proplists:get_value(guid, State0), ExistingObject, IsConflict),
-    State1 = [{orig_name, OrigName0}, {object, ExistingObject}],
-    PartNumber = proplists:get_value(part_number, State0),
-    IsBig = proplists:get_value(is_big, State0),
-    case IsBig of
-	true ->
-	    case (PartNumber > 1) of
-		true -> check_part(Req0, State0 ++ State1, BinaryData);
+	    PrefixedStopSignName = utils:prefixed_object_key(PrefixedUploadId, ?STOP_OBJECT_NAME),
+	    case lists:member(PrefixedStopSignName, List0) of
+		true -> ok;
 		false ->
-		    State2 = lists:keyreplace(guid, 1, State0, {guid, GUID}),
-		    start_upload(Req0, State1 ++ State2, BinaryData)
-	    end;
-	false ->
-	    Etags = proplists:get_value(etags, State0),
-	    case validate_md5(Etags, BinaryData) of
-		false -> js_handler:bad_request(Req0, 40);
-		true ->
-		    %% check if conflict
-		    TotalBytes = byte_size(BinaryData),
-		    UploadTime = proplists:get_value(upload_time, State0),
-		    %% Put object under service prefix
-		    Meta0 = get_locked_flags(ExistingObject, OrigName0),
-		    Meta1 = list_handler:parse_object_record([], Meta0 ++ [
-				{orig_name, utils:hex(OrigName0)},
-				{last_modified_utc, ModifiedTime0},
-				{upload_time, UploadTime},
-				{guid, GUID},
-				{author_id, AuthorId},
-				{author_name, AuthorName},
-				{author_tel, AuthorTel},
-				{is_deleted, "false"},
-				{bytes, utils:to_list(TotalBytes)},
-				{width, proplists:get_value(width, State0)},
-				{height, proplists:get_value(height, State0)}]),
-		    Options = [{acl, public_read}, {meta, Meta1}],
-		    %% Put object to real path ( i.e. ~object/ff1b69e5-7c23-4611-b0ca-65cab048073f/1575541599992 )
-		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-		    case riak_api:put_object(BucketId, RealPrefix, erlang:integer_to_list(ModifiedTime0),
-					     BinaryData, Options) of
-			ok ->
-			    case ExistingObject of
-				undefined -> ok;
-				_ ->
-				    case IsConflict of
-				        true -> delete_previous_one(BucketId, ObjectToOverwriteTime,
-								    ModifiedTime0, GUID, GUID); %% delete older conflict
-					false -> delete_previous_one(BucketId, ExistingObject#object.last_modified_utc,
-								     ModifiedTime0, ExistingObject#object.guid, GUID)
-				    end
-			    end,
-			    State3 = lists:keyreplace(total_bytes, 1, State0, {total_bytes, TotalBytes}),
-			    State4 = lists:keyreplace(guid, 1, State3, {guid, GUID}),
-			    update_index(Req0, State1 ++ State4 ++ [{object_key, ObjectKey0}]);
-			_ -> js_handler:incorrect_configuration(Req0, "Something's went horribly wrong.")
-		    end
+		    ?WARN("Removing ~p~n", [PrefixedUploadId]),
+		    [riak_api:delete_object(BucketId, I) || I <- List0]
 	    end
     end.
-
-%%
-%% Checks if upload with provided ID exists and uploads `BinaryData` to Riak CS
-%%
-check_part(Req0, State, BinaryData) ->
-    BucketId = proplists:get_value(bucket_id, State),
-    UploadId = proplists:get_value(upload_id, State),
-    GUID = proplists:get_value(guid, State),
-    ModifiedTime = proplists:get_value(last_modified_utc, State),
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-    RealPath = utils:prefixed_object_key(RealPrefix, erlang:integer_to_list(ModifiedTime)),
-    case riak_api:validate_upload_id(BucketId, RealPath, UploadId) of
-	not_found -> js_handler:bad_request(Req0, 4);
-	{error, _Reason} -> js_handler:bad_request(Req0, 5);
-	_ -> upload_part(Req0, State, BinaryData)
-    end.
-
-%% @todo: get rid of utils:to_list() by using proper xml binary serialization
-parse_etags([K,V | T]) -> [{
-	utils:to_integer(K),
-	utils:to_list(<<  <<$">>/binary, V/binary, <<$">>/binary >>)
-    } | parse_etags(T)];
-parse_etags([]) -> [].
-
-upload_part(Req0, State0, BinaryData) ->
-    BucketId = proplists:get_value(bucket_id, State0),
-    Prefix = proplists:get_value(prefix, State0),
-    UploadId = proplists:get_value(upload_id, State0),
-    PartNumber = proplists:get_value(part_number, State0),
-    Etags0 = proplists:get_value(etags, State0),
-    EndByte = proplists:get_value(end_byte, State0),
-    TotalBytes = proplists:get_value(total_bytes, State0),
-    GUID = proplists:get_value(guid, State0),
-
-    ModifiedTime0 = proplists:get_value(last_modified_utc, State0),
-    LastSeenModifiedTime = proplists:get_value(last_seen_modified_utc, State0),
-    User = proplists:get_value(user, State0),
-
-    %% Get the real prefix file should be uploaded to
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-    RealPath = utils:prefixed_object_key(RealPrefix, erlang:integer_to_list(ModifiedTime0)),
-    case riak_api:upload_part(BucketId, RealPath, UploadId, PartNumber, BinaryData) of
-	{ok, [{_, NewEtag0}]} ->
-	    case (EndByte+1 =:= TotalBytes) of
-		true ->
-		    case Etags0 =:= undefined of
-			true -> js_handler:bad_request(Req0, 5);
-			false ->
-			    %% parse etags from request to complete upload
-			    Etags1 = parse_etags(binary:split(Etags0, <<$,>>, [global])),
-			    case riak_api:complete_multipart(BucketId, RealPath, UploadId, Etags1) of
-				ok ->
-				    %% Pick object key again, as it could have been taken by now
-				    Metadata = riak_api:head_object(BucketId, RealPath),
-				    FinalEtag = proplists:get_value(etag, Metadata),
-				    OrigName0 = proplists:get_value("x-amz-meta-orig-filename", Metadata),
-				    OrigName1 = utils:unhex(erlang:list_to_binary(OrigName0)),
-				    UploadTime = erlang:round(utils:timestamp()/1000),
-				    IsLocked = proplists:get_value("x-amz-meta-is-locked", Metadata, "false"),
-
-				    IndexContent = indexing:get_index(BucketId, Prefix),
-				    UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
-				    {ObjectKey0, OrigName2, _IsNewVersion, ExistingObject, IsConflict} =
-					riak_api:pick_object_key(BucketId, Prefix, OrigName1, ModifiedTime0,
-								 LastSeenModifiedTime, UserName, IndexContent),
-				    ObjectToOverwriteTime =
-					case riak_api:head_object(BucketId,
-								  utils:prefixed_object_key(Prefix, ObjectKey0)) of
-					    not_found -> undefined;
-					    ConflictedMeta ->
-						T = proplists:get_value("x-amz-meta-modified-utc", ConflictedMeta),
-						erlang:list_to_integer(T)
-					end,
-				    case ExistingObject of
-					undefined -> ok;
-					_ ->
-					    case IsConflict of
-				    		true ->  %% delete older conflict
-						    delete_previous_one(BucketId, ObjectToOverwriteTime,
-									ModifiedTime0, GUID, GUID);
-						false ->
-						    delete_previous_one(BucketId, ExistingObject#object.last_modified_utc,
-									ModifiedTime0, ExistingObject#object.guid, GUID)
-					    end
-				    end,
-				    %% Create object key in destination prefix and update index
-				    State1 = [{user, proplists:get_value(user, State0)}, {bucket_id, BucketId},
-					      {prefix, Prefix}, {object_key, ObjectKey0}, {orig_name, OrigName2},
-					      {last_modified_utc, ModifiedTime0}, {object, ExistingObject},
-					      {is_locked, IsLocked}, {upload_time, UploadTime}, {guid, GUID},
-					      {total_bytes, TotalBytes}, {is_conflict, IsConflict},
-					      {upload_id, unicode:characters_to_binary(UploadId)},
-					      {end_byte, EndByte}, {width, proplists:get_value(width, State0)},
-					      {height, proplists:get_value(height, State0)},
-					      {md5, unicode:characters_to_binary(string:strip(FinalEtag, both, $"))}],
-				    update_index(Req0, State1)
-			    end
-		    end;
-		false ->
-		    <<_:1/binary, NewEtag1:32/binary, _:1/binary>> = unicode:characters_to_binary(NewEtag0),
-		    Response = [
-			{upload_id, unicode:characters_to_binary(UploadId)},
-			{end_byte, EndByte},
-			{md5, NewEtag1},
-			{guid, unicode:characters_to_binary(GUID)}],
-		    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
-		    {true, Req1, []}
-	    end;
-	{error, _} -> js_handler:bad_request(Req0, 6)
-    end.
-
-%%
-%% Creates identifier and uploads first part of data
-%%
-start_upload(Req0, State, BinaryData) ->
-    User = proplists:get_value(user, State),
-    OrigName0 = proplists:get_value(orig_name, State),
-    ExistingObject = proplists:get_value(object, State),
-    BucketId = proplists:get_value(bucket_id, State),
-    EndByte = proplists:get_value(end_byte, State),
-    %% The filename is used to pick object name when upload finishes
-    FileName = proplists:get_value(file_name, State),
-    ModifiedTime = proplists:get_value(last_modified_utc, State),
-    UploadTime = proplists:get_value(upload_time, State),
-    GUID = proplists:get_value(guid, State),
-    TotalBytes = proplists:get_value(total_bytes, State),
-
-    %% Get the real prefix file should be uploaded to
-    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-    RealPath = utils:prefixed_object_key(RealPrefix, erlang:integer_to_list(ModifiedTime)),
-    Meta0 = get_locked_flags(ExistingObject, OrigName0),
-    Meta1 = list_handler:parse_object_record([], Meta0 ++ [
-		{orig_name, utils:hex(FileName)},
-		{last_modified_utc, ModifiedTime},
-		{upload_time, UploadTime},
-		{guid, GUID},
-		{author_id, User#user.id},
-		{author_name, User#user.name},
-		{author_tel, User#user.tel},
-		{is_deleted, "false"},
-		{bytes, utils:to_list(TotalBytes)},
-		{width, proplists:get_value(width, State)},
-		{height, proplists:get_value(height, State)}
-	]),
-    Options = [{acl, public_read}, {meta, Meta1}],
-    MimeType = utils:mime_type(unicode:characters_to_list(FileName)),
-    Headers = [{"content-type", MimeType}],
-    {ok, [{_, UploadId}]} = riak_api:start_multipart(BucketId, RealPath, Options, Headers),
-    {ok, [{_, Etag0}]} = riak_api:upload_part(BucketId, RealPath, UploadId, 1, BinaryData),
-
-    %% Remove quotes from md5
-    <<_:1/binary, Etag1:32/binary, _:1/binary>> = unicode:characters_to_binary(Etag0),
-    Response = [
-	{upload_id, unicode:characters_to_binary(UploadId)},
-	{last_modified_utc, ModifiedTime},
-	{end_byte, EndByte},
-	{md5, Etag1},
-	{guid, unicode:characters_to_binary(GUID)}],
-    Req1 = cowboy_req:set_resp_body(jsx:encode(Response), Req0),
-    {true, Req1, []}.
 
 %%
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, State) ->
-    list_handler:is_authorized(Req0, State).
-
-validate_content_range(Req) ->
-    PartNumber =
-	try utils:to_integer(cowboy_req:binding(part_num, Req)) of
-	    N -> N
-	catch error:_ -> 1
-	end,
-    UploadId0 =
-	case cowboy_req:binding(upload_id, Req) of
-	    undefined -> undefined;
-	    UploadId1 -> erlang:binary_to_list(UploadId1)
-	end,
-    case cowboy_req:header(<<"content-range">>, Req) of
-	undefined ->
-	    [{part_number, PartNumber},
-	     {upload_id, UploadId0},
-	     {start_byte, undefined},
-	     {end_byte, undefined},
-	     {total_bytes, undefined}];
-	Value ->
-	    try cow_http_hd:parse_content_range(Value) of
-		{bytes, Start, End, Total} ->
-		    case Total > ?FILE_MAXIMUM_SIZE of
-			true -> {error, 24};
-			false ->
-			    case PartNumber > 1 andalso UploadId0 =:= undefined of
-				true -> {error, 25};
-				false -> [{part_number, PartNumber}, {upload_id, UploadId0},
-					  {start_byte, Start}, {end_byte, End},
-					  {total_bytes, Total}]
-			    end
-		    end
-	    catch error:function_clause ->
-		{error, 25}
-	    end
+is_authorized(Req0, _State) ->
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	Token -> login_handler:get_user_or_error(Req0, Token)
     end.
 
 %%
@@ -915,9 +1096,13 @@ forbidden(Req0, User) ->
 	end,
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-		User#user.groups),
+	    UserBelongsToGroup =
+		case utils:is_public_bucket_id(BucketId) of
+		    true -> User#user.staff;  %% only staff user can upload to the public bucket
+		    false -> lists:any(fun(Group) ->
+				utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+				User#user.groups)
+		end,
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
@@ -937,16 +1122,10 @@ forbidden(Req0, User) ->
 %%
 resource_exists(Req0, State) ->
     PartNumber = proplists:get_value(part_number, State),
-    TotalBytes = proplists:get_value(total_bytes, State),
-    IsBig =
-	case TotalBytes =:= undefined of
-	    true -> false;
-	    false -> (TotalBytes > ?FILE_UPLOAD_CHUNK_SIZE)
-	end,
     MaximumPartNumber = (?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE),
     case PartNumber < MaximumPartNumber andalso PartNumber >= 1 of
-	false -> {false, Req0, []};
-	true -> {true, Req0, State ++ [{is_big, IsBig}]}
+	true -> {true, Req0, State};
+	false -> {false, Req0, []}
     end.
 
 previously_existed(Req0, State) ->

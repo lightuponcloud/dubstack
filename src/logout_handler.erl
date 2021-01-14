@@ -18,15 +18,6 @@ revoke_token(UUID4) when erlang:is_list(UUID4) ->
     PrefixedToken = utils:prefixed_object_key(?TOKEN_PREFIX, UUID4),
     riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken).
 
-%%
-%% Deletes CSRF token from DB
-%%
--spec revoke_csrf_token(binary()) -> ok.
-
-revoke_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
-    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKEN_PREFIX, erlang:binary_to_list(UUID4)),
-    riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken).
-
 
 init(Req0, _Opts) ->
     Settings = #general_settings{},
@@ -55,18 +46,9 @@ init(Req0, _Opts) ->
 		{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 		_User ->
 		    %% Revoke session and CSRF cookie
-		    CSRFCookieName = Settings#general_settings.csrf_cookie_name,
 		    Req1 = cowboy_req:set_resp_cookie(utils:to_binary(SessionCookieName),
 			<<"deleted">>, Req0, #{max_age => 0}),
-		    Req2 = cowboy_req:set_resp_cookie(utils:to_binary(CSRFCookieName),
-			<<"deleted">>, Req1, #{max_age => 0}),
 		    revoke_token(erlang:binary_to_list(SessionID0)),
-		    #{CSRFCookieName := CSRFToken0} = cowboy_req:match_cookies(
-			[{Settings#general_settings.csrf_cookie_name, [], undefined}], Req0),
-		    case login_handler:check_csrf_token(CSRFToken0) of
-			false -> ok;
-			_ -> revoke_csrf_token(CSRFToken0)
-		    end,
-		    js_handler:redirect_to_login(Req2)
+		    js_handler:redirect_to_login(Req1)
 	    end
     end.

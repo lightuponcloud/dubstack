@@ -17,7 +17,7 @@
 	 s3_xml_request/8,
 	 validate_upload_id/3,
 	 increment_filename/1,
-	 pick_object_key/7,
+	 pick_object_key/6,
 	 s3_request/8,
 	 request_httpc/6,
 	 recursively_list_pseudo_dir/2,
@@ -202,11 +202,31 @@ get_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) ->
 %%
 %% Download object by chunks, sending them to PID
 %%
--spec get_object(string(), string(), list()) -> proplist().
+-spec get_object(string(), string(), atom()|list()) -> proplist().
 
 get_object(BucketId, Key, stream)
 	when erlang:is_list(BucketId), erlang:is_list(Key) ->
-    fetch_object(get, BucketId, Key, [{stream, true}]).
+    fetch_object(get, BucketId, Key, [{stream, true}]);
+
+%%
+%% Download object by chunks, returning a big binary blob.
+%%
+get_object(BucketId, GUID, UploadId)
+	when erlang:is_list(BucketId), erlang:is_list(GUID), erlang:is_list(UploadId) ->
+    RealPrefix0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+    RealPrefix1 = utils:prefixed_object_key(RealPrefix0, UploadId) ++ "/",
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix1}]) of
+	not_found -> not_found;  %% bucket not found
+	RiakResponse0 ->
+	    Contents = proplists:get_value(contents, RiakResponse0),
+	    erlang:iolist_to_binary(lists:map(
+		fun(Meta) ->
+		    Key = proplists:get_value(key, Meta),
+		    Response = fetch_object(get, BucketId, Key, []),
+		    proplists:get_value(content, Response)
+		end, Contents))
+    end.
 
 -spec fetch_object(MethodName, BucketId, Key, Options) -> proplist()|not_found when
     MethodName :: atom(),
@@ -334,10 +354,18 @@ mark_filename_conflict(FileName, UserName) when erlang:is_binary(FileName), erla
 %%
 %% Checks if version of existing object is older than new version.
 %%
-is_new_version(_OldVersion, undefined) -> true;
-is_new_version(undefined, _NewVersion) -> false;
-is_new_version(OldVersion, NewVersion) when OldVersion < NewVersion -> true;
-is_new_version(_, _) -> false.
+is_new_version(undefined, _NewVersion) -> true;
+is_new_version(_OldVersion, undefined) -> false;
+is_new_version(OldVersion, NewVersion) ->
+    %% Sync discards outdated values, while merging all causal histories,
+    %% before check for conflict ( split history scenario ).
+    MergedHistory = dvvset:sync([OldVersion, NewVersion]),
+    case dvvset:values(MergedHistory) of
+	[_] ->
+	    %% Casual history is linear
+	    dvvset:less(OldVersion, NewVersion);
+	_ -> conflict  %% multiple branches of history
+    end.
 
 %%
 %% Returns unique object name for provided bucket/prefix/object name.
@@ -350,7 +378,7 @@ is_new_version(_, _) -> false.
 %%    with that name exists. In case pseudo-directory exists
 %%    it RENAMES object, -- adds -N, where N is incremented integer.
 %%
-%%    If object exists, it compares last_modified_utc of existing
+%%    If object exists, it compares version of existing
 %%    object with a new one. If an existing object is older than
 %%    a new one, returns unchanged name, so upload function rewrites
 %%    old object with contents of the new one.
@@ -362,21 +390,18 @@ is_new_version(_, _) -> false.
 %%	    whether new object is a previous version flag
 %%	}
 %%
--spec pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName, IndexContent) ->
+-spec pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent) ->
 	{string(), binary(), boolean()} when
     BucketId :: string(),
     Prefix :: string(),
     FileName :: binary(),
-    ModifiedTime :: integer()|undefined,
-    LastSeenModifiedTime :: integer()|undefined,
+    Version :: term()|undefined,
     UserName :: binary(),
     IndexContent :: proplist().
 
-pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName, IndexContent)
+pick_object_key(BucketId, Prefix, FileName, Version, UserName, IndexContent)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	 erlang:is_binary(FileName),
-	 erlang:is_integer(ModifiedTime) orelse ModifiedTime =:= undefined,
-	 erlang:is_integer(LastSeenModifiedTime) orelse LastSeenModifiedTime =:= undefined,
+	 erlang:is_binary(FileName), erlang:is_list(Version) orelse Version =:= undefined,
 	 erlang:is_binary(UserName) ->
     %% Lowercase directory names, used for comparision
     ExistingDirectoryNames = lists:map(
@@ -396,15 +421,13 @@ pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, 
 	    {ux_string:to_lower(OrigName2), Object}
 	end || I <- ExistingList,
 	proplists:get_value(is_deleted, I) =:= false],
-    pick_object_key(BucketId, Prefix, FileName, ModifiedTime, LastSeenModifiedTime, UserName,
-		    ExistingDirectoryNames, ExistingObjects, undefined, undefined, true).
+    pick_object_key(BucketId, Prefix, FileName, Version, UserName, ExistingDirectoryNames,
+		    ExistingObjects, undefined, undefined, true).
 
-pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0, LastSeenModifiedTime, UserName,
-		ExistingDirectoryNames, ExistingObjects, UniqKey0, UniqOrigName0, IsNewVersion0)
+pick_object_key(BucketId, Prefix, FileName0, Version, UserName, ExistingDirectoryNames,
+		ExistingObjects, UniqKey0, UniqOrigName0, IsNewVersion0)
     when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
-	 erlang:is_binary(FileName0),
-	 erlang:is_integer(ModifiedTime0) orelse ModifiedTime0 =:= undefined,
-	 erlang:is_integer(LastSeenModifiedTime) orelse LastSeenModifiedTime =:= undefined,
+	 erlang:is_binary(FileName0), erlang:is_list(Version) orelse Version =:= undefined,
 	 erlang:is_binary(UserName), erlang:is_list(ExistingDirectoryNames),
 	 erlang:is_list(ExistingObjects), erlang:is_boolean(IsNewVersion0),
 	 erlang:is_list(UniqKey0) orelse UniqKey0 =:= undefined,
@@ -442,8 +465,7 @@ pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0, LastSeenModifiedTime
 	    case lists:member(DirectoryName, ExistingDirectoryNames) of
 		true ->
 		    %% Directory exists, new object name required
-		    pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-				    LastSeenModifiedTime, UserName,
+		    pick_object_key(BucketId, Prefix, FileName0, Version, UserName,
 				    ExistingDirectoryNames, ExistingObjects,
 				    erlang:binary_to_list(increment_filename(erlang:list_to_binary(ObjectKey0))),
 				    increment_filename(NewName0), IsNewVersion0);
@@ -452,34 +474,35 @@ pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0, LastSeenModifiedTime
 	{ObjectName, Object} ->
 	    case ObjectName =:= NewName1 of
 		false ->
-		    %% Increment key only as it could be a different object
-		    %% slug is not reliable encoding method, it has collisions
-		    pick_object_key(BucketId, Prefix, FileName0, ModifiedTime0,
-				    LastSeenModifiedTime, UserName,
+		    %% Increment key only, as it could be a different object.
+		    %% Slug ( key ) is not a reliable encoding method, it has collisions.
+		    pick_object_key(BucketId, Prefix, FileName0, Version, UserName,
 				    ExistingDirectoryNames, ExistingObjects,
 				    erlang:binary_to_list(increment_filename(erlang:list_to_binary(ObjectKey0))),
 				    NewName0, IsNewVersion0);
 		true ->
 		    %% Most probably the same object
-		    IsNewVersion1 = is_new_version(Object#object.last_modified_utc, ModifiedTime0),
-		    %% If stored object is older, it should be replaced with a newer version.
-		    %% But in case client have used previous version of object before he started
-		    %% editing, object should be marked as such that have conflict.
-		    case LastSeenModifiedTime =:= undefined of
-			true ->
-			    %% Let caller (upload or copy function) to decide what to do next
+		    IsNewVersion1 = is_new_version(Object#object.version, Version),
+		    case Version of
+			undefined ->
+			    %% Let caller (rename or copy function) to decide what to do next
 			    {ObjectKey0, NewName0, IsNewVersion1, Object, false};
-			false ->
-			    case LastSeenModifiedTime < Object#object.last_modified_utc of
-				true ->
-				    %% Client could have edited object offline and do not have an actual data
+			_ ->
+			    %% If stored object is older, it should be replaced with a newer version.
+			    %% But in case client have used previous version of object before he started
+			    %% editing, it should be marked as such that have conflict.
+			    case IsNewVersion1 of
+				false ->
+				    %% Client could have edited file offline, based on old version
 				    ConflictName = mark_filename_conflict(FileName0, UserName),
 				    ConflictKey = utils:slugify_object_key(ConflictName),
-				    {ConflictKey, ConflictName, IsNewVersion1, Object, true};
-				false ->
-				    %% The client's last seen modified date is the actual object modification date
-				    %% The modified version of file has arrived.
-				    {ObjectKey0, NewName0, IsNewVersion1, Object, false}
+				    {ConflictKey, ConflictName, false, Object, true};
+				true ->
+				    %% A modified version of file has arrived.
+				    {ObjectKey0, NewName0, true, Object, false};
+				conflict ->
+				    %% Split history has been detected
+				    {ObjectKey0, NewName0, false, Object, true}
 			    end
 		    end
 	    end

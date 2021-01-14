@@ -3,7 +3,7 @@
 %%
 -module(download_handler).
 
--export([init/2, real_path/2]).
+-export([init/2, real_prefix/2]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -11,41 +11,66 @@
 -include("log.hrl").
 
 
-real_path(BucketId, Metadata0) ->
+%%
+%% Files are stored by the following URLs
+%% ~object/file-GUID/upload-GUID/N_md5, where N is the part number
+%%
+%% This function returns a bucket id and prefix:
+%% {bucket_id, ~object/file-GUID/upload-GUID/}
+%%
+-spec real_prefix(string(), list()) -> {string(), string()}.
+
+real_prefix(BucketId, Metadata0) ->
     GUID = proplists:get_value("x-amz-meta-guid", Metadata0),
-    %% Old GUID and old bucket id are needed for URI to original object, before it was copied
+    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata0),
+    %% Old GUID, old bucket id and upload id are needed for 
+    %% determining URI of the original object, before it was copied
     OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata0),
     OldBucketId =
 	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata0) of
 	    undefined -> BucketId;
 	    B -> B
 	end,
-    ModifiedTime0 = proplists:get_value("x-amz-meta-modified-utc", Metadata0),
-    case GUID of
-	undefined -> ?WARN("[download_handler] GUID undefined in metadata: ~p~n", [Metadata0]);
-	_ -> ok
-    end,
-    RealPrefix0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-    RealPath0 = utils:prefixed_object_key(RealPrefix0, ModifiedTime0),
+    OldUploadId =
+	case proplists:get_value("x-amz-meta-copy-from-upload-id", Metadata0) of
+	    undefined -> UploadId;
+	    UID -> UID
+	end,
     case OldGUID =/= undefined andalso OldGUID =/= GUID of
 	true ->
-	    RealPrefix1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-	    RealPath1 = utils:prefixed_object_key(RealPrefix1, ModifiedTime0),
-	    {OldBucketId, RealPath1};
-	false -> {OldBucketId, RealPath0}
+	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
+	    {OldBucketId, utils:prefixed_object_key(RealPrefix, OldUploadId)};
+	false ->
+	    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    {BucketId, utils:prefixed_object_key(PrefixedGUID, UploadId)}
     end.
 
 %%
-%% Check if user has access to provided bucket name,
+%% Check if visitor has the right to download object.
+%% If authenticated, check if user has access to provided bucket name,
 %% then check if object exists.
 %% Returns object's real path.
 %%
+validate_request(BucketId, undefined, PrefixedObjectKey) ->
+    case utils:is_valid_bucket_id(BucketId, undefined) of
+	true ->
+
+	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+		not_found -> not_found;
+		Metadata -> validate_request(BucketId, Metadata)
+	    end;
+	false -> {error, 37}
+    end;
 validate_request(BucketId, User, PrefixedObjectKey) ->
     case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
 	true ->
-	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-		User#user.groups),
+	    UserBelongsToGroup =
+		case utils:is_public_bucket_id(BucketId) of
+		    true -> true;  %% anyone can download from public bucket
+		    false -> lists:any(fun(Group) ->
+				utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
+				User#user.groups)
+		end,
 	    case UserBelongsToGroup of
 		false -> {error, 37};
 		true ->
@@ -60,13 +85,12 @@ validate_request(BucketId, Metadata0) ->
     case proplists:get_value("x-amz-meta-is-deleted", Metadata0) of
 	"true" -> not_found;
 	_ ->
-	    {OldBucketId, RealPath} = real_path(BucketId, Metadata0),
-
+	    {OldBucketId, RealPrefix} = real_prefix(BucketId, Metadata0),
 	    ContentType = proplists:get_value(content_type, Metadata0),
 	    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
 	    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),
 	    OrigName1 = utils:unhex(OrigName0),
-	    {OldBucketId, RealPath, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+	    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
     end.
 
 %%
@@ -75,19 +99,23 @@ validate_request(BucketId, Metadata0) ->
 %% It uses authorization token HTTP header, if provided.
 %% Otherwise it checks session cookie.
 %%
-check_privileges(Req0) ->
+check_privileges(Req0, BucketId) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
-	undefined -> 
+	undefined ->
 	    Settings = #general_settings{},
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
 	    case login_handler:check_session_id(SessionID0) of
-		false -> {error, 28};
+		false ->
+		    case utils:is_public_bucket_id(BucketId) of
+			true -> undefined;
+			false -> {error, 28}
+		    end;
 		{error, Code} -> {config_error, Code};
 		User -> User
 	    end;
-	Token -> 
+	Token ->
 	    case login_handler:check_token(Token) of
 		not_found -> {error, 28};
 		expired -> {error, 38};
@@ -95,47 +123,128 @@ check_privileges(Req0) ->
 	    end
     end.
 
+
+%%
+%% Checks if Range request header is valid.
+%%
+validate_range(undefined, _TotalBytes) -> undefined;
+validate_range(Value, TotalBytes) ->
+    try cow_http_hd:parse_range(Value) of
+	{bytes, [{StartByte, EndByte}]} ->
+	    case StartByte =/= undefined andalso EndByte =/= undefined of
+		true -> validate_range(StartByte, EndByte, TotalBytes);
+		false -> {StartByte, EndByte}
+	    end
+    catch
+	error:_ -> {error, 23}
+    end.
+
+validate_range(undefined, _EndByte, _TotalBytes) -> {error, 23};
+validate_range(StartByte, undefined, TotalBytes) -> {StartByte, TotalBytes};
+validate_range(StartByte, EndByte, _TotalBytes) when StartByte > EndByte -> {error, 23};
+validate_range(StartByte, EndByte, _TotalBytes) -> {StartByte, EndByte}.
+
 %%
 %% Receives stream from httpc and passes it to cowboy
 %%
-receive_streamed_body(Req0, RequestId, Pid) ->
-    httpc:stream_next(Pid),
+receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
+    httpc:stream_next(Pid0),
     receive
-	{http, {RequestId, stream, BinBodyPart}} ->
+	{http, {RequestId0, stream, BinBodyPart}} ->
 	    cowboy_req:stream_body(BinBodyPart, nofin, Req0),
-	    receive_streamed_body(Req0, RequestId, Pid);
-	{http, {RequestId, stream_end, _Headers}} ->
-	    cowboy_req:stream_body(<<>>, fin, Req0);
+	    receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0);
+	{http, {RequestId0, stream_end, _Headers0}} ->
+	    case NextObjectKeys0 of
+		[] -> cowboy_req:stream_body(<<>>, fin, Req0);
+		[CurrentObjectKey|NextObjectKeys1] ->
+		    %% stream next chunk
+		    case riak_api:get_object(BucketId, CurrentObjectKey, stream) of
+			not_found ->
+			    ?ERROR("[download_handler] error: part not found: ~p/~p", [BucketId, CurrentObjectKey]),
+			    cowboy_req:stream_body(<<>>, fin, Req0);
+			{ok, RequestId1} ->
+			    receive
+				{http, {RequestId1, stream_start, _Headers1, Pid1}} ->
+				    receive_streamed_body(Req0, RequestId1, Pid1, BucketId, NextObjectKeys1);
+				{http, Msg} -> ?ERROR("[download_handler] stream error: ~p", [Msg])
+			    end
+		    end
+	    end;
 	{http, Msg} ->
 	    ?ERROR("[download_handler] error receiving stream body: ~p", [Msg]),
 	    cowboy_req:stream_body(<<>>, fin, Req0)
     end.
 
-%%
-%% Checks if Range request header is valid.
-%%
-validate_range(Req0) ->
-    Value = cowboy_req:header(<<"range">>, Req0),
-    {StartByte0, EndByte0} =
-	case Value of
-	    undefined -> {undefined, undefined};
-	    Value ->
-		{bytes, [{StartByte1, EndByte1}]} = cow_http_hd:parse_range(Value),
-		{StartByte1, EndByte1}
-	end,
-    case StartByte0 =/= undefined andalso EndByte0 =/= undefined of
-	true ->
-	    case StartByte0 > EndByte0 of
-		true -> undefined;
-		false -> Value
-	    end;
-	false -> Value
+
+stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte) ->
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    PartNum0 = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    PartNum1 = erlang:integer_to_binary(PartNum0),
+    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
+	not_found ->
+	    Req1 = cowboy_req:reply(404, #{
+            	<<"content-type">> => <<"text/html">>
+            }, <<"404: Not found">>, Req0),
+	    {ok, Req1, []};
+	RiakResponse0 ->
+	    Contents = proplists:get_value(contents, RiakResponse0),
+	    List0 = lists:dropwhile(
+		fun(K) ->
+		    ObjectKey0 = proplists:get_value(key, K),
+		    Tokens = string:tokens(ObjectKey0, "/"),
+		    ObjectKey1 = lists:last(Tokens),
+		    not utils:starts_with(ObjectKey1, << PartNum1/binary, "_" >>)
+		end, Contents),
+	    case List0 of
+		 [] ->
+		    Req2 = cowboy_req:reply(404, #{
+			<<"content-type">> => <<"text/html">>
+		    }, <<"404: Not found">>, Req0),
+		    {ok, Req2, []};
+		 [CurrentObject | NextObjects] ->
+		    ContentDisposition = << <<"attachment;filename=\"">>/binary, OrigName/binary, <<"\"">>/binary >>,
+		    PartStartByte =
+			case PartNum0 of
+			    1 -> erlang:integer_to_binary(StartByte);
+			    _ -> erlang:integer_to_binary(StartByte rem ?FILE_UPLOAD_CHUNK_SIZE)
+			end,
+		    Headers0 = #{
+			<<"content-type">> => ContentType,
+			<<"content-disposition">> => ContentDisposition,
+			<<"content-length">> => Bytes,
+			<<"range">> => << "bytes=", PartStartByte/binary, "-" >>
+		    },
+		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
+		    PrefixedObjectKey = proplists:get_value(key, CurrentObject),
+		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
+			not_found ->
+        		    Req4 = cowboy_req:reply(404, #{
+            			<<"content-type">> => <<"text/html">>
+        		    }, <<"404: Not found">>, Req0),
+			    {ok, Req4, []};
+			{ok, RequestId} ->
+			    receive
+				{http, {RequestId, stream_start, _Headers, Pid}}  ->
+				    NextObjectKeys = [proplists:get_value(key, I) || I <- NextObjects],
+				    receive_streamed_body(Req3, RequestId, Pid, BucketId, NextObjectKeys);
+				{http, Msg} -> ?ERROR("[download_handler] error starting stream: ~p", [Msg])
+			    end,
+			    {ok, Req3, []}
+		    end
+	    end
     end.
 
 
-init(Req0, Opts) ->
+init(Req0, _Opts) ->
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
-    case check_privileges(Req0) of
+    PathInfo = cowboy_req:path_info(Req0),
+    BucketId =
+	case lists:nth(1, PathInfo) of
+	    undefined -> undefined;
+	    <<>> -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    case check_privileges(Req0, BucketId) of
 	{error, Number} ->
 	    Req1 = cowboy_req:reply(403, #{
 		<<"content-type">> => <<"application/json">>
@@ -147,13 +256,6 @@ init(Req0, Opts) ->
 	    }, jsx:encode([{error, erlang:list_to_binary(Code)}]), Req0),
 	    {ok, Req1, []};
 	User ->
-	    PathInfo = cowboy_req:path_info(Req0),
-	    BucketId =
-		case lists:nth(1, PathInfo) of
-		    undefined -> undefined;
-		    <<>> -> undefined;
-		    BV -> erlang:binary_to_list(BV)
-		end,
 	    Path0 = lists:nthtail(1, PathInfo),
 	    Path1 = erlang:list_to_binary(utils:join_list_with_separator(Path0, <<"/">>, [])),
 	    PrefixedObjectKey = erlang:binary_to_list(Path1),
@@ -168,34 +270,12 @@ init(Req0, Opts) ->
 			<<"content-type">> => <<"application/json">>
 		    }, jsx:encode([{error, Number}]), Req0),
 		    {ok, Req1, []};
-		{OldBucketId, RealPath, ContentType, OrigName, Bytes} ->
-		    Range = validate_range(Req0),
-		    ContentDisposition = << <<"attachment;filename=\"">>/binary, OrigName/binary, <<"\"">>/binary >>,
-		    Headers0 = #{
-			<<"content-type">> => ContentType,
-			<<"content-disposition">> => ContentDisposition,
-			<<"content-length">> => Bytes
-		    },
-		    Headers1 =
-			case Range of
-			    undefined -> Headers0;
-			    _ -> maps:put(<<"range">>, Range, Headers0)
-			end,
-		    Req1 = cowboy_req:stream_reply(200, Headers1, Req0),
-		    case riak_api:get_object(OldBucketId, RealPath, stream) of
-			not_found ->
-        		    Req1 = cowboy_req:reply(404, #{
-            			<<"content-type">> => <<"text/html">>
-        		    }, <<"404: Not found">>, Req0),
-			    {ok, Req1, []};
-			{ok, RequestId} ->
-			    receive
-				{http, {RequestId, stream_start, _Headers, Pid}}  ->
-				    receive_streamed_body(Req1, RequestId, Pid);
-				{http, Msg} ->
-				    ?ERROR("[download_handler] stream error: ~p", [Msg])
-			    end,
-			    {ok, Req1, Opts}
+		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
+		    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
+			undefined -> stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0);
+			{error, Number} -> js_handler:bad_request(Req0, Number);
+			{StartByte, _EndByte} ->
+			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte)
 		    end
 	    end
     end.

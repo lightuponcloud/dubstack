@@ -58,66 +58,84 @@ to_scale(Req0, State) ->
 		    case utils:to_integer(TotalBytes) > ?MAXIMUM_IMAGE_SIZE_BYTES of
 			true -> {<<>>, Req0, []};
 			false ->
-			    {OldBucketId, RealPath} = download_handler:real_path(BucketId, RiakResponse0),
-			    scale_attempt(Req0, OldBucketId, RealPath, CropFlag, Width, Height)
+			    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
+			    UploadId = proplists:get_value("x-amz-meta-upload-id", RiakResponse0),
+			    BinaryData = riak_api:get_object(BucketId, GUID, UploadId),
+			    Reply0 = img:scale([
+				{from, BinaryData},
+				{to, jpeg},
+				{crop, CropFlag},
+				{scale_width, Width},
+				{scale_height, Height}
+			    ]),
+			    case Reply0 of
+				{error, Reason} -> js_handler:bad_request(Req0, Reason);
+				Output0 -> {Output0, Req0, []}
+			    end
 		    end
 	    end
     end.
 
-scale_attempt(Req0, BucketId, RealPath, CropFlag, Width, Height) ->
-    case riak_api:get_object(BucketId, RealPath) of
-	not_found -> {<<>>, Req0, []};
-	RiakResponse1 ->
-	    Content = proplists:get_value(content, RiakResponse1),
-	    Reply0 = img:scale([
-		{from, Content},
-		{to, jpeg},
-		{crop, CropFlag},
-		{scale_width, Width},
-		{scale_height, Height}
-	    ]),
-	    case Reply0 of
-		{error, Reason} -> js_handler:bad_request(Req0, Reason);
-		Output0 -> {Output0, Req0, []}
-	    end
-    end.
+
 
 %%
 %% Checks if provided token is correct ( Token is optional here ).
 %% ( called after 'allowed_methods()' )
 %%
 is_authorized(Req0, _State) ->
-    %% Extracts token from request headers and looks it up in "security" bucket
-    case utils:get_token(Req0) of
-	undefined -> 
-	    %% Check session id
-	    Settings = #general_settings{},
-	    SessionCookieName = Settings#general_settings.session_cookie_name,
-	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-	    case login_handler:check_session_id(SessionID0) of
-		false -> js_handler:unauthorized(Req0, 28);
-		{error, Number} -> js_handler:unauthorized(Req0, Number);
-		User -> {true, Req0, User}
-	    end;
-	Token ->
-	    case login_handler:check_token(Token) of
-		not_found -> js_handler:unauthorized(Req0, 28);
-		expired -> js_handler:unauthorized(Req0, 28);
-		User -> {true, Req0, User}
-	    end
-    end.
-
-
-%%
-%% Checks if provided token ( or access token ) is valid.
-%% ( called after 'allowed_methods()' )
-%%
-forbidden(Req0, User) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
+    %% Extracts token from request headers and looks it up in "security" bucket
+    case utils:get_token(Req0) of
+	undefined ->
+	    %% Check session id
+	    Settings = #general_settings{},
+	    SessionCookieName = Settings#general_settings.session_cookie_name,
+	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
+	    case login_handler:check_session_id(SessionID0) of
+		false ->
+		    case utils:is_public_bucket_id(BucketId) of
+			true ->
+			    case utils:is_valid_bucket_id(BucketId, undefined) of
+				true -> {true, Req0, [{bucket_id, BucketId}]};
+				false -> js_handler:unauthorized(Req0, 27)
+			    end;
+			false -> js_handler:unauthorized(Req0, 28)
+		    end;
+		{error, Number} -> js_handler:unauthorized(Req0, Number);
+		User ->
+		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
+			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
+			false -> js_handler:unauthorized(Req0, 27)
+		    end
+	    end;
+	Token ->
+	    case login_handler:check_token(Token) of
+		not_found -> js_handler:unauthorized(Req0, 28);
+		expired -> js_handler:unauthorized(Req0, 28);
+		User ->
+		    case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
+			true -> {true, Req0, [{bucket_id, BucketId}, {user, User}]};
+			false -> js_handler:unauthorized(Req0, 27)
+		    end
+	    end
+    end.
+
+%%
+%% Checks if provided token ( or access token ) is valid.
+%% ( called after 'allowed_methods()' )
+%%
+forbidden(Req0, State) ->
+    User = proplists:get_value(user, State),
+    TenantId =
+	case User of
+	    undefined -> undefined;
+	    _ -> User#user.tenant_id
+	end,
+    BucketId = proplists:get_value(bucket_id, State),
     ParsedQs = cowboy_req:parse_qs(Req0),
     Prefix = list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)),
     ObjectKey0 =
@@ -146,22 +164,21 @@ forbidden(Req0, User) ->
 	    <<"0">> -> false;
 	    _ -> true
 	end,
-    BucketIdOK =
-	case utils:is_valid_bucket_id(BucketId, User#user.tenant_id) of
-	    false -> {error, 27};
-	    true -> ok
-	end,
-    case lists:keyfind(error, 1, [Prefix, ObjectKey0, BucketIdOK]) of
+    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
 	{error, Number} -> js_handler:forbidden(Req0, Number);
 	false ->
-	    UserBelongsToGroup = lists:any(fun(Group) ->
-		utils:is_bucket_belongs_to_group(BucketId, User#user.tenant_id, Group#group.id) end,
-		User#user.groups),
+	    UserBelongsToGroup =
+		case User =:= undefined orelse utils:is_public_bucket_id(BucketId) of
+		    true -> undefined;
+		    false -> lists:any(
+			    fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
+			    User#user.groups)
+		end,
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
 		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
-		true ->
+		_ ->
 		    {false, Req0, [
 			{bucket_id, BucketId},
 			{prefix, Prefix},

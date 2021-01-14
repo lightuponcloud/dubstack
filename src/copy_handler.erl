@@ -240,8 +240,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 							       {lock_user_name, undefined},
 							       {lock_user_tel, undefined},
 							       {lock_modified_utc, undefined}]),
-    ModifiedTime0 = proplists:get_value("modified-utc", ObjectMeta0),
-    ModifiedTime1 = erlang:list_to_integer(ModifiedTime0),
+    UploadId = proplists:get_value("upload-id", ObjectMeta0),
     OrigName0 = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", ObjectMeta0))),
     OrigName1 =
 	case NewName0 of
@@ -251,7 +250,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
     %% Determine destination object name, as directory with the same name might exist
     UserName = utils:unhex(erlang:list_to_binary(User#user.name)),
     {ObjectKey0, OrigName2, _IsNewVersion, ExistingObject0, _IsConflict} = riak_api:pick_object_key(
-	    DstBucketId, DstPrefix0, OrigName1, ModifiedTime1, undefined, UserName, DstIndexContent),
+	    DstBucketId, DstPrefix0, OrigName1, undefined, UserName, DstIndexContent),
     %% Do not copy over locked file.
     %% If file is overwritten by copy, its previous version still can be restored.
     {IsLocked, LockUserId} =
@@ -293,10 +292,11 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	    case riak_api:put_object(DstBucketId, DstPrefix0, ObjectKey0, <<>>,
 				     [{acl, public_read}, {meta, ObjectMeta1}]) of
 		ok ->
-		    %% Put "stop" file to copied real object, to prevent it removal,
-		    %% when new version uploaded. We have just created a link on that object.
+		    %% Put "stop" file on copied real object, to prevent its removal, when
+		    %% a new version uploaded ( we have just created a link to that object ).
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-		    case riak_api:put_object(OldBucketId, RealPrefix, ModifiedTime0++".stop", <<>>,
+		    StopSuffix = ?STOP_OBJECT_NAME,
+		    case riak_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>,
 					     [{acl, public_read}]) of
 			ok ->
 			    IsRenamed = OrigName2 =/= OrigName0,
@@ -538,9 +538,17 @@ copy(Req0, State) ->
 	    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
     end,
     Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
-    Req1 = cowboy_req:reply(200, #{
-	<<"content-type">> => <<"application/json">>
-    }, jsx:encode(Result), Req0),
+    Req1 =
+	case length(Result) of
+	    0 -> 
+		cowboy_req:reply(304, #{
+		    <<"content-type">> => <<"application/json">>
+		}, <<"[]">>, Req0);
+	    _ ->
+		cowboy_req:reply(200, #{
+		    <<"content-type">> => <<"application/json">>
+		}, jsx:encode(Result), Req0)
+    end,
     {stop, Req1, []}.
 
 %%
@@ -559,24 +567,36 @@ allowed_methods(Req, State) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, State) ->
-    list_handler:is_authorized(Req0, State).
+is_authorized(Req0, _State) ->
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	Token -> login_handler:get_user_or_error(Req0, Token)
+    end.
 
-copy_forbidden(Req0, User) ->
+copy_forbidden(Req0, User0) ->
     SrcBucketId =
 	case cowboy_req:binding(src_bucket_id, Req0) of
 	    undefined -> undefined;
 	    BV -> erlang:binary_to_list(BV)
 	end,
-    TenantId = User#user.tenant_id,
-    UserBelongsToGroup =
+    TenantId = User0#user.tenant_id,
+    IsCopyAllowed =
 	case utils:is_valid_bucket_id(SrcBucketId, TenantId) of
-	    true -> lists:any(fun(Group) ->
-		    utils:is_bucket_belongs_to_group(SrcBucketId, TenantId, Group#group.id) end,
-		    User#user.groups);
-	    false -> false
+	    false -> false;
+	    true ->
+		UserBelongsToSrcGroup = lists:any(fun(Group) ->
+			utils:is_bucket_belongs_to_group(SrcBucketId, TenantId, Group#group.id) end,
+			User0#user.groups),
+		case UserBelongsToSrcGroup of
+		    true -> true;
+		    false ->
+			case utils:is_public_bucket_id(SrcBucketId) of
+			    true -> User0#user.staff;
+			    false -> false
+			end
+		end
 	end,
-    case UserBelongsToGroup of
+    case IsCopyAllowed of
 	true ->
 	    {ok, Body, Req1} = cowboy_req:read_body(Req0),
 	    case jsx:is_json(Body) of
@@ -589,19 +609,27 @@ copy_forbidden(Req0, User) ->
 			    undefined -> undefined;
 			    DstBucketId1 -> unicode:characters_to_list(DstBucketId1)
 			end,
-		    TenantId = User#user.tenant_id,
+		    TenantId = User0#user.tenant_id,
 		    DstBucketCanBeModified =
 			case utils:is_valid_bucket_id(DstBucketId0, TenantId) of
+			    false -> false;
 			    true ->
-				lists:any(fun(Group) ->
+				UserBelongsToDstGroup = lists:any(fun(Group) ->
 				    utils:is_bucket_belongs_to_group(DstBucketId0, TenantId, Group#group.id) end,
-				    User#user.groups);
-			    false -> false
+				    User0#user.groups),
+				case UserBelongsToDstGroup of
+				    true -> true;
+				    false ->
+					case utils:is_public_bucket_id(DstBucketId0) of
+					    true -> User0#user.staff;  %% Only staff user can copy to public bucket
+					    false -> false
+					end
+				end
 			end,
 		    case DstBucketCanBeModified of
 			false -> js_handler:forbidden(Req1, 26);
 			true -> {false, Req1, [
-				    {user, User},
+				    {user, User0},
 				    {src_bucket_id, SrcBucketId},
 				    {dst_bucket_id, DstBucketId0},
 				    {src_prefix, proplists:get_value(<<"src_prefix">>, FieldValues)},
@@ -610,7 +638,9 @@ copy_forbidden(Req0, User) ->
 				]}
 		    end
 	    end;
-	false -> js_handler:forbidden(Req0, 27, User#user.groups)
+	false ->
+	    User1 = admin_users_handler:user_to_proplist(User0),
+	    js_handler:forbidden(Req0, 27, proplists:get_value(groups, User1))
     end.
 
 %%

@@ -67,6 +67,17 @@ function guid() {
     s4() + '-' + s4() + s4() + s4();
 }
 
+function decodeBase64(s) {
+    var e={},i,b=0,c,x,l=0,a,r='',w=String.fromCharCode,L=s.length;
+    var A="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for(i=0;i<64;i++){e[A.charAt(i)]=i;}
+    for(x=0;x<L;x++){
+        c=e[s.charAt(x)];b=(b<<6)+c;l+=6;
+        while(l>=8){((a=(b>>>(l-=8))&0xff)||(x<(L-2)))&&(r+=w(a));}
+    }
+    return r;
+}
+
 function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
     var files=[];
     var directories=[];
@@ -129,9 +140,12 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
       if(dir_name.indexOf('/')==0) dir_name = dir_name.substring(1, dir_name.length);
       directories.push({'name': dir_name, 'prefix': hex_prefix, 'guid': guid()});
     });
+    var dvvset = $.dvvset();
     $(data.list).each(function(i,v){
       if(v.is_deleted) return true;
-      var date = v.last_modified_utc;
+      var version = JSON.parse(decodeBase64(v.version));
+      var values = dvvset.values(version);
+      var date = values[0];
       var name = v.object_key;
       var orig_name = v.orig_name;
       if(!embedded){
@@ -145,6 +159,7 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 	'ct': v.content_type,
 	'bytes': v.bytes,
 	'guid': v.guid,
+        'version': v.version,
 	'is_locked': v.is_locked,
 	'lock_modified_utc': v.lock_modified_utc,
 	'lock_user_name': v.lock_user_name,
@@ -188,12 +203,12 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      if(prefix) name = name.replace(prefix, '');
      var button='<div class="file-menu"><a class="menu-link" href="#" data-obj-n="'+encodeURIComponent(obj_name)+'" data-obj-url="'+url+'" data-obj-preview-url="'+v.preview_url+'" data-obj-pub-url="'+url+'">Action<span>&#9660;</span></a></div>';
      var input='';
-     var d=new Date(v.modified*1000);
+     var d=new Date(parseInt(v.modified)*1000);
      var modified=pad(d.getDate(), 2)+'.'+pad(d.getMonth()+1,2)+'.'+d.getFullYear()+' '+pad(d.getHours(),2) + "." + pad(d.getMinutes(), 2);
      if(embedded) button='';
      var gid=v.guid;
      var lock_tel=(v.lock_user_tel==undefined?'':'. Tel: '+v.lock_user_tel);
-     var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name"><a title="'+name+'" class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a></div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
+     var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name" id="'+v.version+'"><a title="'+name+'" class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a></div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
      if(v.ct.substring(0, 5)=='image'){
 	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50');
      }
@@ -914,22 +929,34 @@ $(".cancel-btn").on('click', function(){
     return false;
 });
 
-function upload_files(bucket_id, hex_prefix, files, upload_ids){
+function get_guid_version(filename){
+  // TODO
+  return [];
+}
+
+function upload_files(bucket_id, hex_prefix, files, dom_ids){
   var file = files.shift();
-  var upload_id = upload_ids.shift();
+  var dom_id = dom_ids.shift();
   var root_uri=$('body').attr('data-root-uri');
 
-  var stack = $.stack({'errorElementID': 'id-progress_'+upload_id, rpc_url: root_uri+'upload/'+bucket_id+'/', 'chunk_size': 2000000, 'onSuccess': function(data, status){
+  var stack = $.stack({'errorElementID': 'id-progress_'+dom_id, rpc_url: root_uri+'upload/'+bucket_id+'/', 'chunk_size': 2000000, 'onSuccess': function(data, status){
    if(data&&data.hasOwnProperty('error')){
-      $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext(data['error'])+'</span>');
+      $('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext(data['error'])+'</span>');
       return;
    };
    if(files){
-    upload_id=upload_ids.shift();
+    dom_id=dom_ids.shift();
     file = files.shift();
     if(file){
-      stack.setErrorElementID('id-progress_'+upload_id);
-      stack.file_upload(file, upload_id, hex_prefix);
+      stack.setErrorElementID('id-progress_'+dom_id);
+      var gv = get_guid_version(file.name);
+      var guid = null;
+      var version = null;
+      if(gv!=[]) {
+	guid = gv[0];
+	version = gv[1];
+      }
+      stack.file_upload(file, dom_id, hex_prefix, guid, version);
     } else {
       $('#id-upload-button').attr('data-uploadDisabled', false);
       if(hex_prefix){
@@ -947,24 +974,32 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
       } else {
 	var p=parseInt((evt.loaded / evt.total * 100), 10);
       }
-      if(p==100) p = '<span style="color:green;">'+p+'%</span>';
-	else p = p+'%';
-	$('#id-progress_'+upload_id).empty().append(p);
-      }
+      if(p>=100) {
+	  p = '<span style="color:green;">100%</span>';
+      } else { p = p+'%' };
+      $('#id-progress_'+dom_id).empty().append(p);
+    }
   }, 'onFailure': function(msg, xhr, status){
     $('#id-upload-button').attr('data-uploadDisabled', false);
     if(msg=='fd_error'){
-      $('#id-progress_'+upload_id).empty().append('<span class="err">file read error</span>');
+      $('#id-progress_'+dom_id).empty().append('<span class="err">file read error</span>');
       return;
     }
     if(status=="notmodified"){
-      $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext("notmodified")+'</span>');
+      $('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext("notmodified")+'</span>');
       if(files){
-        upload_id=upload_ids.shift();
+        dom_id=dom_ids.shift();
         file = files.shift();
 	if(file){
-	  stack.setErrorElementID('id-progress_'+upload_id);
-	  stack.file_upload(file, upload_id, hex_prefix);
+	  stack.setErrorElementID('id-progress_'+dom_id);
+	  var gv = get_guid_version(file.name);
+	  var guid = null;
+	  var version = null;
+	  if(gv!=[]) {
+	    guid = gv[0];
+	    version = gv[1];
+	  }
+	  stack.file_upload(file, dom_id, hex_prefix, guid, version);
 	} else {
 	  $('#id-upload-button').attr('data-uploadDisabled', false);
 	  if(hex_prefix){
@@ -978,33 +1013,40 @@ function upload_files(bucket_id, hex_prefix, files, upload_ids){
       return;
     }
     if((status=='error'||status=='timeout')&&xhr.readyState==0){
-	var attempts=$('#id-progress_'+upload_id).attr('data-attempts');
+	var attempts=$('#id-progress_'+dom_id).attr('data-attempts');
 	if(attempts==undefined) attempts=401; // 20 minutes with 3 seconds interval
 	attempts-=1;
-	$('#id-progress_'+upload_id).empty().attr('data-attempts', attempts);
+	$('#id-progress_'+dom_id).empty().attr('data-attempts', attempts);
 	if(attempts<1){
-	  $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext("connection timeout")+'</span>');
+	  $('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext("connection timeout")+'</span>');
 	  return;
 	}
-	$('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext('retrying..')+'</span>');
+	$('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext('retrying..')+'</span>');
 	setTimeout(function(){
-	    $('#id-progress_'+upload_id).empty().append('queueing');
+	    $('#id-progress_'+dom_id).empty().append('queueing');
             try {
-	     upload_files(bucket_id, hex_prefix, [file], [upload_id]);
+	     upload_files(bucket_id, hex_prefix, [file], [dom_id]);
             } catch (e) {
             }
 	}, 3000);
       return;
     } else if(msg&&status=='error'){
-      $('#id-progress_'+upload_id).empty().append('<span class="err">'+gettext(msg)+'</span>');
+      $('#id-progress_'+dom_id).empty().append('<span class="err">'+gettext(msg)+'</span>');
       return;
     } else if(status=='error'){
-      $('#id-progress_'+upload_id).empty().append('<span class="err">error, try later</span>');
+      $('#id-progress_'+dom_id).empty().append('<span class="err">error, try later</span>');
       return;
     }
   }
  });
- stack.file_upload(file, upload_id, hex_prefix);
+ var gv = get_guid_version(file.name);
+ var guid = null;
+ var version = null;
+ if(gv!=[]) {
+   guid = gv[0];
+   version = gv[1];
+ }
+ stack.file_upload(file, dom_id, hex_prefix, guid, version);
 }
 
 function upload_dialog_add_file(file){
@@ -1012,9 +1054,9 @@ function upload_dialog_add_file(file){
  var fuid=fsize_bytes+file.lastModified;
  if($('#id-dialog-objects-list').find('#'+fuid).length>0) return false;
  var fsize = filesize(fsize_bytes);
- var upload_id=guid();
- $('#id-dialog-objects-list').append('<div class="file-item clearfix" id="'+upload_id+'"><div class="file-name" id="'+fuid+'"><a title="'+file.name+'" class="file-link" href="#"><i class="doc-icon"></i>'+file.name+'</a></div><div class="file-size" data-bytes="'+fsize_bytes+'">'+fsize+'</div><div><div id="id-progress_'+upload_id+'" data-attempts="5">queueing</div></div><div></div></div>');
- return upload_id;
+ var dom_id=guid();
+ $('#id-dialog-objects-list').append('<div class="file-item clearfix" id="'+dom_id+'"><div class="file-name" id="'+fuid+'"><a title="'+file.name+'" class="file-link" href="#"><i class="doc-icon"></i>'+file.name+'</a></div><div class="file-size" data-bytes="'+fsize_bytes+'">'+fsize+'</div><div><div id="id-progress_'+dom_id+'" data-attempts="5">queueing</div></div><div></div></div>');
+ return dom_id;
 }
 
 

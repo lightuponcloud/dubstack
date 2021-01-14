@@ -8,12 +8,12 @@
           s3_host="s3.amazonaws.com"::string(),
           s3_port=80::non_neg_integer(),
 	  s3_proxy_host="127.0.0.1"::string(),
-	  s3_proxy_port=8080::non_neg_integer(),
+	  s3_proxy_port=15018::non_neg_integer(),
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="ME2SD-PXXCPNTQHCS_PW"::string(),
-          secret_access_key="UBibBH20_ZXum7xKpuIOQIf1b0E0ViY7h0KUwQ"::string(),
+          access_key_id="ZWXQMCADQ_SNUXSCF_IX"::string(),
+          secret_access_key="2QZ7dDFAQqgf9ZkDer6WaLJ5-bIdExiKBvo8Wg"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
@@ -48,18 +48,19 @@
 %% prefix  bucket  group     suffix
 %%
 %% Suffix can be "public", "private" or "restricted"
+%%
 %% Buckets ending with PUBLIC_BUCKET_SUFFIX can
-%% be read by anyone in the Internet.
+%% be read by anyone from the Internet.
 %%
 %% Default: "public"
 %%
--define(PUBLIC_BUCKET_SUFFIX, "public").
+-define(PUBLIC_BUCKET_SUFFIX, "pub").
 %%
 %% Private bucket is available to staff users only
 %%
 %% Default: "private"
 %%
--define(PRIVATE_BUCKET_SUFFIX, "private").
+-define(PRIVATE_BUCKET_SUFFIX, "priv").
 %%
 %% Restricted bucket is available only to group,
 %% encoded in bucket name and to staff users
@@ -86,6 +87,18 @@
 %% as it might take more time to update index.
 %%
 -define(RIAK_LOCK_INDEX_COOLOFF_TIME, 30).
+%%
+%% The name of index file, storing dotted version vectors for objects.
+%%
+-define(RIAK_DVV_INDEX_FILENAME, ".dvv.etf").
+%%
+%% Lock object name. It is created during DVV update.
+%%
+-define(RIAK_LOCK_DVV_INDEX_FILENAME, ".dvv.lock").
+%%
+%% The number of seconds dvv lock can exist.
+%%
+-define(RIAK_LOCK_DVV_COOLOFF_TIME, 30).
 %%
 %% Action logs are stored in XML format in every pseudo-directory
 %% except root ( "/" ).
@@ -126,12 +139,25 @@
 -define(DEFAULT_IMAGE_WIDTH, 250).
 
 %%
+%% Middleware will cache images bigger than the following value.
+%%
+%% Default: 2097152 ( 2 MB )
+%%
+-define(MINIMUM_CACHE_IMAGE_SIZE, 2097152).
+
+%%
 %% Special bucket stores information on Tokens,
 %% CSRF Tokens, Users and Tenants in security bucket.
 %%
 %% Default: "security"
 %%
 -define(SECURITY_BUCKET_NAME, "security").
+%%
+%% Bucket for temporary upload IDs,
+%% Those IDs point to real objects and are used
+%% to detect stale uploads.
+%%
+-define(UPLOADS_BUCKET_NAME, "uploads").
 %%
 %% Prefix to object, that stores User session
 %% in security bucket.
@@ -172,7 +198,7 @@
 %% Acceptable values:
 %%   - on or off
 %%
--define(ANONYMOUS_USER_CREATION, false).
+-define(ANONYMOUS_USER_CREATION, true).
 %%
 %% Maximum length of bucket name in Riak CS is 64 latin characters.
 %% This middleware uses tenant and group name as parts of the bucket name.
@@ -187,8 +213,14 @@
 %%
 %% WARNING: Sum of tenand and group lengths should be <= 51 characters
 %%
--define(MAXIMUM_TENANT_NAME, 26).
--define(MAXIMUM_GROUP_NAME, 25).
+-define(MAXIMUM_TENANT_NAME_LENGTH, 26).
+-define(MAXIMUM_GROUP_NAME_LENGTH, 25).
 
 -define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096). %% maximum image size to try to scale
 
+-define(IMAGE_WORKERS, 5). %% The number of imagemagick workers
+
+%%
+%% Object name for preventing removal
+%%
+-define(STOP_OBJECT_NAME, ".stop").

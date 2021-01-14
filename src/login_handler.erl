@@ -6,9 +6,9 @@
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
 	 allowed_methods/2, to_json/2, handle_post/2,
-	 new_token/3, check_token/1,
+	 new_token/2, check_token/1,
 	 check_credentials/2, new_csrf_token/0, check_csrf_token/1,
-	 check_session_id/1]).
+	 check_session_id/1, get_user_or_error/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
@@ -51,26 +51,26 @@ check_credentials(Login, Password)
 %%
 %% Adds a new authentication token. TODO: add expiration time.
 %%
--spec new_token(any(), string(), string()) -> token().
+-spec new_token(string(), string()) -> token().
 
-new_token(Req0, UserId, TenantId) ->
+new_token(UserId, TenantId) ->
     case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-	not_found -> js_handler:bad_request(Req0, 17);
-	_ ->
-	    ExpirationTime0 = utils:timestamp() + ?SESSION_EXPIRATION_TIME,
-	    ExpirationTime1 = io_lib:format("~p", [ExpirationTime0]),
-	    NewToken = {token, [
-		{expires, [ExpirationTime1]},
-		{user_id, [UserId]},
-		{tenant_id, [TenantId]}
-	    ]},
-	    RootElement0 = #xmlElement{name=auth, content=[NewToken]},
-	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    UUID4 = utils:to_list(riak_crypto:uuid4()),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
-		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-	    UUID4
-    end.
+	not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+        _ -> ok
+    end,
+    ExpirationTime0 = utils:timestamp() + ?SESSION_EXPIRATION_TIME,
+    ExpirationTime1 = io_lib:format("~p", [ExpirationTime0]),
+    NewToken = {token, [
+	{expires, [ExpirationTime1]},
+	{user_id, [UserId]},
+	{tenant_id, [TenantId]}
+    ]},
+    RootElement0 = #xmlElement{name=auth, content=[NewToken]},
+    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
+    UUID4 = utils:to_list(riak_crypto:uuid4()),
+    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+    UUID4.
 
 %%
 %% Adds a new CSRF token
@@ -79,8 +79,7 @@ new_token(Req0, UserId, TenantId) ->
 
 new_csrf_token() ->
     case riak_api:head_bucket(?SECURITY_BUCKET_NAME) of
-        not_found ->
-            riak_api:create_bucket(?SECURITY_BUCKET_NAME);
+        not_found -> riak_api:create_bucket(?SECURITY_BUCKET_NAME);
         _ -> ok
     end,
     ExpirationTime0 = utils:timestamp() + ?CSRF_TOKEN_EXPIRATION_TIME,
@@ -118,8 +117,9 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
     end.
 
 %%
-%% Checks if token exists and has not expired.
-%% Returns user record with his actual existing groups
+%% 1. Checks if token exists and has not expired.
+%% 2. Returns user record with his actual existing groups.
+%% 3. Updates token expiration time
 %%
 -spec check_token(string()) -> user()|not_found|expired.
 
@@ -139,6 +139,19 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 			false -> expired;
 			true ->
 			    UserId = erlcloud_xml:get_text("/auth/token/user_id", RootElement0),
+			    TenantId = erlcloud_xml:get_text("/auth/token/tenant_id", RootElement0),
+
+			    %% Update the expiration time
+			    ExpirationTime2 = utils:timestamp() + ?SESSION_EXPIRATION_TIME,
+			    NewToken = {token, [
+				{expires, [io_lib:format("~p", [ExpirationTime2])]},
+				{user_id, [UserId]},
+				{tenant_id, [TenantId]}
+			    ]},
+			    RootElement1 = #xmlElement{name=auth, content=[NewToken]},
+			    XMLDocument1 = xmerl:export_simple([RootElement1], xmerl_xml),
+			    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+				unicode:characters_to_binary(XMLDocument1), [{acl, private}]),
 			    admin_users_handler:get_user(UserId)
 		    end;
 		_ ->
@@ -187,7 +200,6 @@ check_session_id(SessionID0) when erlang:is_binary(SessionID0) ->
 	    end
     end.
 
-
 %%
 %% Called first
 %%
@@ -229,7 +241,7 @@ handle_post(Req0, _State) ->
 			not_found -> js_handler:forbidden(Req0, 17);
 			blocked -> js_handler:forbidden(Req0, 19);
 			User0 ->
-			    UUID4 = new_token(Req0, User0#user.id, User0#user.tenant_id),
+			    UUID4 = new_token(User0#user.id, User0#user.tenant_id),
 			    Req1 = cowboy_req:set_resp_body(jsx:encode(
 				admin_users_handler:user_to_proplist(User0) ++ [{token, erlang:list_to_binary(UUID4)}]
 			    ), Req0),
@@ -237,4 +249,14 @@ handle_post(Req0, _State) ->
 		    end
 	    end;
 	_ -> js_handler:bad_request(Req0, 18)
+    end.
+
+%%
+%% Returns User record or error, that should be returned by is_authorized function.
+%%
+get_user_or_error(Req0, Token) ->
+    case check_token(Token) of
+	not_found -> js_handler:unauthorized(Req0, 28);
+	expired -> js_handler:unauthorized(Req0, 28);
+	User -> {true, Req0, User}
     end.

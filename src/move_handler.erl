@@ -164,7 +164,7 @@ move(Req0, State) ->
 		    undefined -> "/";
 		    _ -> unicode:characters_to_list(utils:unhex_path(SrcPrefix0)) ++ ["/"]
 		end,
-	    Summary0 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
+	    Summary0 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 				      ["\" from \"", SrcPrefix2, "\"."]]),
 	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
 	    action_log:add_record(DstBucketId, DstPrefix0, ActionLogRecord1),
@@ -178,15 +178,22 @@ move(Req0, State) ->
 	    case SrcPrefix2 =:= DstPrefix1 of
 		true -> ok;
 		false ->
-		    Summary1 = lists:flatten([["Copied"], CopiedDirectories ++ CopiedObjects,
+		    Summary1 = lists:flatten([["Moved"], CopiedDirectories ++ CopiedObjects,
 					      [" to \""], [DstPrefix1, "\"."]]),
 		    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
 		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end,
 	    Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
-	    Req1 = cowboy_req:reply(200, #{
-		<<"content-type">> => <<"application/json">>
-	    }, jsx:encode(Result), Req0),
+	    Req1 = case length(Result) of
+		0 ->
+		    cowboy_req:reply(304, #{
+			<<"content-type">> => <<"application/json">>
+		    }, <<"[]">>, Req0);
+		_ ->
+		    cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>
+		    }, jsx:encode(Result), Req0)
+	    end,
 	    {stop, Req1, []}
     end.
 
@@ -206,8 +213,11 @@ allowed_methods(Req, State) ->
 %% Checks if provided token is correct.
 %% ( called after 'allowed_methods()' )
 %%
-is_authorized(Req0, State) ->
-    list_handler:is_authorized(Req0, State).
+is_authorized(Req0, _State) ->
+    case utils:get_token(Req0) of
+	undefined -> js_handler:unauthorized(Req0, 28);
+	Token -> login_handler:get_user_or_error(Req0, Token)
+    end.
 
 %%
 %% Checks if user has access

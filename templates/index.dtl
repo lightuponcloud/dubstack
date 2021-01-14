@@ -24,7 +24,8 @@
 <script src="{{ static_root }}spark-md5.min.js"></script>
 <script src='{{ static_root }}ui.js' type='text/javascript'></script>
 {% if bucket_id %}<script type="text/javascript" src="{{ root_path }}js/{{ bucket_id }}/"></script>
-<script type="text/javascript" src="{{ static_root }}file_upload.js"></script>{% endif %}
+<script type="text/javascript" src="{{ static_root }}file_upload.js"></script>
+<script type="text/javascript" src="{{ static_root }}jquery.dvvset.js"></script>{% endif %}
 {% block extra_head %}{% endblock %}
 </head>
 
@@ -92,6 +93,7 @@
     <ul class="secondary-menu-list dropdown-menu" aria-labelledby="dropdownMenu1">
 	<!--li class="secondary-menu-buckets"><a class="menu-pub-bucket{% ifequal bucket_suffix public_suffix %}-selected{% endifequal %}" href="#"><span>Public</span></a></li>
 	<li class="secondary-menu-buckets"><a class="menu-priv-bucket{% ifequal bucket_suffix private_suffix %}-selected{% endifequal %}" href="#"><span>Private</span></a></li-->
+    <li class="secondary-menu-buckets"><a class="menu-res-bucket{% ifequal bucket_id public_bucket_id %}-selected{% endifequal %}" href="{{ root_path }}{{ public_bucket_id }}/"><span>{% trans "Public" %}</span></a></li>
     {% for group in groups %}
         <li class="secondary-menu-buckets"><a class="menu-res-bucket{% ifequal bucket_id group.bucket_id %}-selected{% endifequal %}" href="{{ root_path }}{{ group.bucket_id }}/"><span>{{ group.name }}</span></a></li>
     {% endfor %}

@@ -5,7 +5,8 @@
 -module(indexing).
 -export([update/2, update/3, get_index/2, get_object_record/2,
 	 directory_or_object_exists/4, pseudo_directory_exists/2, to_object/1,
-	 get_object_record_by_orig_name/2]).
+	 get_object_record_by_orig_name/2, get_object_index/2, add_dvv/6,
+	 increment_version/3, remove_previous_version/4]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 
@@ -25,11 +26,9 @@ prepare_object_record(Record0, DeletedObjects) ->
     ObjectKey1 = filename:basename(ObjectKey0),
     OrigName0 = proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey1),
     GUID = proplists:get_value("x-amz-meta-guid", Metadata),
-    ModifiedTime =
-	case proplists:get_value("x-amz-meta-modified-utc", Metadata) of
-	    undefined -> null;
-	    T -> utils:to_integer(T)
-	end,
+    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
+    Version = proplists:get_value("x-amz-meta-version", Metadata),
+
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
     UploadTimestamp1 = calendar:datetime_to_gregorian_seconds(UploadTimestamp0) - 62167219200,
     Bytes =
@@ -79,10 +78,24 @@ prepare_object_record(Record0, DeletedObjects) ->
 	    undefined -> null;
 	    C -> utils:unhex(erlang:list_to_binary(C))
 	end,
-    Result = [{orig_name, unicode:characters_to_binary(OrigName1)},
-     {last_modified_utc, ModifiedTime},
+    CopyFromBucketId =
+	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata) of
+	    undefined -> null;
+	    CFId -> CFId
+	end,
+    CopyFromGUID =
+	case proplists:get_value("x-amz-meta-copy-from-guid", Metadata) of
+	    undefined -> null;
+	    CFGuid -> CFGuid
+	end,
+    Result = [
+     {orig_name, unicode:characters_to_binary(OrigName1)},
+     {version, erlang:list_to_binary(Version)},
      {upload_time, UploadTimestamp1},
      {guid, erlang:list_to_binary(GUID)},
+     {upload_id, erlang:list_to_binary(UploadId)},
+     {copy_from_guid, CopyFromGUID},
+     {copy_from_bucket_id, CopyFromBucketId},
      {author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
      {author_name, utils:unhex(erlang:list_to_binary(proplists:get_value("x-amz-meta-author-name", Metadata)))},
      {author_tel, AuthorTel},
@@ -107,17 +120,13 @@ prepare_object_record(Record0, DeletedObjects) ->
     end.
 
 %%
-%% Since index contains JSON values, such as binaries and null's,
-%% sometimes it has to be transformed back to usual object record.
+%% We store JSON values in index files, in order to speed up listing response.
+%% But sometimes it is necessary to get an original Erlang object record.
 %%
 -spec to_object(proplist()) -> object().
 
 to_object(IndexMeta) ->
-    ModifiedTime =
-	case proplists:get_value(last_modified_utc, IndexMeta) of
-	    null -> undefined;
-	    T -> T
-	end,
+    Version = proplists:get_value(version, IndexMeta),
     LockUserId =
 	case proplists:get_value(lock_user_id, IndexMeta) of
 	    null -> undefined;
@@ -146,10 +155,13 @@ to_object(IndexMeta) ->
     #object{
 	key = erlang:binary_to_list(proplists:get_value(object_key, IndexMeta)),
 	orig_name = proplists:get_value(orig_name, IndexMeta),
-	last_modified_utc = ModifiedTime,
+	version = jsx:decode(base64:decode(Version)),
 	upload_time = proplists:get_value(upload_time, IndexMeta),
         bytes = proplists:get_value(bytes, IndexMeta),
         guid = erlang:binary_to_list(proplists:get_value(guid, IndexMeta)),
+        upload_id = erlang:binary_to_list(proplists:get_value(upload_id, IndexMeta)),
+	copy_from_guid = proplists:get_value(copy_from_guid, IndexMeta),
+	copy_from_bucket_id = proplists:get_value(copy_from_bucket_id, IndexMeta),
         is_deleted = erlang:atom_to_list(proplists:get_value(is_deleted, IndexMeta)),
         author_id = erlang:binary_to_list(proplists:get_value(author_id, IndexMeta)),
         author_name = proplists:get_value(author_name, IndexMeta),
@@ -261,13 +273,14 @@ fetch_full_list(BucketId, Prefix)
 fetch_full_list(BucketId, Prefix, ObjectList0, Marker0)
 	when erlang:is_list(BucketId), erlang:is_list(Prefix) orelse Prefix =:= undefined,
 	     erlang:is_list(ObjectList0) ->
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     RiakResponse =
 	case Prefix of
-	    undefined -> riak_api:list_objects(BucketId, [{marker, Marker0}]);
-	    _ -> riak_api:list_objects(BucketId, [{prefix, Prefix}, {marker, Marker0}])
+	    undefined -> riak_api:list_objects(BucketId, [{marker, Marker0}, {max_keys, MaxKeys}]);
+	    _ -> riak_api:list_objects(BucketId, [{prefix, Prefix}, {marker, Marker0}, {max_keys, MaxKeys}])
 	end,
     case RiakResponse of
-	not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];
+	not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];  %% bucket not found
 	_ ->
 	    Contents = proplists:get_value(contents, RiakResponse),
 	    Marker1 = proplists:get_value(next_marker, RiakResponse),
@@ -438,14 +451,14 @@ directory_or_object_exists(BucketId, Prefix, Name0, IndexContent)
 
 update(BucketId, Prefix) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [{acl, public_read}],  % TODO: public_read
+    RiakOptions = [{acl, public_read}],
     update(BucketId, Prefix, [], RiakOptions).
 
 -spec update(string(), list(), proplist()) -> proplist().
 
 update(BucketId, Prefix, Options) when erlang:is_list(BucketId),
 	erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    RiakOptions = [{acl, public_read}],  % TODO: public_read
+    RiakOptions = [{acl, public_read}],
     update(BucketId, Prefix, Options, RiakOptions).
 
 -spec update(string(), list(), proplist(), proplist()) -> proplist().
@@ -521,3 +534,156 @@ update(BucketId, Prefix0, Options, RiakOptions)
 		false -> lock
 	    end
     end.
+
+%%
+%% Returns all versions and all chunks of provided object by its GUID.
+%%
+-spec get_object_index(list(), list()) -> list().
+
+get_object_index(BucketId, GUID) when erlang:is_list(BucketId), erlang:is_list(GUID) ->
+    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+    PrefixedDVVObjectName = utils:prefixed_object_key(RealPrefix, ?RIAK_DVV_INDEX_FILENAME),
+
+    %% Get dotted version vectors object in destination pseudo-directory
+    case riak_api:get_object(BucketId, PrefixedDVVObjectName) of
+	not_found -> [];
+	Response -> erlang:binary_to_term(proplists:get_value(content, Response))
+    end.
+
+%%
+%% Version object lock is stored as bucket-id/GUID/dvv.etf
+%% This function removes expired lock object.
+%%
+remove_expired_dvv_lock(BucketId, GUID) ->
+    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
+    case riak_api:head_object(BucketId, PrefixedLockFilename) of
+	not_found -> ok;
+	DVVLockMeta ->
+	    %% Check for stale index
+	    DeltaSeconds =
+		case proplists:get_value("x-amz-meta-modified-utc", DVVLockMeta) of
+		    undefined -> 0;
+		    T -> erlang:round(utils:timestamp()/1000) - utils:to_integer(T)
+		end,
+	    case DeltaSeconds > ?RIAK_LOCK_DVV_COOLOFF_TIME of
+		true ->
+		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    remove_expired_dvv_lock(BucketId, GUID);
+		false -> lock
+	    end
+    end.
+
+
+%%
+%% Removes previous version ( on the same day ) from the DVV index,
+%% if exists and returns a previous upload id.
+%%
+%% Files are stored by the following URLs
+%% ~object/file-GUID/upload-GUID/N_md5, where N is the part number
+%% Ther's also index that stores {upload_id: version} mapping.
+%%
+-spec remove_previous_version(
+    BucketId :: string(),
+    GUID :: string(),
+    UploadId :: string(),
+    Version :: list()) -> binary()|undefined.
+remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(Version) ->
+    List0 = get_object_index(BucketId, GUID),
+    %% Find upload id of the previous version by date
+    DVVs = lists:map(
+	fun(I) ->
+	    UploadId1 = element(1, I),
+	    Attrs = element(2, I),
+	    Timestamp = proplists:get_value(last_modified_utc, Attrs),
+	    Date = utils:format_timestamp(utils:to_integer(Timestamp)),
+	    DVV = proplists:get_value(dot, Attrs),
+	    {UploadId1, Date, DVV}
+	end, List0),
+    [VVTimestamp] = dvvset:values(Version),
+    VVDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
+    PreviousOne = [I || I <- DVVs, element(1, I) =/= UploadId0 andalso element(2, I) =:= VVDate],
+    case PreviousOne of
+	[{UploadId2, _Date, _VV}] ->
+	    NewDVVs = lists:keydelete(UploadId2, 1, List0),
+	    case remove_expired_dvv_lock(BucketId, GUID) of
+		lock -> lock;
+		ok ->
+		    RiakOptions = [{acl, public_read}],
+		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+		    riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
+				term_to_binary(NewDVVs), RiakOptions),
+		    %% Remove lock
+		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
+		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    UploadId2
+	    end;
+	[] -> undefined
+    end.
+
+%%
+%% Adds dot to the saved version vector history
+%% and returns {upload_id, history} of the new version.
+%%
+%% Records are stored in .etf file in the following format.
+%%
+%% [{"upload-id-GUID", [
+%%    {dot, ..},
+%%    {author_id, ..}
+%%    {author_name, ..},
+%%    {last_modified_utc}
+%%   ]
+%% }]
+%%
+-spec add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName) -> {string(), list()} when
+    BucketId :: string(),
+    GUID :: string(),        %% the real path GUID
+    UploadId :: string(),
+    Version :: list(),      %% casual clock
+    UserId :: string(),
+    UserName :: binary().
+
+add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
+	when erlang:is_list(GUID), erlang:is_list(UploadId),
+	     erlang:is_list(UserId), erlang:is_list(UserName),
+	     erlang:is_list(Version) ->
+    case remove_expired_dvv_lock(BucketId, GUID) of
+	lock -> lock;
+	ok ->
+	    %% Get an existing list of version vectors first.
+	    List0 = get_object_index(BucketId, GUID),
+    	    case proplists:is_defined(UploadId, List0) of
+		true -> {UploadId, proplists:get_value(UploadId, List0)};
+		false ->
+		    [VVTimestamp] = dvvset:values(Version),
+		    Record = [
+			{dot, Version},
+			{user_id, UserId},
+			{user_name, UserName},
+			{last_modified_utc, VVTimestamp}
+		    ],
+		    List1 = List0 ++ [{UploadId, Record}],
+		    RiakOptions = [{acl, public_read}],
+		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
+		    riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
+				term_to_binary(List1), RiakOptions),
+		    %% Remove lock
+		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
+		    riak_api:delete_object(BucketId, PrefixedLockFilename),
+		    {UploadId, List0}
+	    end
+    end.
+
+%%
+%% Increment the casual clock.
+%%
+increment_version(undefined, Timestamp, UserId) when erlang:is_integer(Timestamp),
+	erlang:is_list(UserId) ->
+    %% Create a new dot
+    dvvset:update(dvvset:new(utils:to_binary(Timestamp)), erlang:list_to_binary(UserId));
+increment_version(Version, Timestamp, UserId) when erlang:is_list(Version),
+	erlang:is_integer(Timestamp), erlang:is_list(UserId) ->
+    Context = dvvset:join(Version),
+    Dot = dvvset:update(dvvset:new(Context, utils:to_binary(Timestamp)), Version,
+			erlang:list_to_binary(UserId)),
+    dvvset:sync([Version, Dot]).

@@ -3,10 +3,10 @@
 %%
 -module(utils).
 %% Validations
--export([is_valid_bucket_id/2, is_valid_object_key/1, is_bucket_belongs_to_group/3,
-	 is_bucket_belongs_to_tenant/2, is_true/1, is_false/1,
-	 has_duplicates/1, ends_with/2, starts_with/2, even/1,
-	 validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
+-export([is_valid_bucket_id/2, is_public_bucket_id/1, is_valid_object_key/1,
+	 is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
+	 is_true/1, is_false/1, has_duplicates/1, ends_with/2, starts_with/2,
+	 even/1, validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
 	 is_hidden_prefix/1, get_token/1]).
 %% Conversions
 -export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
@@ -303,26 +303,46 @@ validate_hex(_, _) -> 1.
 %%     as this is limit of Riak CS
 %% - Suffix is either private, public or restricted
 %%
--spec is_valid_bucket_id(string(), string()) -> boolean().
+-spec is_valid_bucket_id(string(), string()|undefined) -> boolean().
 
 is_valid_bucket_id(undefined, _TenantName) -> false;
-is_valid_bucket_id(BucketId, TenantName)
-	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
     Bits = string:tokens(BucketId, "-"),
-    case length(Bits) =:= 4 andalso length(BucketId) =< 63 of
+    case length(Bits) =:= 3 andalso length(BucketId) =< 63 of
 	true ->
-	    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
-	    BucketSuffix = lists:last(Bits),
 	    BucketSuffix = lists:last(Bits),
 	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
 	     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
-	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
-	    ) andalso BucketTenantName =:= TenantName
-	      andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
-	false ->
-	    false
+	    ) andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
+	false -> false
+    end;
+is_valid_bucket_id(BucketId, TenantName)
+	when erlang:is_list(BucketId), erlang:is_list(TenantName) ->
+    Bits = string:tokens(BucketId, "-"),
+    case length(Bits) of
+	3 -> is_valid_bucket_id(BucketId, undefined);  %% assume tenant id is undefined
+	4 ->
+	    case length(BucketId) =< 63 of
+		true ->
+		    BucketTenantName = string:to_lower(lists:nth(2, Bits)),
+		    BucketSuffix = lists:last(Bits),
+		    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
+		     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
+		     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
+		    ) andalso BucketTenantName =:= TenantName
+		    andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
+		false -> false
+	    end
     end;
 is_valid_bucket_id(_, _) -> false.
+
+is_public_bucket_id(BucketId) when erlang:is_list(BucketId) ->
+    Bits = string:tokens(BucketId, "-"),
+    case lists:last(Bits) of
+	?PUBLIC_BUCKET_SUFFIX -> true;
+	_ -> false
+    end.
+
 
 even(X) when X >= 0 -> (X band 1) == 0.
 

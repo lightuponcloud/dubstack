@@ -10,6 +10,7 @@
          code_change/3]).
 
 -include("log.hrl").
+-include("riak.hrl").
 
 -record(state, {port :: undefined | port(),
 		links = sets:new() :: sets:set(),
@@ -17,7 +18,9 @@
 		num :: pos_integer()}).
 
 start_link(PortNumber) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [PortNumber], []).
+    Name = list_to_atom(
+	lists:flatten(io_lib:format("img_sup_~p", [PortNumber]))),
+    gen_server:start_link({local, Name}, ?MODULE, [PortNumber], []).
 
 init([PortNumber]) ->
     {Port, OSPid} = start_port(PortNumber),
@@ -29,8 +32,10 @@ init([PortNumber]) ->
 
 scale(Term) when erlang:is_list(Term) ->
     Tag = erlang:term_to_binary(self()),
-    %% TODO: to use a random port number
-    Port = whereis(img_port_0),
+    PortNumber = rand:uniform(?IMAGE_WORKERS)-1,
+    PortName = list_to_atom(
+	lists:flatten(io_lib:format("img_port_~p", [PortNumber]))),
+    Port = whereis(PortName),
     Data = erlang:term_to_binary(Term++[{tag, Tag}]),
     try
 	case port_command(Port, Data) of
@@ -56,8 +61,10 @@ scale(Term) when erlang:is_list(Term) ->
 
 get_size(ImageData) when erlang:is_binary(ImageData) ->
     Tag = erlang:term_to_binary(self()),
-    %% TODO: to use a random port number
-    Port = whereis(img_port_0),
+    PortNumber = rand:uniform(?IMAGE_WORKERS)-1,
+    PortName = list_to_atom(
+	lists:flatten(io_lib:format("img_port_~p", [PortNumber]))),
+    Port = whereis(PortName),
     Data = erlang:term_to_binary([{from, ImageData}, {tag, Tag}, {just_get_size, true}]),
     try
 	case port_command(Port, Data) of
@@ -77,7 +84,6 @@ get_size(ImageData) when erlang:is_binary(ImageData) ->
 	demonitor_port(Port),
 	{error, no_response}
     end.
-    
 
 -spec start_port(pos_integer()) -> {port() | undefined, integer() | undefined}.
 

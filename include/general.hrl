@@ -32,14 +32,12 @@
 }.
 
 -record(general_settings, {
-    brand_name="Demo"::string(),
-    admin_email="sales@lightupon.cloud"::string(),
-    domain="127.0.0.1"::string(),
+    brand_name="LightUponCloud"::string(),
+    admin_email="support@xentime.com"::string(),
     session_cookie_name=midsessionid::atom(),
-    csrf_cookie_name=midcsrftoken::atom(),
     root_path="/riak/"::string(),
     static_root="/riak-media/"::string(),
-    http_listen_port=8081,
+    http_listen_port=8082,
     locale="uk"
 }).
 

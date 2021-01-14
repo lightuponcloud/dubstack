@@ -53,7 +53,7 @@ start(_Type, _Args) ->
 	#{env => #{
 	    dispatch => Dispatch
 	}}),
-    img:start_link(0),
+    [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],
     middleware_sup:start_link().
 
 stop(_State) -> ok.

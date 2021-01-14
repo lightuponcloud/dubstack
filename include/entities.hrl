@@ -2,7 +2,7 @@
 
 %% Time in miliseconds
 -define(CSRF_TOKEN_EXPIRATION_TIME, 31449600000). % 1000 * 60 * 60 * 24 * 7 * 52
--define(SESSION_EXPIRATION_TIME, 31449600000).
+-define(SESSION_EXPIRATION_TIME, 86400000).  %% 24 hours
 
 -type tenant() :: #{
     id          => string(),
@@ -47,23 +47,26 @@
 }.
 
 -type object() :: #{
-    key                => string(),
-    orig_name          => binary(),
-    last_modified_utc  => integer(),
-    upload_time        => integer(),
-    bytes              => integer(),
-    guid               => string(),
-    is_deleted         => boolean(),
-    author_id          => string(),
-    author_name        => binary(),
-    author_tel         => string(),
-    is_locked          => boolean(),
-    lock_user_id       => string(),
-    lock_user_name     => binary(),
-    lock_user_tel      => string(),
-    lock_modified_utc  => integer(),
-    md5                => string(),
-    content_type       => string()
+    key                 => string(),
+    version             => string(),
+    orig_name           => binary(),
+    upload_time         => integer(),
+    bytes               => integer(),
+    guid                => string(),
+    upload_id		=> string(),
+    copy_from_guid      => string(),  %% before it was copied
+    copy_from_bucket_id => string(),
+    is_deleted          => boolean(),
+    author_id           => string(),
+    author_name         => binary(),
+    author_tel          => string(),
+    is_locked           => boolean(),
+    lock_user_id        => string(),
+    lock_user_name      => binary(),
+    lock_user_tel       => string(),
+    lock_modified_utc   => integer(),
+    md5                 => string(),
+    content_type        => string()
 }.
 
 -record(tenant, {
@@ -95,23 +98,26 @@
 }).
 
 -record(object, {
-    key                = "",
-    orig_name          = "",
-    last_modified_utc  = undefined,
-    upload_time        = undefined,
-    bytes              = 0,
-    guid               = undefined,
-    is_deleted         = false,
-    author_id          = undefined,
-    author_name        = undefined,
-    author_tel         = undefined,
-    is_locked          = false,
-    lock_user_id       = undefined,
-    lock_user_name     = undefined,
-    lock_user_tel      = undefined,
-    lock_modified_utc  = undefined,
-    md5                = undefined,
-    content_type       = undefined
+    key                 = "",
+    orig_name           = "",
+    version             = undefined,
+    upload_time         = undefined,
+    bytes               = 0,
+    guid                = undefined,
+    upload_id		= undefined,
+    copy_from_guid      = undefined,
+    copy_from_bucket_id = undefined,
+    is_deleted          = false,
+    author_id           = undefined,
+    author_name         = undefined,
+    author_tel          = undefined,
+    is_locked           = false,
+    lock_user_id        = undefined,
+    lock_user_name      = undefined,
+    lock_user_tel       = undefined,
+    lock_modified_utc   = undefined,
+    md5                 = undefined,
+    content_type        = undefined
 }).
 
 -define(AUTH_NAME, pbkdf2_sha256).

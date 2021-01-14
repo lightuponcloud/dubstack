@@ -143,7 +143,8 @@ to_html(Req0, State0) ->
 		    Users = get_full_users_list(PathTenant0),
 		    UsersList = [user_to_proplist(U) || U <- Users, U =/= not_found], %% tenant might be deleted
 
-		    TenantIDs = sets:to_list(sets:from_list([U#user.tenant_id || U <- Users])),
+		    TenantIDs = sets:to_list(sets:from_list(
+			[erlang:binary_to_list(proplists:get_value(tenant_id, U)) || U <- UsersList])),
 		    Tenants = admin_tenants_handler:get_tenants_by_ids(TenantIDs),
 
 		    State1 = admin_users_handler:user_to_proplist(User),
@@ -240,7 +241,7 @@ get_full_users_list(Tenant) ->
 get_full_users_list(Tenant, UsersList0, Marker0) ->
     RiakResponse = riak_api:list_objects(?SECURITY_BUCKET_NAME, [{prefix, ?USER_PREFIX}, {marker, Marker0}]),
     case RiakResponse of
-	not_found -> [];
+	not_found -> [];  %% bucket do not exist
 	_ ->
 	    Contents = proplists:get_value(contents, RiakResponse),
 	    Marker1 = proplists:get_value(next_marker, RiakResponse),
@@ -525,7 +526,7 @@ validate_post(Tenant, Body) ->
     end.
 
 validate_tel(undefined) -> undefined;
-validate_tel(none) -> undefined;
+validate_tel(null) -> undefined;
 validate_tel(<<>>) -> undefined;
 validate_tel(Value) when erlang:is_binary(Value) ->
     utils:hex(utils:trim_spaces(Value)).

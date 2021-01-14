@@ -8,6 +8,7 @@
 
 -include("general.hrl").
 -include("riak.hrl").
+-include("entities.hrl").
 
 %%
 %% Parse IETF language tag
@@ -64,11 +65,11 @@ init(Req0, Opts) ->
     Settings = #general_settings{},
     SessionCookieName = Settings#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-    Token =
+    {User, Token} =
 	case login_handler:check_session_id(SessionID0) of
-	    false -> <<>>;
-	    {error, _} -> <<>>;
-	    _User -> SessionID0
+	    false -> {undefined, <<>>};
+	    {error, _} -> {undefined, <<>>};
+	    U -> {U, SessionID0}
 	end,
     %% Since ther's no way to detect browser language preference, Accept-Language should be used instead
     LanguageCode = parse_language_tag(cowboy_req:header(<<"accept-language">>, Req0)),
@@ -84,6 +85,7 @@ init(Req0, Opts) ->
 	{static_root, Settings#general_settings.static_root},
 	{bucket_id, BucketId},
 	{token, Token},
+	{user_id, User#user.id},
 	{chunk_size, ?FILE_UPLOAD_CHUNK_SIZE}
     ]),
     Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, Body, Req0),
@@ -140,10 +142,19 @@ not_modified(Req0) ->
 
 redirect_to_login(Req0) ->
     Settings = #general_settings{},
-    Proto = <<"http://">>,
-    Domain = utils:to_binary(Settings#general_settings.domain),
+    Scheme = cowboy_req:scheme(Req0),
+    Host = cowboy_req:host(Req0),
+    Port =
+	case cowboy_req:port(Req0) of
+	    80 -> <<>>;
+	    N when erlang:is_integer(N) ->
+		P = utils:to_binary(N),
+		<< <<":">>/binary, P/binary >>;
+	    _ -> <<>>
+	end,
     URI = utils:to_binary(Settings#general_settings.root_path),
     Req1 = cowboy_req:reply(302, #{
-	<<"Location">> => << Proto/binary, Domain/binary, URI/binary >>
+	<<"Location">> => << Scheme/binary, <<"://">>/binary,
+		  Host/binary, Port/binary, URI/binary >>
     }, <<>>, Req0),
     {ok, Req1, []}.
