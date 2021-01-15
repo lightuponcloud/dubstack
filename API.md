@@ -439,7 +439,7 @@ start byte-end byte/total bytes.
 #### Response Example
 ```json
       {
-         "object_key":" "something.random",
+         "object_key": "something.random",
          "orig_name": "Something.random",
          "bytes": 2690467,
          "content_type": "application/octet-stream",
