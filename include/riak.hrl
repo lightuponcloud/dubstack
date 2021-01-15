@@ -8,12 +8,12 @@
           s3_host="s3.amazonaws.com"::string(),
           s3_port=80::non_neg_integer(),
 	  s3_proxy_host="127.0.0.1"::string(),
-	  s3_proxy_port=15018::non_neg_integer(),
+	  s3_proxy_port=8080::non_neg_integer(),
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="ZWXQMCADQ_SNUXSCF_IX"::string(),
-          secret_access_key="2QZ7dDFAQqgf9ZkDer6WaLJ5-bIdExiKBvo8Wg"::string(),
+          access_key_id="REPLACE_ME"::string(),
+          secret_access_key="REPLACE_ME"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).

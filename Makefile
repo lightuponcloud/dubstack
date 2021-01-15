@@ -10,6 +10,7 @@ TEST_DEPS = meck
 dep_cowboy_commit = 2.7.0
 dep_meck = git https://github.com/eproxus/meck.git master
 dep_ux = git https://github.com/erlang-unicode/ux.git master
+dep_jsx = git https://github.com/talentdeficit/jsx v2.11.0
 
 APP_VERSION = $(shell cat rel/version)
 

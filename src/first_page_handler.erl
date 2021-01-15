@@ -16,7 +16,13 @@ init(Req0, _Opts) ->
     Settings = #general_settings{},
     SessionCookieName = Settings#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-    case login_handler:check_session_id(SessionID0) of
+    SessionID1 =
+	case SessionID0 of
+	    [H|_] -> H;
+	    _ -> SessionID0
+	end,
+io:fwrite("SessionID0 1: ~p~n", [SessionID1]),
+    case login_handler:check_session_id(SessionID1) of
 	false -> login(Req0, Settings);
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
@@ -24,7 +30,7 @@ init(Req0, _Opts) ->
 	    Bits = [?RIAK_BACKEND_PREFIX, TenantId, ?PUBLIC_BUCKET_SUFFIX],
 	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits, "-", [])),
 	    State = admin_users_handler:user_to_proplist(User)
-		++ [{token, SessionID0}, {public_bucket_id, PublicBucketId}],
+		++ [{token, SessionID1}, {public_bucket_id, PublicBucketId}],
 	    first_page(Req0, Settings, State)
     end.
 

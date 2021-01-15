@@ -81,10 +81,10 @@ user_to_proplist(User) ->
 	{staff, utils:to_binary(User#user.staff)},
 	{groups, [
 	    [{id, erlang:list_to_binary(G#group.id)},
-	    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
-	    {available_bytes, -1},  %% TODO: to store and display used and available bytes
-	    {bucket_id, erlang:list_to_binary(lists:concat([?RIAK_BACKEND_PREFIX, "-", User#user.tenant_id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
-	    {bucket_suffix, erlang:list_to_binary(?RESTRICTED_BUCKET_SUFFIX)}
+	     {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))},
+	     {available_bytes, -1},  %% TODO: to store and display used and available bytes
+	     {bucket_id, erlang:list_to_binary(lists:concat([?RIAK_BACKEND_PREFIX, "-", User#user.tenant_id, "-", G#group.id, "-", ?RESTRICTED_BUCKET_SUFFIX]))},
+	     {bucket_suffix, erlang:list_to_binary(?RESTRICTED_BUCKET_SUFFIX)}
 	    ] || G <- User#user.groups]}
     ].
 
@@ -126,8 +126,13 @@ to_json(Req0, State) ->
 
 to_html(Req0, State0) ->
     Settings = #general_settings{},
-    SessionId = proplists:get_value(session_id, State0),
-    case login_handler:check_session_id(SessionId) of
+    SessionId0 = proplists:get_value(session_id, State0),
+    SessionId1 =
+	case SessionId0 of
+	    [H|_] -> H;
+	    _ -> SessionId0
+	end,
+    case login_handler:check_session_id(SessionId1) of
 	false -> js_handler:redirect_to_login(Req0);
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
@@ -152,7 +157,7 @@ to_html(Req0, State0) ->
 			{brand_name, Settings#general_settings.brand_name},
 			{static_root, Settings#general_settings.static_root},
 			{root_path, Settings#general_settings.root_path},
-			{token, SessionId},
+			{token, SessionId1},
 			{users_list, UsersList},
 			{users_count, length(UsersList)},
 			{path_tenant, PathTenant1},
