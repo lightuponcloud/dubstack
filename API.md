@@ -461,6 +461,7 @@ start byte-end byte/total bytes.
          "width": null,
          "height": null
       }
+```
 
 ## POST /riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/
 
