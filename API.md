@@ -501,10 +501,10 @@ Copy object or directory.
 
 ```json
 {
-   "src_prefix": "string",    // Source prefix
-   "dst_prefix": "string",    // Destination prefix
-   "dst_bucket_id": "string", // Destination bucket
-   "src_object_keys": {"key 1": "Destination Name 1", "key 2": "Destination Name 2"],
+   "src_prefix": "string",
+   "dst_prefix": "string",
+   "dst_bucket_id": "string",
+   "src_object_keys": {"key 1": "Destination Name 1", "key 2": "Destination Name 2"},
 }
 ```
 
@@ -683,7 +683,7 @@ Fetch the history of specified pseudo-directory.
 ```json
 {
     "action": "copy",
-    "details": "Copied from "/".",
+    "details": "Copied from /.",
     "tenant_name": "Poets",
     "timestamp": "1575107875",
     "user_name": "Іван Франко"
