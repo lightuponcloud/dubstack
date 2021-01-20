@@ -883,7 +883,9 @@ complete_upload(Req0, Etags0, RespCode, State0) ->
 			_ -> false
 		    end
 		end, List0),
-	    case sets:from_list(List1) =:= sets:from_list(Etags0) of
+	    S0 = sets:from_list(List1),
+	    S1 = sets:from_list(Etags0),
+	    case sets:is_subset(S0, S1) andalso sets:is_subset(S1, S0) of
 		false -> js_handler:bad_request(Req0, 51);
 		true -> complete_upload(Req0, RespCode, State0)
 	    end

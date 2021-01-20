@@ -174,7 +174,7 @@ $.stack = function(options){
 	    offset = data.end_byte+1;
 	    var upload_id = data['upload_id'];
 	    var guid = data['guid'];
-	    RiakAPI._chunked_upload(dom_id, prefix, file, offset, upload_id, guid, version, etags, false);
+	    RiakAPI._chunked_upload(dom_id, prefix, file, offset, upload_id, guid, version, etags, true);
 	  }
 	}
      }
@@ -236,7 +236,15 @@ $.stack = function(options){
 	  if(prefix) form_data.append('prefix', prefix);
 	  if(guid) form_data.append('guid', guid);
 
-	  etags.push([part_num, checksum]);
+	  var found=false;
+	  for(var i=0;i!=etags.length;i++){
+	    if(etags[i][0]==part_num && etags[i][1] == checksum) {
+		found=true;
+		break;
+	    }
+	  }
+	  if(!found) etags.push([part_num, checksum]);
+
 	  var totalparts = Math.ceil(file.size/chunk_size);
           if(totalparts==0||part_num==totalparts){
 	    var finaletags=[];
