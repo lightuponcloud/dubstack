@@ -1,0 +1,57 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">{% load dtl_tags %}
+<html xml:lang="en-us" xmlns="http://www.w3.org/1999/xhtml" lang="en-us"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<title>{{ title }}</title>
+<meta http-equiv="imagetoolbar" content="no"/>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<link rel="Shortcut icon" href="{{ static_root }}favicon.ico" type="image/x-icon" />
+<meta name="robots" content="NONE,NOARCHIVE">
+<link rel="stylesheet" href="{{ static_root }}riak_index.css" media="all">
+</head>
+
+<body>
+
+<!-- Begin Wrapper -->
+<div id="wrapper">
+  <!-- Begin Header -->
+    <div id="header">
+        <div id="header_content">
+	  <div class="shell-bar">
+            <div class="page-caption left-align" style="padding-left:4em;margin-top:-5px;"><a href="{{ root_path }}">{{ title }}</a></div>
+	    {% if breadcrumbs %}
+	    / {% for uri, path in breadcrumbs %}<div class="breadcrumb page-caption"><a href="{{ uri }}">{{ path }}</a></div>{% endfor %}
+	    {% endif %}
+	    / <div class="page-caption left-align" style="margin-top:-5px;">{{ current_directory }}</div>
+	  </div>
+        </div>
+  <!-- End Header -->
+
+{% if directories %}
+<ul class="photo-list">
+{% for o in directories %}
+  <a href="/{{ bucket_id }}/{{ o }}"><img src="{{ static_root }}icon_dir.png" /><br/><span class="image-fn">{{ o }}</span></a>
+{% endfor %}
+</ul>
+{% endif %}
+
+<ul class="photo-list">
+{% for o in objects_list %}
+<li>
+ {% if o.content_type == "image/jpeg" %}
+  <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/riak/icon/{{ bucket_id }}?object_key={{ o.orig_name|basename }}&prefix={{ prefix }}" title="{{ o.orig_name }}" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+ {% else %}
+   {% if o.content_type|startswith:"video" %}
+      <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/{{ bucket_id }}/{{ prefix }}/{{ o.name }}" title="{{ o.orig_name }}"><img src="{{ static_root }}icon_video.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+   {% else %}
+     {% if o.content_type == "application/pdf" %}
+       <a href="/{{ bucket_id }}/{{ o.name }}"><img src="{{ static_root }}icon_pdf.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+     {% endif %}
+   {% endif %}
+ {% endif %}
+</li>
+{% endfor %}
+</ul>
+
+    </div></div>
+</body>
+</html>

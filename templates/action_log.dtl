@@ -1,0 +1,3 @@
+{% extends "action_log_base.dtl" %}
+
+{% block action_log_records %}{{ xslt_result }}{% endblock %}

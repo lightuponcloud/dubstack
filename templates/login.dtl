@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>Login</title>
+<meta content="width=device-width, initial-scale=1, user-scalable=no" name="viewport">
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="MSSmartTagsPreventParsing" content="true" />
+<meta http-equiv="imagetoolbar" content="no" />
+<meta name="description" content="Login" />
+<meta name="keywords" content="login" />
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta http-equiv="imagetoolbar" content="no" />
+<link rel="SHORTCUT ICON" href="{{ static_root }}favicon.gif" />
+<link rel="stylesheet" type="text/css" href="{{ static_root }}admin.css" />
+<link rel="stylesheet" href="{{ static_root }}bootstrap/css/bootstrap.css">
+<link type="text/css" rel="stylesheet" href="{{ static_root }}bootstrap/css/mobile.css">
+
+<script src="{{ static_root }}jquery.min.js"></script>
+<script src="{{ static_root }}bootstrap/js/bootstrap.js"></script>
+
+<script language="JavaScript">
+$(document).ready(function(){
+  $('#id_login').focus();
+});
+</script>
+</head>
+<body id="login-body" style="background-color:#f3f3f3">
+<section>
+<div class="main">
+<div class="frontpage_container">
+
+<form action="{{ root_path }}" method="post" id="login-form" class="clearfix"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+	<div class="row">
+	    <span class="err">
+	    <span style="color:red;">{% if error %}<p class="err">{{ error }}</p>{% endif %}</span></span>
+	</div>
+	<div class="row">
+            <label for="id_login">Login</label>
+            <div><input autocomplete="off" name="login" maxlength="75" type="text" class="custom-input-194x31" id="id_login" /></div>
+        </div>
+        <div class="row">
+            <label for="id_password">Password</label>
+            <div><input autocomplete="off" id="id_password" type="password" class="custom-input-194x31" name="password" /></div>
+        </div>
+	<div class="row">
+	    <span class="pushbutton"><button type="submit" class="submit button">Login</button></span>
+        </div>
+</form>
+<div class="login_text-wrapper">
+    <p>If you are having trouble logging in to, please note the following:</p>
+    <ul class="trouble_list">
+        <li>Login and Password fields are case sensitive. Be sure to enter them carefully and check your keyboard caps lock key.</li>
+        <li>If you have forgotten your password, please call administrator for assistance.</li>
+    </ul>
+</div>
+
+</div>
+
+</div>
+</section>
+</body>
+</html>

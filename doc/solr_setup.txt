@@ -1,0 +1,27 @@
+# solr-cell and related libraries should be copied to
+# riak/lib/yokozuna-2.1.0/priv/solr/solr-webapp/webapp/WEB-INF/lib/
+
+# create schema
+curl -XPUT -H 'Content-Type:application/xml' --data-binary @solr_schema.xml http://127.0.0.1:8098/search/schema/objects_schema
+
+# create index
+curl -XPUT -H 'Content-Type: application/json' -d '{"schema": "objects_schema"}' http://127.0.0.1:8098/search/index/binary_objects
+
+# curl -XDELETE http://127.0.0.1:8098/search/index/binary_objects
+
+# associate index with bucket
+curl -XPUT http://127.0.0.1:8098/types/default/buckets/0b-public/props -H "Content-Type: application/json" -d '{"props":{"search_index":"binary_objects"}}'
+
+# curl -XDELETE http://127.0.0.1:8098/types/default/buckets/0b-public/props
+
+# check
+curl http://127.0.0.1:8098/search/index/binary_objects
+curl http://127.0.0.1:8098/types/default/buckets/0b-public/props
+
+
+# finally update/extract should be uncommented in solrConfig.xml
+
+#curl -XPOST  -F 'the-file=@/tmp/trainig.txt' "http://127.0.0.1:8093/internal_solr/binary_objects/update/extract?wt=json&literal._yz_id=0b-public/trainig.txt&literal._bucket_name=0b-public&defaultField=text"
+
+# suggestion test:
+# http://127.0.0.1:8093/internal_solr/binary_objects/suggest?suggest=true&suggest.build=true&suggest.dictionary=contentSuggester&wt=json&suggest.q=doc
