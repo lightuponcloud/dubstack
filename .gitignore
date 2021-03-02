@@ -1,0 +1,24 @@
+syntax: glob
+ebin/*
+*.beam
+_build
+ebin/*.beam
+ebin/*.app
+.eunit/
+.erlang.mk/
+.rebar/
+rebar
+deps/
+_rel/
+middleware.d
+erlang.mk
+erl_crash.dump
+.edts
+eunit.coverage.xml
+c_src/img.d
+c_src/img
+*[#]*[#]
+*[#]*
+*.o
+*.beam
+*.plt
