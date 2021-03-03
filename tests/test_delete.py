@@ -5,7 +5,9 @@ from pprint import pprint
 import requests
 import logging
 
-from client_base import (TestClient, BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1)
+from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1)
+
+from light_client import LightClient
 
 # data = {"authorization": "Token e5a3dbe5-278c-4263-a3f5-10b65cd476ae"}
 
@@ -22,7 +24,11 @@ def get_all_from_root():
 
 # pprint(get_all_from_root())  # OK
 
-class DeleteTest(TestClient):
+class DeleteTest(unittest.TestCase):
+
+    def setUp(self):
+        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.client.login(USERNAME_1, PASSWORD_1)
 
     # def test_delete_none(self):  # "negative test case"
     #     url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)
@@ -130,29 +136,29 @@ class DeleteTest(TestClient):
 
         # create 1 pseudo-directory
         dir_name = "DeleteTest3"
-        response = self.create_pseudo_directory(dir_name)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         print(response.content)
         dir_name_prefix = dir_name.encode().hex() + "/"
         print(dir_name_prefix)
 
         # delete created pseudo-directory
-        url = "{}/riak/list/{}".format(BASE_URL, TEST_BUCKET_1)
-        data = {"object_keys": [dir_name_prefix]}
-        result = self.delete_json(url, data=data)
+        #result = self.client.delete(TEST_BUCKET_1, [dir_name_prefix])
         # self.assertEqual(result, [dir_name_prefix])
 
         # create directories
         dir_names = ["DeleteTest3_1", "DeleteTest3_2", "DeleteTest3_3"]
         for name in dir_names:
-            self.create_pseudo_directory(name)
+            response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
+            assert response.status_code == 204
 
         # delete directories
-        url = "{}/riak/list/{}".format(BASE_URL, TEST_BUCKET_1)
         object_keys = [x.encode().hex() + "/" for x in dir_names]
         print(object_keys)
         data = {"object_keys": object_keys}
-        result = self.delete_json(url, data=data)
-        print(result)
+        response = self.client.delete(TEST_BUCKET_1, object_keys)
+        assert response.status_code == 200
+
+        print(response)
         # self.assertEqual(result, object_keys)
 
 

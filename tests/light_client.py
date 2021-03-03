@@ -184,3 +184,27 @@ class LightClient:
                 if end_byte+1 == file_size:
                     break
         return result
+
+    def delete(self, bucket_id, object_keys):
+        """
+        Deletes perfixed ``object_keys``.
+        """
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        data = {"object_keys": object_keys}
+        headers = {
+            'accept': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        return requests.delete(url, data=json.dumps(data), headers=headers)
+
+    def create_pseudo_directory(self, bucket_id, name, prefix=''):
+        headers = {
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            'prefix': prefix,
+            'directory_name': name
+        }
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        return requests.post(url, json=data, headers=headers)

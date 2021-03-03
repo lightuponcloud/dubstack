@@ -9,6 +9,7 @@ import hashlib
 import xml.etree.ElementTree as ET
 import requests
 from base64 import b64encode
+from environs import Env
 
 from dvvset import DVVSet
 
@@ -16,21 +17,23 @@ import boto3
 from botocore.config import Config
 from botocore.utils import fix_s3_host
 
+env = Env()
+env.read_env('.env')
 
 #logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 for name in ['botocore', 's3transfer', 'boto3']:
     logging.getLogger(name).setLevel(logging.CRITICAL)
 
-BASE_URL = "https://lightupon.cloud"
-USERNAME_1 = 'integration1'
-PASSWORD_1 = 'integration1'
-TEST_BUCKET_1 = "the-integrationtests-integration1-res"
-TEST_BUCKET_2 = "the-mybrand2-anothergroup-res"
-UPLOADS_BUCKET_NAME = "uploads"
+BASE_URL = env.str("BASE_URL", "https://lightupon.cloud")
+USERNAME_1 = env.str("USERNAME_1")
+PASSWORD_1 = env.str("PASSWORD_1")
+TEST_BUCKET_1 = env.str("TEST_BUCKET_1")
+TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
+UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 
-ACCESS_KEY = "ZWXQMCADQ_SNUXSCF_IX"
-SECRET_KEY = "2QZ7dDFAQqgf9ZkDer6WaLJ5-bIdExiKBvo8Wg"
-HTTP_PROXY = 'https://lightupon.cloud/:15018'
+ACCESS_KEY = env.str("ACCESS_KEY")
+SECRET_KEY = env.str("SECRET_KEY")
+HTTP_PROXY = env.str("HTTP_PROXY")
 
 RIAK_ACTION_LOG_FILENAME = ".riak_action_log.xml"
 
@@ -290,9 +293,3 @@ class TestClient(unittest.TestCase):
         }
         url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)
         return requests.post(url, json=data, headers=req_headers)
-
-
-
-
-
-
