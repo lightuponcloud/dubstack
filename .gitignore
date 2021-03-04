@@ -25,3 +25,7 @@ c_src/img
 tests/.env
 tests/.idea/
 tests/__pycache__/
+*.py[cod]
+*.orig
+.venv
+.env
