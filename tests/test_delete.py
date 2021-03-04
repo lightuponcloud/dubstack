@@ -24,17 +24,17 @@ def encode_to_hex(dir_name=None, dir_names=None):
 
 class DeleteTest(unittest.TestCase):
     """
-    Плановые интеграционные тесты
+    Operation DELETE tests
 
-    Операция DELETE
-
+    # Delete with empty object_keys
+    #
     # Delete from root
     #
     # Delete from pseudo-directory
     #
     # Delete pseudo-directory from root
     #
-    # Delete pseudo-directory with prefix
+    # Delete pseudo-directory with prefix(from pseudo-directory)
     """
 
     def setUp(self):
@@ -45,6 +45,7 @@ class DeleteTest(unittest.TestCase):
         """
         negative test case - empty object_keys sent
         """
+
         object_keys = []
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         result = response.json()
@@ -52,8 +53,10 @@ class DeleteTest(unittest.TestCase):
 
     def test_delete_files_from_root(self):
         """
-        upload 1 file
+        # Delete files from root: one and many
         """
+
+        # upload 1 file
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
         self.assertEqual(result['orig_name'], fn)
@@ -64,9 +67,7 @@ class DeleteTest(unittest.TestCase):
         result = response.json()
         self.assertEqual(result, [fn])
 
-        """
-        upload many files
-        """
+        # upload many files
         fn = ["025587.jpg", "README.md", "requirements.txt"]
         object_keys = []
         for file in fn:
@@ -74,9 +75,7 @@ class DeleteTest(unittest.TestCase):
             object_keys.append(result['object_key'])
             self.assertEqual(result['orig_name'], file)
 
-        """
-        delete uploaded files and final check for "is_deleted": True
-        """
+        # delete uploaded files and final check for "is_deleted": True
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         self.assertTrue(not set(object_keys) ^ set(response.json()))
 
@@ -90,24 +89,22 @@ class DeleteTest(unittest.TestCase):
 
     def test_delete_files_from_pseudodirectory(self):
         """
-        1 create main pseudo-directory
+        # Delete from pseudo-directory: one and many
         """
+
+        # 1 create main pseudo-directory
         dir_name = "DeleteTest2"
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         assert response.status_code == 204
         dir_name_prefix = dir_name.encode().hex() + "/"
 
-        """
-        2 upload file to main pseudo-directory
-        """
+        # 2 upload file to main pseudo-directory
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn, dir_name_prefix)
         self.assertEqual(result['orig_name'], '20180111_165127.jpg')
         object_key = [result['object_key']]
 
-        """
-        2.1 delete file from pseudo-directory and check for is_deleted: True
-        """
+        # 2.1 delete file from pseudo-directory and check for is_deleted: True
         response = self.client.delete(TEST_BUCKET_1, object_keys=object_key, prefix=dir_name_prefix)
         self.assertEqual(response.json(), object_key)
 
@@ -116,9 +113,7 @@ class DeleteTest(unittest.TestCase):
             if fn in obj['orig_name']:
                 self.assertTrue(obj['is_deleted'])
 
-        """
-        3 upload many files to main pseudo-directory
-        """
+        # 3 upload many files to main pseudo-directory
         fn = ["025587.jpg", "README.md", "requirements.txt"]
         object_keys = []
         for file in fn:
@@ -126,104 +121,83 @@ class DeleteTest(unittest.TestCase):
             object_keys.append(result['object_key'])
             self.assertEqual(result['orig_name'], file)
 
-        """
-        4 delete created pseudo-directory, with uploaded files
-        """
+        # 4 delete created pseudo-directory, with uploaded files
         dir_name_prefix = [dir_name_prefix]
         response = self.client.delete(TEST_BUCKET_1, object_keys=dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
 
     def test_delete_pseudodirectories_from_root(self):
         """
-        create 1 pseudo-directory
+        # Delete pseudo-directories from root: one and many
         """
+        # create 1 pseudo-directory
         dir_name = "DeleteTest3"
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         self.assertEqual(response.status_code, 204)
         dir_name_prefix = dir_name.encode().hex() + "/"
 
-        """
-        delete created pseudo-directory
-        """
+        # delete created pseudo-directory
         response = self.client.delete(TEST_BUCKET_1, [dir_name_prefix])
         result = response.json()
         self.assertEqual(result, [dir_name_prefix])
 
-        """
-        create directories
-        """
+        # create directories
         dir_names = [generate_random_name() for _ in range(3)]
         for name in dir_names:
-           response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
-           assert response.status_code == 204
+            response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
+            assert response.status_code == 204
 
-        """
-        delete directories
-        """
+        # delete directories
         object_keys = [x.encode().hex() + "/" for x in dir_names]
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         assert response.status_code == 200
         result = response.json()
         self.assertEqual(set(result), set(object_keys))
 
-
     def test_delete_pseudodirectories_from_pseudodirectory(self):
+        """
+        # Delete pseudo-directories from pseudo-directory: one and many
+        """
 
-        """
-        create main pseudo-directory
-        """
+        # create main pseudo-directory
         dir_name = generate_random_name()
         main_dir_name_prefix = encode_to_hex(dir_name)
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         self.assertEqual(response.status_code, 204)
 
-        """
-        create 1 pseudo-directory in main pseudo-directory
-        """
+        # create 1 pseudo-directory in main pseudo-directory
         dir_name = generate_random_name()
         dir_name_prefix = encode_to_hex(dir_name)
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name, main_dir_name_prefix)
         self.assertFalse(bool(response.content), msg=response.content.decode())
         self.assertEqual(response.status_code, 204)
 
-        """
-        delete 1 created pseudo-directory from main pseudo-directory
-        """
+        # delete 1 created pseudo-directory from main pseudo-directory
         object_keys = [dir_name_prefix]
         response = self.client.delete(TEST_BUCKET_1, object_keys, main_dir_name_prefix)
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
-        """
-        create 2-10 pseudo-directories in main pseudo-directory
-        """
+        # create 2-10 pseudo-directories in main pseudo-directory
         dir_names = [generate_random_name() for _ in range(random.randint(2, 10))]
         object_keys = encode_to_hex(dir_names=dir_names)
         for name in dir_names:
-           response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
-           assert response.status_code == 204
+            response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
+            assert response.status_code == 204
 
-        """
-        delete created pseudo-directories from main pseudo-directory
-        """
+        # delete created pseudo-directories from main pseudo-directory
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
-        """
-        delete main pseudo-directory
-        """
+        # delete main pseudo-directory
         object_keys = [main_dir_name_prefix]
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
 
-   # def test_delete_files_and_pseudodirectories(self): - не хватает по идее
-   #     pass
-
-
 if __name__ == '__main__':
-   unittest.main()
+    unittest.main()
 
 

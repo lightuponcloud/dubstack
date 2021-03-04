@@ -189,6 +189,23 @@ class LightClient:
         return result
 
     def get_list(self, bucket_id, prefix=None):
+        """
+        GET /riak/list/[:bucket_id]
+        Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
+        of objects and pseudo-directories.
+
+        Parameters
+        prefix : Hex-encoded UTF8 string. For example "blah" becomes "626c6168".
+
+        Success Response
+        Code : 200 OK
+
+        Other Response Codes
+        Code : 401 Unauthorized When token is not provided in headers
+        Code : 403 Forbidden When user has no access to bucket
+        Code : 404 Not Found When prefix not found
+        """
+
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         data = {"prefix": prefix}
         headers = {
@@ -199,8 +216,25 @@ class LightClient:
 
     def delete(self, bucket_id, object_keys, prefix=None):
         """
-        Deletes perfixed ``object_keys``.
+        DELETE /riak/list/[:bucket_id]
+        Used to delete files and pseudo-directories.
+        Marks objects as deleted. In case of pseudo-directoies, it renames them and makrs them as deleted.
+
+        Parameters
+        "object_keys": ["string", "string", ..] - required
+        "prefix": "string" - optional
+
+        In order to delete pseudo-directory, its name should be encoded as hex value and passed as "object_key" with "/" at the end.
+        For example:
+        "object_keys": ["64656d6f/", "something.jpg"]
+        "prefix": "74657374/"
+
+        Auth required : YES
+
+        Success Response
+        Code : 200 OK
         """
+
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         data = {"object_keys": object_keys, 'prefix': prefix}
         headers = {
@@ -210,6 +244,19 @@ class LightClient:
         return requests.delete(url, data=json.dumps(data), headers=headers)
 
     def create_pseudo_directory(self, bucket_id, name, prefix=''):
+        """
+        POST /riak/list/[:bucket_id]
+        Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
+
+        Parameters
+        "directory_name":"string" - required
+        "prefix":"string" - optional
+
+        Auth required : YES
+
+        Success Response
+        Code : 204 No Content
+        """
         headers = {
             'content-type': 'application/json',
             'authorization': 'Token {}'.format(self.token),
