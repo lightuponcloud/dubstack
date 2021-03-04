@@ -60,8 +60,8 @@ class TestClient(unittest.TestCase):
         data = response.json()
         self.token = data['token']
         self.user_id = data['id']
-        # self.resource = configure_boto3()
-        # self.purge_test_buckets()
+        self.resource = configure_boto3()
+        self.purge_test_buckets()
 
     def get_json(self, url, status=200, **kwargs):
         response = requests.get(url, headers={'content-type': 'application/json',
@@ -75,13 +75,6 @@ class TestClient(unittest.TestCase):
                                  headers={'content-type': 'application/json',
                                           'authorization': 'Token {}'.format(self.token)})
         assert response.status_code == status
-        return json.loads(response.data.decode('utf8'))
-
-    def patch_json(self, url, data, status=200, **kwargs):
-        response = self.patch(url, data=json.dumps(data),
-                              headers={'content-type': 'application/json'})
-        assert response.status_code == status
-        assert response.content_type == 'application/json'
         return json.loads(response.data.decode('utf8'))
 
     def delete_json(self, url, data, status=200, **kwargs):
