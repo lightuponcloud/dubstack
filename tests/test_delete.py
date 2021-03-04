@@ -3,6 +3,8 @@ import unittest
 import json
 from pprint import pprint
 import requests
+import string
+import random
 import logging
 
 from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1)
@@ -20,6 +22,11 @@ def get_all_from_root():
     # files = func_exists('list')
     # data = dirs + files
     return response.json()
+
+
+def generate_random_name():
+    alphabet = '{}{}ЄєІіЇїҐґ'.format(string.digits, string.ascii_lowercase)
+    return ''.join(random.sample(alphabet, 20))
 
 
 # pprint(get_all_from_root())  # OK
@@ -146,7 +153,7 @@ class DeleteTest(unittest.TestCase):
         # self.assertEqual(result, [dir_name_prefix])
 
         # create directories
-        dir_names = ["DeleteTest3_1", "DeleteTest3_2", "DeleteTest3_3"]
+        dir_names = [generate_random_name() for _ in range(3)]
         for name in dir_names:
             response = self.client.create_pseudo_directory(TEST_BUCKET_1, name)
             assert response.status_code == 204
@@ -156,6 +163,7 @@ class DeleteTest(unittest.TestCase):
         print(object_keys)
         data = {"object_keys": object_keys}
         response = self.client.delete(TEST_BUCKET_1, object_keys)
+        import pdb;pdb.set_trace()
         assert response.status_code == 200
 
         print(response)
