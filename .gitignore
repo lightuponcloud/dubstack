@@ -22,3 +22,6 @@ c_src/img
 *.o
 *.beam
 *.plt
+tests/.env
+tests/.idea/
+tests/__pycache__/
