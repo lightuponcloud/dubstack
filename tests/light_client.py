@@ -84,6 +84,7 @@ class LightClient:
             ct_range = "bytes {}-{}/{}".format(offset, limit, file_size)
         else:
             ct_range = "bytes 0-{}/{}".format(file_size-1, file_size)
+            offset = 0
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
