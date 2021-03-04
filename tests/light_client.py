@@ -42,6 +42,8 @@ class LightClient:
         self.token = data['token']
         self.user_id = data['id']
 
+
+
     def _increment_version(self, last_seen_version, modified_utc):
         """
         Increments provided version or creates a new one, if not provided.
@@ -84,6 +86,7 @@ class LightClient:
             ct_range = "bytes {}-{}/{}".format(offset, limit, file_size)
         else:
             ct_range = "bytes 0-{}/{}".format(file_size-1, file_size)
+            offset = 0
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
@@ -185,12 +188,21 @@ class LightClient:
                     break
         return result
 
-    def delete(self, bucket_id, object_keys):
+    def get_list(self, bucket_id, prefix=None):
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        data = {"prefix": prefix}
+        headers = {
+            'accept': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        return requests.get(url, data=json.dumps(data), headers=headers)
+
+    def delete(self, bucket_id, object_keys, prefix=None):
         """
         Deletes perfixed ``object_keys``.
         """
         url = "{}riak/list/{}/".format(self.url, bucket_id)
-        data = {"object_keys": object_keys}
+        data = {"object_keys": object_keys, 'prefix': prefix}
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
@@ -208,3 +220,5 @@ class LightClient:
         }
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.post(url, json=data, headers=headers)
+
+

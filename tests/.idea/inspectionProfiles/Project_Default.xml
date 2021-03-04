@@ -1,0 +1,88 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="DuplicatedCode" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <Languages>
+        <language minSize="48" name="Python" />
+      </Languages>
+    </inspection_tool>
+    <inspection_tool class="HtmlUnknownAttribute" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="myValues">
+        <value>
+          <list size="1">
+            <item index="0" class="java.lang.String" itemvalue="height" />
+          </list>
+        </value>
+      </option>
+      <option name="myCustomValuesEnabled" value="true" />
+    </inspection_tool>
+    <inspection_tool class="PyBroadExceptionInspection" enabled="false" level="WEAK WARNING" enabled_by_default="false" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredPackages">
+        <value>
+          <list size="41">
+            <item index="0" class="java.lang.String" itemvalue="aioredis" />
+            <item index="1" class="java.lang.String" itemvalue="aiogram" />
+            <item index="2" class="java.lang.String" itemvalue="python-dotenv" />
+            <item index="3" class="java.lang.String" itemvalue="cursor" />
+            <item index="4" class="java.lang.String" itemvalue="hiredis" />
+            <item index="5" class="java.lang.String" itemvalue="Babel" />
+            <item index="6" class="java.lang.String" itemvalue="certifi" />
+            <item index="7" class="java.lang.String" itemvalue="aiohttp" />
+            <item index="8" class="java.lang.String" itemvalue="multidict" />
+            <item index="9" class="java.lang.String" itemvalue="yarl" />
+            <item index="10" class="java.lang.String" itemvalue="Cython" />
+            <item index="11" class="java.lang.String" itemvalue="requests" />
+            <item index="12" class="java.lang.String" itemvalue="urllib3" />
+            <item index="13" class="java.lang.String" itemvalue="PyJWT" />
+            <item index="14" class="java.lang.String" itemvalue="PyYAML" />
+            <item index="15" class="java.lang.String" itemvalue="psycopg2-binary" />
+            <item index="16" class="java.lang.String" itemvalue="drf-yasg" />
+            <item index="17" class="java.lang.String" itemvalue="Jinja2" />
+            <item index="18" class="java.lang.String" itemvalue="coreschema" />
+            <item index="19" class="java.lang.String" itemvalue="pyrsistent" />
+            <item index="20" class="java.lang.String" itemvalue="sqlparse" />
+            <item index="21" class="java.lang.String" itemvalue="djangorestframework-simplejwt" />
+            <item index="22" class="java.lang.String" itemvalue="ruamel.yaml.clib" />
+            <item index="23" class="java.lang.String" itemvalue="djangorestframework" />
+            <item index="24" class="java.lang.String" itemvalue="pyparsing" />
+            <item index="25" class="java.lang.String" itemvalue="uritemplate" />
+            <item index="26" class="java.lang.String" itemvalue="django-nose" />
+            <item index="27" class="java.lang.String" itemvalue="six" />
+            <item index="28" class="java.lang.String" itemvalue="ruamel.yaml" />
+            <item index="29" class="java.lang.String" itemvalue="asgiref" />
+            <item index="30" class="java.lang.String" itemvalue="packaging" />
+            <item index="31" class="java.lang.String" itemvalue="swagger-spec-validator" />
+            <item index="32" class="java.lang.String" itemvalue="drf-util" />
+            <item index="33" class="java.lang.String" itemvalue="coreapi" />
+            <item index="34" class="java.lang.String" itemvalue="Django" />
+            <item index="35" class="java.lang.String" itemvalue="itypes" />
+            <item index="36" class="java.lang.String" itemvalue="pytz" />
+            <item index="37" class="java.lang.String" itemvalue="idna" />
+            <item index="38" class="java.lang.String" itemvalue="inflection" />
+            <item index="39" class="java.lang.String" itemvalue="chardet" />
+            <item index="40" class="java.lang.String" itemvalue="attrs" />
+          </list>
+        </value>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8NamingInspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="N801" />
+          <option value="N812" />
+          <option value="N806" />
+          <option value="N802" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyUnreachableCodeInspection" enabled="false" level="WARNING" enabled_by_default="false" />
+    <inspection_tool class="PyUnresolvedReferencesInspection" enabled="true" level="WARNING" enabled_by_default="true">
+      <option name="ignoredIdentifiers">
+        <list>
+          <option value="typing.ItemsView.__getitem__" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>
