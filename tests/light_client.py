@@ -8,9 +8,24 @@ import hashlib
 import requests
 from base64 import b64encode
 import json
+import string
+import random
 
 from dvvset import DVVSet
 
+
+def generate_random_name():
+    alphabet = '{}{}ЄєІіЇїҐґ'.format(string.digits, string.ascii_lowercase)
+    return ''.join(random.sample(alphabet, 20))
+
+
+def encode_to_hex(dir_name=None, dir_names=None):
+    if dir_name:
+        return dir_name.encode().hex() + "/"
+    if dir_names:
+        result = [name.encode().hex() + "/" for name in dir_names]
+        return result
+    return False
 
 class LightClient:
     """
