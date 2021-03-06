@@ -9,6 +9,7 @@ import hashlib
 import xml.etree.ElementTree as ET
 import requests
 from base64 import b64encode
+from environs import Env
 
 from dvvset import DVVSet
 
@@ -16,20 +17,23 @@ import boto3
 from botocore.config import Config
 from botocore.utils import fix_s3_host
 
+env = Env()
+env.read_env('.env')
+
 #logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 for name in ['botocore', 's3transfer', 'boto3']:
     logging.getLogger(name).setLevel(logging.CRITICAL)
 
-BASE_URL = "http://127.0.0.1:8082"
-USERNAME_1 = 'ja2@example.com'
-PASSWORD_1 = 'secret'
-TEST_BUCKET_1 = "the-mybrand2-engineers-res"
-TEST_BUCKET_2 = "the-mybrand2-anothergroup-res"
-UPLOADS_BUCKET_NAME = "uploads"
+BASE_URL = env.str("BASE_URL", "https://lightupon.cloud")
+USERNAME_1 = env.str("USERNAME_1")
+PASSWORD_1 = env.str("PASSWORD_1")
+TEST_BUCKET_1 = env.str("TEST_BUCKET_1")
+TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
+UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 
-ACCESS_KEY = "ZWXQMCADQ_SNUXSCF_IX"
-SECRET_KEY = "2QZ7dDFAQqgf9ZkDer6WaLJ5-bIdExiKBvo8Wg"
-HTTP_PROXY = 'http://127.0.0.1:15018'
+ACCESS_KEY = env.str("ACCESS_KEY")
+SECRET_KEY = env.str("SECRET_KEY")
+HTTP_PROXY = env.str("HTTP_PROXY")
 
 RIAK_ACTION_LOG_FILENAME = ".riak_action_log.xml"
 
@@ -49,6 +53,7 @@ def configure_boto3():
 
 class TestClient(unittest.TestCase):
     def setUp(self):
+
         creds = {"login": USERNAME_1, "password": PASSWORD_1}
         response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds),
                                  headers={'content-type': 'application/json'})
@@ -59,30 +64,26 @@ class TestClient(unittest.TestCase):
         self.purge_test_buckets()
 
     def get_json(self, url, status=200, **kwargs):
-        response = self.get(url, **kwargs)
+        response = requests.get(url, headers={'content-type': 'application/json',
+                                          'authorization': 'Token {}'.format(self.token)}, **kwargs)
         assert response.status_code == status
-        assert response.content_type == 'application/json'
-        return json.loads(response.data.decode('utf8'))
+        assert response.headers['content-type'] == 'application/json'
+        return response.json()
 
     def post_json(self, url, data, status=200, **kwargs):
         response = requests.post(url, data=json.dumps(data),
-                             headers={'content-type': 'application/json',
-                                      'authorization': 'Token {}'.format(self.token)})
+                                 headers={'content-type': 'application/json',
+                                          'authorization': 'Token {}'.format(self.token)})
         assert response.status_code == status
-        return response.text
-
-    def patch_json(self, url, data, status=200, **kwargs):
-        response = self.patch(url, data=json.dumps(data),
-                              headers={'content-type': 'application/json'})
-        assert response.status_code == status
-        assert response.content_type == 'application/json'
         return json.loads(response.data.decode('utf8'))
 
-    def delete_json(self, url, status=200, **kwargs):
-        response = self.delete(url, headers={'content-type': 'application/json'})
+    def delete_json(self, url, data, status=200, **kwargs):
+        response = requests.delete(url, data=json.dumps(data),
+                                   headers={'content-type': 'application/json',
+                                            'authorization': 'Token {}'.format(self.token)})
         assert response.status_code == status
-        assert response.content_type == 'application/json'
-        return json.loads(response.data.decode('utf8'))
+        assert response.headers['content-type'] == 'application/json'
+        return response.json()
 
     def upload_file(self, url, fn, prefix='', guid='',
                     last_seen_version=None, form_data=None, **kwargs):
