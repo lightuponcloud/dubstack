@@ -283,4 +283,27 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.post(url, json=data, headers=headers)
 
+    def patch(self, bucket_id, operation, object_keys, prefix=''):
+        """
+        PATCH /riak/list/[:bucket_id]
+        This API andpoint allows to lock, unlock, undelete objects.
+        Undelete operation marks objects as visible again.
+        Lock marks them immutable and unlock reverses that operation.
+
+        Success Response
+        Code : 204 No Content
+        """
+
+        headers = {
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "op": operation,  # "undelete", "lock", "unlock"
+            # "prefix": prefix,
+            "object_keys": object_keys
+        }
+
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        return requests.post(url, json=data, headers=headers)
 

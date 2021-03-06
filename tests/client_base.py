@@ -27,6 +27,8 @@ for name in ['botocore', 's3transfer', 'boto3']:
 BASE_URL = env.str("BASE_URL", "https://lightupon.cloud")
 USERNAME_1 = env.str("USERNAME_1")
 PASSWORD_1 = env.str("PASSWORD_1")
+USERNAME_2 = env.str("USERNAME_2")
+PASSWORD_2 = env.str("PASSWORD_2")
 TEST_BUCKET_1 = env.str("TEST_BUCKET_1")
 TEST_BUCKET_2 = env.str("TEST_BUCKET_2")
 UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")

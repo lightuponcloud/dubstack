@@ -41,3 +41,7 @@ class MKdirTest(unittest.TestCase):
         dir_name_prefix = [encode_to_hex(dir_name)]
         response = self.client.delete(TEST_BUCKET_1, dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
+
+
+if __name__ == '__main__':
+    unittest.main()
