@@ -300,10 +300,10 @@ class LightClient:
         }
         data = {
             "op": operation,  # "undelete", "lock", "unlock"
-            # "prefix": prefix,
+            "prefix": prefix,
             "object_keys": object_keys
         }
 
         url = "{}riak/list/{}/".format(self.url, bucket_id)
-        return requests.post(url, json=data, headers=headers)
+        return requests.patch(url, json=data, headers=headers)
 
