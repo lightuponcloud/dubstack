@@ -9,8 +9,6 @@ from light_client import LightClient, generate_random_name, encode_to_hex
 
 
 
-
-
 class DeleteTest(unittest.TestCase):
     """
     Operation DELETE tests

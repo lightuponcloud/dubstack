@@ -301,7 +301,7 @@ class LightClient:
         data = {
             "op": operation,  # "undelete", "lock", "unlock"
             "prefix": prefix,
-            "object_keys": object_keys
+            "objects": object_keys
         }
 
         url = "{}riak/list/{}/".format(self.url, bucket_id)
