@@ -61,26 +61,22 @@ class LightClient:
     def _increment_version(self, last_seen_version, modified_utc):
         """
         Increments provided version or creates a new one, if not provided.
-
         ``last_seen_version`` -- casual version vector value.
                                  It should be encoded as base64(json(value))
         ``modified_utc`` -- it is used to display modified time in web UI.
         """
         dvvset = DVVSet()
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
         if not last_seen_version:
-            # print("dot: ", dot)
-            # print(json.dumps(dot))
+            dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
             version = b64encode(json.dumps(dot).encode())
-            # print(version)
-            # print(b64decode(version).decode())
         else:
             # increment version
+            last_seen_version = json.loads(b64decode(last_seen_version))
             context = dvvset.join(last_seen_version)
             new_dot = dvvset.update(dvvset.new_with_history(context, modified_utc),
-                                    dot, self.user_id)
+                                    last_seen_version, self.user_id)
             version = dvvset.sync([last_seen_version, new_dot])
-
+            version = b64encode(json.dumps(version).encode())
         return version
 
     def upload_part(self, bucket_id, prefix, fn, chunk, file_size, part_num,
@@ -123,6 +119,7 @@ class LightClient:
             r_url = "{}riak/upload/{}/{}/{}/".format(self.url, bucket_id, upload_id, part_num)
         # send request without binary data first
         response = requests.post(r_url, files=multipart_form_data, headers=headers)
+
         if response.status_code == 206:
             # skip chunk upload, as server has it aleady
             response_json = response.json()
@@ -331,7 +328,6 @@ class LightClient:
         """
 
         headers = {
-
             'content-type': 'application/json',
             'authorization': 'Token {}'.format(self.token),
         }
