@@ -6,7 +6,7 @@ https://github.com/lightuponcloud/dubstack
 import os
 import hashlib
 import requests
-from base64 import b64encode
+from base64 import b64encode, b64decode
 import json
 import string
 import random
@@ -73,11 +73,12 @@ class LightClient:
             version = b64encode(json.dumps(dot).encode())
         else:
             # increment version
+            last_seen_version = json.loads(b64decode(last_seen_version))
             context = dvvset.join(last_seen_version)
             new_dot = dvvset.update(dvvset.new_with_history(context, modified_utc),
-                                    dot, self.user_id)
+                                    last_seen_version, self.user_id)
             version = dvvset.sync([last_seen_version, new_dot])
-            version = b64encode(json.dumps(version)).encode()
+            version = b64encode(json.dumps(version).encode())
         return version
 
     def upload_part(self, bucket_id, prefix, fn, chunk, file_size, part_num,
