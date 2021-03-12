@@ -23,7 +23,11 @@ class LockTest(unittest.TestCase):
     #
 
     #
-    # Make sure locked file can't be replaced using COPY/MOVE operations
+    # Make sure locked file can't be replaced using MOVE operations
+    #
+
+    #
+    # Make sure locked file can't be replaced using COPY operation from other User
     #
 
     #
@@ -137,7 +141,7 @@ class LockTest(unittest.TestCase):
         version = result['version']
         self.assertEqual(result['orig_name'], fn)
 
-        # 1.2 create a directory and upload the same file there with a new version
+        # 1.2 create a directory
         dir_name = generate_random_name()
         dir_name_prefix = encode_to_hex(dir_name)
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
@@ -169,43 +173,55 @@ class LockTest(unittest.TestCase):
         else:
             self.assertTrue(False, msg='Uploaded file disapeared somewhere')
 
-        # 4.1 Try to replace locked file by second file from directory by copy operation
-        object_keys = {object_key2: fn}
+        # 3.3 Delete uploaded file from directory
+        response = self.client.delete(TEST_BUCKET_1, [object_key2], dir_name_prefix)
+        self.assertEqual(response.json(), [object_key2])
+
+        # 4.1 Upload the same file with new version from User2
+        self.client.login(USERNAME_2, PASSWORD_2)
+        result = self.client.upload(TEST_BUCKET_1, fn, prefix=dir_name_prefix, last_seen_version=version)
+        object_key3 = result['object_key']
+        self.assertEqual(result['orig_name'], fn)
+        self.assertNotEqual(version, result['version'])
+
+        # 4.2 Try to replace locked file by second file from directory by copy operation
+        object_keys = {object_key3: fn}
         response = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, dir_name_prefix)
-        print(response.status_code)
-        print(response.content.decode())
-        # What to assert - is a question
+        # print(response.content.decode())
+        self.assertEqual(response.json()['skipped'], 'locked')
 
         # 4.2 check for locked file existance and is_locked: True
         response = self.client.get_list(TEST_BUCKET_1)
         for obj in response.json()['list']:
             if obj['object_key'] == object_key1:
                 self.assertEqual(obj['orig_name'], fn)
-                print(f"is_locked: {obj['is_locked']} Need: {True}")
-                # self.assertEqual(obj['is_locked'], True)
+                self.assertEqual(obj['is_locked'], True)
                 break
         else:
             self.assertTrue(False, msg='Uploaded file disapeared somewhere')
 
-        # Clean: delete the uploaded file and directory
+        # 4.3 Clean: delete uploaded file from User2
+        response = self.client.delete(TEST_BUCKET_1, [object_key3], dir_name_prefix)
+        self.assertEqual(response.json(), [object_key3])
+
+        # Clean: delete the uploaded file and directory from User1
+        self.client.login(USERNAME_1, PASSWORD_1)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key1])
         self.assertEqual(response.json()[0]['is_locked'], False)
-        # print(response.content.decode())
         self.assertEqual(response.status_code, 200)
-        response = self.client.delete(TEST_BUCKET_1, [object_key1])
-        # print(response.json())
+        object_keys = [object_key1, dir_name_prefix]
+        response = self.client.delete(TEST_BUCKET_1, object_keys)
         self.assertEqual(response.status_code, 200)
-
-        response = self.client.delete(TEST_BUCKET_1, [dir_name_prefix])
-        # print(response.content.decode())
-        self.assertEqual(response.status_code, 200)
+        # WRONG RESPONSE CONTENT - DELETE OPERATION !!!
+        # self.assertEqual(set(response.json()), set(object_keys))
 
 
     def test_lock4(self):
         """
         Make sure deleted objects can't be locked
         """
-        # # 1. upload a file
+        print("test_lock4 start")
+        # 1. upload a file
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
         object_key = [result['object_key']]
@@ -220,9 +236,9 @@ class LockTest(unittest.TestCase):
 
         # 3. try to lock deleted file
         response = self.client.patch(TEST_BUCKET_1, 'lock', object_key_deleted)
-        print(response.status_code)
-        print(response.content.decode())
-        # status 200
+        # print(response.status_code)
+        # print(response.content.decode())
+        # WRONG RESPONSE - status 200 and is_locked: True
 
         # 4. GET list and check for deleted file is not locked
         response = self.client.get_list(TEST_BUCKET_1)
@@ -233,6 +249,7 @@ class LockTest(unittest.TestCase):
                 break
         else:
             self.assertTrue(False, msg="Deleted file gone somewhere")
+
 
 if __name__ == '__main__':
     unittest.main()
