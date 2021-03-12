@@ -37,7 +37,7 @@ class MKdirTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {"error": 10})  # "10": "Directory exists already."
 
-        # 4 Delete created pseudo-directory
+        # Clean: delete created pseudo-directory
         dir_name_prefix = [encode_to_hex(dir_name)]
         response = self.client.delete(TEST_BUCKET_1, dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)

@@ -11,11 +11,10 @@ class LockTest(unittest.TestCase):
     """
     Test operation LOCK / UNLOCK
 
-    # 1. upload file
-    # 2. lock it
-    # 3. make sure lock is set
-    # 4. try to change lock from different user
-    # 5. make sure the same value of lock remained as in step #2
+    # 1. upload file, lock it
+    # 2. make sure lock is set
+    # 3. try to change lock from different user
+    # 4. make sure the same value of lock remained as in step #2
     #
 
     #
@@ -46,7 +45,7 @@ class LockTest(unittest.TestCase):
         response = self.client.patch(TEST_BUCKET_1, "lock", [object_key])
         result = response.json()
         # print(response.content.decode())
-        self.assertEqual(result[0]['is_locked'], "true")
+        self.assertEqual(result[0]['is_locked'], "true")  # Надо пофиксить на сервере "true" -> True
         self.assertEqual(response.status_code, 200)
 
         # 4. try to change lock from different user
@@ -55,7 +54,7 @@ class LockTest(unittest.TestCase):
         result = response.json()
         # print(response.status_code)
         # print(response.content.decode())
-        self.assertEqual(result[0]['is_locked'], "true")
+        self.assertEqual(result[0]['is_locked'], "true")  # Надо пофиксить на сервере "true" -> True
 
         # 5. Check for the same value of lock remained as in step #2-3
         response = self.client.get_list(TEST_BUCKET_1)
@@ -67,7 +66,7 @@ class LockTest(unittest.TestCase):
         # 6. Delete uploaded file
         self.client.login(USERNAME_1, PASSWORD_1)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key])
-        self.assertEqual(response.json()[0]['is_locked'], "false")
+        self.assertEqual(response.json()[0]['is_locked'], "false")  # Надо пофиксить на сервере "false" -> False
         # print(response.content.decode())
         self.assertEqual(response.status_code, 200)
         response = self.client.delete(TEST_BUCKET_1, [object_key])
@@ -114,7 +113,7 @@ class LockTest(unittest.TestCase):
 
         # 5.1 unlock file and delete
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key])
-        self.assertEqual(response.json()[0]['is_locked'], "false")
+        self.assertEqual(response.json()[0]['is_locked'], "false")  # Надо пофиксить на сервере "false" -> False
         self.assertEqual(response.status_code, 200)
         response = self.client.delete(TEST_BUCKET_1, [object_key])
         self.assertEqual(response.status_code, 200)
@@ -198,10 +197,9 @@ class LockTest(unittest.TestCase):
         """
         # # 1. upload a file
         fn = "20180111_165127.jpg"
-        # result = self.client.upload(TEST_BUCKET_1, fn)
-        # object_key = [result['object_key']]
-        object_key = ["20180111_165127.jpg"]
-        # self.assertEqual(result['orig_name'], fn)
+        result = self.client.upload(TEST_BUCKET_1, fn)
+        object_key = [result['object_key']]
+        self.assertEqual(result['orig_name'], fn)
 
         # 2. delete it
         response = self.client.delete(TEST_BUCKET_1, object_key)
@@ -221,7 +219,6 @@ class LockTest(unittest.TestCase):
         for obj in response.json()['list']:
             if obj['object_key'] == object_key_deleted:
                 self.assertEqual(obj['is_locked'], True)
-
 
         # self.assertEqual(obj['is_locked'], False)
 
