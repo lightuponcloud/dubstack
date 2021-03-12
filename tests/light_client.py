@@ -291,7 +291,7 @@ class LightClient:
         Lock marks them immutable and unlock reverses that operation.
 
         Success Response
-        Code : 204 No Content
+        Code : 200
         """
 
         headers = {
@@ -373,5 +373,5 @@ class LightClient:
             "src_prefix": src_prefix,
             "dst_prefix": dst_prefix
         }
-        url = "{}riak/move/{}/".format(self.url, src_bucket_id)
+        url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)
