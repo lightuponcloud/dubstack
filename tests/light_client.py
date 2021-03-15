@@ -19,7 +19,7 @@ def generate_random_name():
     return ''.join(random.sample(alphabet, 20))
 
 
-def encode_to_hex(dir_name=None, dir_names=None):
+def encode_to_hex(dir_name: str = None, dir_names: list = None):
     if dir_name:
         return dir_name.encode().hex() + "/"
     if dir_names:
@@ -166,7 +166,7 @@ class LightClient:
         return {'guid': guid, 'upload_id': upload_id, 'end_byte': end_byte,
                 'md5_list': md5_list, 'part_num': part_num}
 
-    def upload(self, bucket_id, file_name, prefix='', guid='', last_seen_version=None):
+    def upload(self, bucket_id, file_name, prefix='', guid='', last_seen_version: str = ''):
         """
         Uploads file to server by splitting it to chunks and testing if server
         has chunk already, before actual upload.
@@ -203,7 +203,7 @@ class LightClient:
                     break
         return result
 
-    def get_list(self, bucket_id, prefix=None):
+    def get_list(self, bucket_id, prefix: str = ''):
         """
         GET /riak/list/[:bucket_id]
         Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
@@ -221,15 +221,14 @@ class LightClient:
         Code : 404 Not Found When prefix not found
         """
 
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
-        data = {"prefix": prefix}
+        url = "{}riak/list/{}/?prefix={}".format(self.url, bucket_id, prefix)
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
         }
-        return requests.get(url, data=json.dumps(data), headers=headers)
+        return requests.get(url, headers=headers)
 
-    def delete(self, bucket_id, object_keys, prefix=None):
+    def delete(self, bucket_id, object_keys: list, prefix: str = None):
         """
         DELETE /riak/list/[:bucket_id]
         Used to delete files and pseudo-directories.
@@ -258,7 +257,7 @@ class LightClient:
         }
         return requests.delete(url, data=json.dumps(data), headers=headers)
 
-    def create_pseudo_directory(self, bucket_id, name, prefix=''):
+    def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ''):
         """
         POST /riak/list/[:bucket_id]
         Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
@@ -283,7 +282,7 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.post(url, json=data, headers=headers)
 
-    def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str=''):
+    def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str = ''):
         """
         PATCH /riak/list/[:bucket_id]
         This API andpoint allows to lock, unlock, undelete objects.
@@ -307,7 +306,8 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.patch(url, json=data, headers=headers)
 
-    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = '', dst_prefix: str = ''):
+    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = '',
+             dst_prefix: str = ''):
         """
         POST /riak/move/[:src_bucket_id]/
         Move object or directory.
@@ -340,7 +340,8 @@ class LightClient:
         url = "{}riak/move/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)
 
-    def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = '', dst_prefix: str = ''):
+    def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = '',
+             dst_prefix: str = ''):
         """
         POST /riak/copy/[:src_bucket_id]/
         Copy object or directory.
@@ -374,4 +375,36 @@ class LightClient:
             "dst_prefix": dst_prefix
         }
         url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
+        return requests.post(url, json=data, headers=headers)
+
+    def rename(self, src_bucket_id, src_object_key: str, dst_object_name: str, prefix: str = ''):
+        """
+        POST /riak/rename/[:src_bucket_id]/
+        Renames object or directory. Changes "orig_name" meta tag when called on object.
+        Moves nested objects to new prefix when used on pseudo-directories.
+
+        Auth required : YES
+
+        Success Response
+        Code : 204 No Content
+
+        Body
+        {
+           "src_object_key":"string",
+           "dst_object_name":"string",
+           "prefix":"string"
+        }
+        """
+
+        headers = {
+
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "src_object_key": src_object_key,
+            "dst_object_name": dst_object_name,
+            "prefix": prefix
+        }
+        url = "{}riak/rename/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)

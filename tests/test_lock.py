@@ -1,7 +1,5 @@
-import json
+
 import unittest
-from base64 import b64decode
-from pprint import pprint
 
 from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1, USERNAME_2, PASSWORD_2)
 from light_client import LightClient, generate_random_name, encode_to_hex
