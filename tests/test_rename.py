@@ -62,59 +62,59 @@ class RenameTest(unittest.TestCase):
     def setUp(self):
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
 
-    # def test_negative_case1(self):
-    #     """
-    #     # Rename pseudo-directory:
-    #     # * source prefix do not exist
-    #     """
-    #     # 1. create a directory
-    #     dir_name = generate_random_name()
-    #     prefix = encode_to_hex(dir_name)
-    #     random_dir_name = (generate_random_name(), generate_random_name())
-    #     self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
-    #
-    #     # 2.1 try to rename directory that doesn't exists in root
-    #     res = self.client.rename(TEST_BUCKET_1, random_dir_name[0], random_dir_name[1])
-    #     self.assertEqual(res.status_code, 400)
-    #     self.assertEqual(res.json(), {"error": 9})  # "9": "Incorrect object name.",
-    #
-    #     # 2.2 try to rename directory that doesn't exists in created directory
-    #     res = self.client.rename(TEST_BUCKET_1, random_dir_name[0], random_dir_name[1], prefix)
-    #     self.assertEqual(res.status_code, 400)
-    #     self.assertEqual(res.json(), {"error": 9})
-    #
-    #     # Clean: delete created directory
-    #     self.client.delete(TEST_BUCKET_1, [prefix])
+    def test_negative_case1(self):
+        """
+        # Rename pseudo-directory:
+        # * source prefix do not exist
+        """
+        # 1. create a directory
+        dir_name = generate_random_name()
+        prefix = encode_to_hex(dir_name)
+        random_dir_name = (generate_random_name(), generate_random_name())
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
 
-    # def test_negative_case2(self):
-    #     """
-    #     # Rename pseudo-directory:
-    #     # * pseudo-directory exists ( but in lower/uppercase )
-    #     """
-    #     # 1.1 create a directory with lower_case name
-    #     dir_name1 = generate_random_name().lower()
-    #     prefix1 = encode_to_hex(dir_name1)
-    #     random_dir_name1 = generate_random_name()
-    #     self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
-    #
-    #     # 1.2 try to rename lower_case name directory by upper_case key
-    #     res = self.client.rename(TEST_BUCKET_1, dir_name1.upper(), random_dir_name1)
-    #     self.assertEqual(res.status_code, 400)
-    #     self.assertEqual(res.json(), {"error": 9})  # "9": "Incorrect object name.",
-    #
-    #     # 2.1 create a directory with upper_case name
-    #     dir_name2 = generate_random_name().upper()
-    #     prefix2 = encode_to_hex(dir_name2)
-    #     random_dir_name2 = generate_random_name()
-    #     self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2)
-    #
-    #     # 2.2 try to rename upper_case name directory by lower_case key
-    #     res = self.client.rename(TEST_BUCKET_1, dir_name1.lower(), random_dir_name2)
-    #     self.assertEqual(res.status_code, 400)
-    #     self.assertEqual(res.json(), {"error": 9})
-    #
-    #     # Clean: delete created directories
-    #     self.client.delete(TEST_BUCKET_1, [prefix1, prefix2])
+        # 2.1 try to rename directory that doesn't exists in root
+        res = self.client.rename(TEST_BUCKET_1, encode_to_hex(random_dir_name[0]), random_dir_name[1])
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json(), {"error": 11})  # "11": "Prefix do not exist.",
+
+        # 2.2 try to rename directory that doesn't exists in created directory
+        res = self.client.rename(TEST_BUCKET_1, encode_to_hex(random_dir_name[0]), random_dir_name[1], prefix)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json(), {"error": 11})
+
+        # Clean: delete all created
+        self.client.delete(TEST_BUCKET_1, [prefix])
+
+    def test_negative_case2(self):
+        """
+        # Rename pseudo-directory:
+        # * pseudo-directory exists ( but in lower/uppercase )
+        """
+        # 1.1 create a directory with lower_case name
+        dir_name1 = generate_random_name().lower()
+        prefix1 = encode_to_hex(dir_name1)
+        random_dir_name1 = generate_random_name()
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+
+        # 1.2 try to rename lower_case name directory by upper_case key
+        res = self.client.rename(TEST_BUCKET_1, encode_to_hex(dir_name1.upper()), random_dir_name1)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json(), {"error": 11})  # "11": "Prefix do not exist.",
+
+        # 2.1 create a directory with upper_case name
+        dir_name2 = generate_random_name().upper()
+        prefix2 = encode_to_hex(dir_name2)
+        random_dir_name2 = generate_random_name()
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2)
+
+        # 2.2 try to rename upper_case name directory by lower_case key
+        res = self.client.rename(TEST_BUCKET_1, encode_to_hex(dir_name2.lower()), random_dir_name2)
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.json(), {"error": 11})
+
+        # Clean: delete created directories
+        self.client.delete(TEST_BUCKET_1, [prefix1, prefix2])
 
     def test_negative_case3(self):
         """
@@ -123,10 +123,11 @@ class RenameTest(unittest.TestCase):
         """
         # 1.1 create a directory and a nested directory into
         dir_names = [generate_random_name() for i in range(2)]
-        print(dir_names)
+        print("Test 3")
+        print("dir names: ", dir_names)
         hex_decoder = lambda x: bytes.fromhex(x).decode('utf-8')
         prefixes = encode_to_hex(dir_names=dir_names)
-        print(prefixes)
+        print("prefixes: ", prefixes)
         self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[0])
         self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[1], prefixes[0])
 
@@ -135,27 +136,29 @@ class RenameTest(unittest.TestCase):
 
         # 1.3 try to rename nested deleted directory
         res = self.client.get_list(TEST_BUCKET_1, prefixes[0])
+        print("GET list:")
         from pprint import pprint
         pprint(res.json())
-        dir = None
+        pseudo_dir = None
         for obj in res.json()['dirs']:
             if hex_decoder(obj['prefix'].split('/')[1]).split("-")[0] == dir_names[1]:
-                dir = obj
+                pseudo_dir = obj
                 break
         else:
             assert False
 
         # print(hex_decoder(dir['prefix'].split('/')[1]).split("-")[0])
         dst_name = generate_random_name()
-        print(dst_name)
-        print(dir['prefix'])
-        res = self.client.rename(TEST_BUCKET_1, dir['prefix'].split("/")[1] + '/', dst_name, prefixes[0])
-        print(res.json())
+        print("dst_name: ", dst_name)
+        print("pseudo_dir prefix: ", pseudo_dir['prefix'])
+        res = self.client.rename(TEST_BUCKET_1, pseudo_dir['prefix'].split("/")[1] + '/', dst_name, prefixes[0])
+        print("status code: ", res.status_code, "Expected: ", 400)
+        print("result: ", res.json(), "- renamed and undelete")
         # self.assertEqual(res.status_code, 400)
         # self.assertEqual(res.json(), {"error": 9})  # "9": "Incorrect object name.",
 
-        # Clean: delete created directories
-        # self.client.delete(TEST_BUCKET_1, [prefixes[0]])
+        # Clean: delete all created
+        self.client.delete(TEST_BUCKET_1, [prefixes[0]])
 
 
 if __name__ == '__main__':
