@@ -90,28 +90,16 @@ class CopyTest(unittest.TestCase):
         self.assertEqual(res.json()['dst_prefix'], prefix2)
         self.assertEqual(res.json()['dst_orig_name'], fn)
 
-        # 3. rename uploaded file in root
+        # 3. copy the renamed file to dir2
         new_name = generate_random_name()
-        res = self.client.rename(TEST_BUCKET_1, object_key, new_name, '')
-        self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.json()['orig_name'], new_name)
-
-        # 3.1 Get the object_key of renamed file
-        res = self.client.get_list(TEST_BUCKET_1)
-        for el in res.json()['list']:
-            if el['orig_name'] == new_name:
-                object_key = el['object_key']
-                break
-        else:
-            raise Exception('File gone somewhere')
-
-        # 3.2 copy the renamed file
         object_keys = {object_key: new_name}
         res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', prefix2)
         self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['renamed'], True)
 
         # 4. copy dir1 to dir2
         object_keys2 = {prefix1: dir_name1}
+        print(object_keys2)
         res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys2, '', prefix2)
         print(res.status_code)
         print(res.content.decode())
@@ -121,5 +109,50 @@ class CopyTest(unittest.TestCase):
         # 5. Сlean: delete all created
         self.client.delete(TEST_BUCKET_1, [object_key, prefix1, prefix2])
 
+    def test_case2(self):
+        """
+        # file from nested dir to root
+        # file from nested dir up
+        # file from nested dir down
+        # renamed file from nested dir to root
+        """
 
+        # 1. create a dir1 and a sub-dir2 and sub-sub-dir3
+        dir_name1, dir_name2, dir_name3 = [generate_random_name() for _ in range(3)]
+        prefix1, prefix2, prefix3 = encode_to_hex(dir_names=[dir_name1, dir_name2, dir_name3])
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2, prefix1)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name3, prefix1+prefix2)
+
+        # 2. upload a file in dir2
+        fn = '025587.jpg'
+        res = self.client.upload(TEST_BUCKET_1, fn, prefix1+prefix2)
+        object_key = res['object_key']
+
+        # 3. copy file from dir2 to root
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {object_key: fn}, prefix1+prefix2, '')
+        self.assertEqual(res.status_code, 200)
+        object_key2 = res.json()['new_key']
+
+        # 4.1 copy file up from dir2 to dir3
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {object_key: fn}, prefix1 + prefix2, prefix1 + prefix2 + prefix3)
+        self.assertEqual(res.status_code, 200)
+
+        # 4.2 copy file down from dir2 to dir1
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {object_key: fn}, prefix1 + prefix2, prefix1)
+        self.assertEqual(res.status_code, 200)
+
+        # 5. copy renamed file to root
+        new_name = generate_random_name()
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {object_key: new_name}, prefix1 + prefix2, '')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['renamed'], True)
+
+        # 6. Clean: delete all created
+        object_key3 = res.json()['new_key']
+        self.client.delete(TEST_BUCKET_1, [prefix1, object_key2, object_key3])
+
+
+if __name__ == "__main__":
+    unittest.main()
 
