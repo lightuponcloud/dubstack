@@ -151,6 +151,95 @@ class CopyTest(unittest.TestCase):
         # 6. Clean: delete all created
         object_key3 = res.json()['new_key']
         self.client.delete(TEST_BUCKET_1, [prefix1, object_key2, object_key3])
+        
+    def test_case3(self):
+        """
+        # dir from nested dir to root
+        # dir from nested dir up
+        # dir from nested dir down
+        """
+        test_dir, dir_name1, dir_name2, dir_name3 = ["test_dir", 'dir_1', 'dir_2', 'dir_3']  # не-рандом для наглядности, т.к. баг на response
+        prefix_test, prefix1, prefix2, prefix3 = encode_to_hex(dir_names=[test_dir, dir_name1, dir_name2, dir_name3])
+        dir1_path = prefix1
+        dir2_path = prefix1 + prefix2
+        dir3_path = prefix1 + prefix2 + prefix3
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1, '')
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2, dir1_path)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, test_dir, dir2_path)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name3, dir2_path)
+
+        # 2.1 copy test_dir from dir2 to root
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {prefix_test: test_dir}, dir2_path, '')
+        print(res.content.decode())
+        print(res.status_code)
+        # self.assertEqual(res.status_code, 200)
+        # object_key1 = res.json()['new_key']
+        # self.assertEqual(res.json(), 200)
+
+        # 2.2 copy test_dir from dir2 down to dir1
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {prefix_test: test_dir}, dir2_path, prefix1)
+        print(res.content.decode())
+        print(res.status_code)
+        # self.assertEqual(res.status_code, 200)
+        # object_key2 = res.json()['new_key']
+
+        # 2.3 copy test_dir from dir2 up to dir3
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, {prefix_test: test_dir}, dir2_path, dir3_path)
+        print(res.content.decode())
+        print(res.status_code)
+        # self.assertEqual(res.status_code, 200)
+        # object_key3 = res.json()['new_key']
+
+        """
+        Таже ошибка что и в test_case1 - статус 304, без данных на response, но операция копирования проходит успешно как задана.
+        """
+
+        # clean: delete created dirs
+        res = self.client.delete(TEST_BUCKET_1, [prefix1, prefix_test])
+        self.assertEqual(set(res.json()), {prefix1, prefix_test})  # костыль, мини-ассерт
+
+    def test_case4(self):
+        """
+        # 1. upload file to root
+        # 2. rename file
+        # 3. copy to nested dir
+        # 4. copy again. file should be replaced and not created conflicted copy
+        """
+        # 1. upload a file to root and create 2 directories in root
+        fn = '025587.jpg'
+        res = self.client.upload(TEST_BUCKET_1, fn)
+        object_key = res['object_key']
+
+        dir_name1, dir_name2 = [generate_random_name() for _ in range(2)]
+        prefix1, prefix2 = encode_to_hex(dir_names=[dir_name1, dir_name2])
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2, prefix1)
+
+        # 2. copy uploaded file from root to dir2
+        new_fn = generate_random_name()
+        object_keys = {object_key: new_fn}
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', prefix1 + prefix2)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['dst_prefix'], prefix1+prefix2)
+        self.assertEqual(res.json()['renamed'], True)
+        self.assertEqual(res.json()['dst_orig_name'], new_fn)
+        object_key1 = res.json()['new_key']
+
+        # 3. copy again
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', prefix1 + prefix2)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['dst_prefix'], prefix1+prefix2)
+        self.assertEqual(res.json()['dst_orig_name'], new_fn)
+
+        # 4. check for File is replaced and not created conflicted copy
+        res = self.client.get_list(TEST_BUCKET_1, prefix1+prefix2)
+        data = res.json()
+        self.assertEqual(len(data.get('list')), 1)  # if conflicted copy => length > 1
+        self.assertEqual(data.get('list')[0].get('orig_name'), new_fn)
+        self.assertEqual(data.get('list')[0].get('object_key'), object_key1)
+
+        # clean: delete all created
+        self.client.delete(TEST_BUCKET_1, [object_key, prefix1])
 
 
 if __name__ == "__main__":
