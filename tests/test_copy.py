@@ -67,47 +67,50 @@ class CopyTest(unittest.TestCase):
     def setUp(self):
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
 
-    # def test_case1(self):
-    #     """
-    #     # file from root to dir
-    #     # renamed file from root dir
-    #     # directory from root to dir
-    #     """
-    #     # 1. upload a file to root and create 2 directories in root
-    #     fn = '025587.jpg'
-    #     res = self.client.upload(TEST_BUCKET_1, fn)
-    #     object_key = res['object_key']
-    #
-    #     dir_name1, dir_name2 = [generate_random_name() for _ in range(2)]
-    #     prefix1, prefix2 = encode_to_hex(dir_names=[dir_name1, dir_name2])
-    #     self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
-    #     self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2)
-    #
-    #     # 2. copy uploaded file from root to dir2
-    #     object_keys = {object_key: fn}
-    #     res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', prefix2)
-    #     self.assertEqual(res.status_code, 200)
-    #     self.assertEqual(res.json()['dst_prefix'], prefix2)
-    #     self.assertEqual(res.json()['dst_orig_name'], fn)
-    #
-    #     # 3. copy the renamed file to dir2
-    #     new_name = generate_random_name()
-    #     object_keys = {object_key: new_name}
-    #     res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', prefix2)
-    #     self.assertEqual(res.status_code, 200)
-    #     self.assertEqual(res.json()['renamed'], True)
-    #
-    #     # 4. copy dir1 to dir2
-    #     object_keys2 = {prefix1: dir_name1}
-    #     print(object_keys2)
-    #     res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys2, '', prefix2)
-    #     print(res.status_code)
-    #     print(res.content.decode())
-    #     # Неожиданный статус код 304 с пустым контентом, но операция прошла успешно (если посмотреть в Web UI).
-    #     # Реакция на копирование папки.
-    #
-    #     # 5. Сlean: delete all created
-    #     self.client.delete(TEST_BUCKET_1, [object_key, prefix1, prefix2])
+    def test_case1(self):
+        """
+        # file from root to dir
+        # renamed file from root dir
+        # directory from root to dir
+        """
+        # 1. upload a file to root and create 2 directories in root
+        fn = '025587.jpg'
+        res = self.client.upload(TEST_BUCKET_1, fn)
+        object_key = res['object_key']
+
+        dir_name1, dir_name2 = [generate_random_name() for _ in range(2)]
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name1)
+        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name2)
+
+        # 2. copy uploaded file from root to dir2
+        hex_dir_name1, hex_dir_name2 = encode_to_hex(dir_names=[dir_name1, dir_name2])
+        object_keys = {object_key: fn}
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', hex_dir_name2)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['dst_prefix'], hex_dir_name2)
+        self.assertEqual(res.json()['dst_orig_name'], fn)
+
+        # 3. copy the renamed file to dir2
+        new_name = generate_random_name()
+        object_keys = {object_key: new_name}
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, '', hex_dir_name2)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['renamed'], True)
+
+        # 4. copy dir1 to dir2
+        object_keys2 = {hex_dir_name1: dir_name1}
+        print(object_keys2)
+        import pdb;pdb.set_trace()
+        res = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys2,
+                               src_prefix='', dst_prefix=hex_dir_name2)
+
+        print(res.status_code)
+        print(res.content.decode())
+        # Неожиданный статус код 304 с пустым контентом, но операция прошла успешно (если посмотреть в Web UI).
+        # Реакция на копирование папки.
+
+        # 5. Сlean: delete all created
+        self.client.delete(TEST_BUCKET_1, [object_key, hex_dir_name1, hex_dir_name2])
     #
     # def test_case2(self):
     #     """
