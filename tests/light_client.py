@@ -6,11 +6,26 @@ https://github.com/lightuponcloud/dubstack
 import os
 import hashlib
 import requests
-from base64 import b64encode
+from base64 import b64encode, b64decode
 import json
+import string
+import random
 
 from dvvset import DVVSet
 
+
+def generate_random_name():
+    alphabet = '{}{}ЄєІіЇїҐґ'.format(string.digits, string.ascii_lowercase)
+    return ''.join(random.sample(alphabet, 20))
+
+
+def encode_to_hex(dir_name=None, dir_names=None):
+    if dir_name:
+        return dir_name.encode().hex() + "/"
+    if dir_names:
+        result = [name.encode().hex() + "/" for name in dir_names]
+        return result
+    return False
 
 class LightClient:
     """
@@ -42,6 +57,8 @@ class LightClient:
         self.token = data['token']
         self.user_id = data['id']
 
+
+
     def _increment_version(self, last_seen_version, modified_utc):
         """
         Increments provided version or creates a new one, if not provided.
@@ -56,11 +73,12 @@ class LightClient:
             version = b64encode(json.dumps(dot).encode())
         else:
             # increment version
+            last_seen_version = json.loads(b64decode(last_seen_version))
             context = dvvset.join(last_seen_version)
             new_dot = dvvset.update(dvvset.new_with_history(context, modified_utc),
-                                    dot, self.user_id)
+                                    last_seen_version, self.user_id)
             version = dvvset.sync([last_seen_version, new_dot])
-            version = b64encode(json.dumps(version)).encode()
+            version = b64encode(json.dumps(version).encode())
         return version
 
     def upload_part(self, bucket_id, prefix, fn, chunk, file_size, part_num,
@@ -84,6 +102,7 @@ class LightClient:
             ct_range = "bytes {}-{}/{}".format(offset, limit, file_size)
         else:
             ct_range = "bytes 0-{}/{}".format(file_size-1, file_size)
+            offset = 0
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
@@ -184,3 +203,85 @@ class LightClient:
                 if end_byte+1 == file_size:
                     break
         return result
+
+    def get_list(self, bucket_id, prefix=None):
+        """
+        GET /riak/list/[:bucket_id]
+        Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
+        of objects and pseudo-directories.
+
+        Parameters
+        prefix : Hex-encoded UTF8 string. For example "blah" becomes "626c6168".
+
+        Success Response
+        Code : 200 OK
+
+        Other Response Codes
+        Code : 401 Unauthorized When token is not provided in headers
+        Code : 403 Forbidden When user has no access to bucket
+        Code : 404 Not Found When prefix not found
+        """
+
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        data = {"prefix": prefix}
+        headers = {
+            'accept': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        return requests.get(url, data=json.dumps(data), headers=headers)
+
+    def delete(self, bucket_id, object_keys, prefix=None):
+        """
+        DELETE /riak/list/[:bucket_id]
+        Used to delete files and pseudo-directories.
+        Marks objects as deleted. In case of pseudo-directoies, it renames them and makrs them as deleted.
+
+        Parameters
+        "object_keys": ["string", "string", ..] - required
+        "prefix": "string" - optional
+
+        In order to delete pseudo-directory, its name should be encoded as hex value and passed as "object_key" with "/" at the end.
+        For example:
+        "object_keys": ["64656d6f/", "something.jpg"]
+        "prefix": "74657374/"
+
+        Auth required : YES
+
+        Success Response
+        Code : 200 OK
+        """
+
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        data = {"object_keys": object_keys, 'prefix': prefix}
+        headers = {
+            'accept': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        return requests.delete(url, data=json.dumps(data), headers=headers)
+
+    def create_pseudo_directory(self, bucket_id, name, prefix=''):
+        """
+        POST /riak/list/[:bucket_id]
+        Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
+
+        Parameters
+        "directory_name":"string" - required
+        "prefix":"string" - optional
+
+        Auth required : YES
+
+        Success Response
+        Code : 204 No Content
+        """
+        headers = {
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            'prefix': prefix,
+            'directory_name': name
+        }
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        return requests.post(url, json=data, headers=headers)
+
+

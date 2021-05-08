@@ -22,3 +22,11 @@ c_src/img
 *.o
 *.beam
 *.plt
+tests/.env
+tests/.idea
+tests/__pycache__
+tests/.pytest_cache
+*.py[cod]
+*.orig
+.venv
+.env

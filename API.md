@@ -68,6 +68,8 @@ curl -X POST "http://127.0.0.1/riak/login" \
 curl -H "authorization : Token $TOKEN" \
 ..
 ```
+The default expiration time for token is 24 hours.
+
 
 GET /riak/logout/
 
@@ -84,7 +86,7 @@ Removes bearer token or session id, if the last one is submitted in headers by b
 
 ```sh
 curl -v -X GET $URL/riak/logout/ \
-    -H "authorization: Token $TOKEN"
+    -H "authorization: **Token** $TOKEN"
 ```
 
 ## GET /riak/list/[:bucket_id] 
@@ -94,7 +96,7 @@ It returns contents of cached index, containing list of objects and pseudo-direc
 
 ### Parameters
 
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
 **Auth required** : YES
 
@@ -198,7 +200,7 @@ curl -X POST "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
     -d "{ \"prefix\": \"64656d6f/\", \"directory_name\": \"blah\" }"
 ```
 
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
 **directory_name** : UTF8 name of new pseudo-dorectory, that should be created.
 
@@ -215,19 +217,19 @@ Lock marks them immutable and unlock reverses that operation.
 {
    "op": "undelete",
    "prefix": "string",
-   "objects": ["string", "string", .. "string"]
+   "object_keys": ["string", "string", .. "string"]
 }
 
 {
    "op": "lock",
    "prefix": "string",
-   "objects": ["string", "string", .. "string"]
+   "object_keys": ["string", "string", .. "string"]
 }
 
 {
    "op": "unlock",
    "prefix": "string",
-   "objects": ["string", "string", .. "string"]
+   "object_keys": ["string", "string", .. "string"]
 }
 ```
 
@@ -235,7 +237,7 @@ Lock marks them immutable and unlock reverses that operation.
 
 ### Success Response
 
-**Code** : `204 No Content`
+**Code** : `200 OK`
 
 ### Other Response Codes
 
@@ -258,6 +260,19 @@ curl -X PATCH "http://127.0.0.1/riak/list/the-poetry-naukovtsi-res" \
     -H "authorization: Token $TOKEN" \
     -d "{ \"prefix\": \"64656d6f/\", \"object_key\": \"something.random\" }"
 ```
+
+#### Response Example
+[
+   {
+      "object_key":"20180111_165127.jpg",
+      "is_locked":"true",
+      "lock_user_id":"03a3a647d7e65013f515b16b1d9225b6",
+      "lock_user_name":"Oleksii",
+      "lock_user_tel":"",
+      "lock_modified_utc":"1615039004"
+   }
+]
+
 
 ## DELETE /riak/list/[:bucket_id]
 
@@ -313,9 +328,7 @@ curl -X DELETE "http://127.0.0.1/riak/object/the-poetry-naukovtsi-res" \
 #### Response Example
 
 ```json
-{
-   "status": "ok"
-}
+["74657374/64656d6f/", "74657374/something.jpg"]
 ```
 
 ## GET /riak/thumbnail/[:bucket_id]
@@ -325,7 +338,7 @@ Returns binary image data.
 
 ### Parameters
 
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes "626c6168".
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes "626c6168", -- name of pseudo-directory.
 
 **object_key** : ASCII "object_key" value returned by GET /riak/list/[:bucket_id] API endpoint.
 
@@ -428,7 +441,7 @@ start byte-end byte/total bytes.
 
 **etags[]** : Md5 sum of binary part of data
 
-**prefix**  : Pseudo-directory hex-encoded name
+**prefix**  : Pseudo-directory hex-encoded name.
 
 **files[]** : File to upload. At the moment a single file is supported.
 
@@ -504,22 +517,25 @@ Copy object or directory.
    "src_prefix": "string",
    "dst_prefix": "string",
    "dst_bucket_id": "string",
-   "src_object_keys": {"key 1": "Destination Name 1", "key 2": "Destination Name 2"},
+   "src_object_keys": {"key1": "Destination Name 1", "key2": "Destination Name 2"},
 }
 ```
 
 Response Example:
-[{
-    bytes: 20,
-    src_orig_name: "Something.random",
-    dst_orig_name: "Something.random",
-    old_key: "something.random",
-    new_key: "something.random",
-    dst_prefix: "74657374/",
-    guid: "6caef57f-fc6d-457d-b2b0-210a1ed2f753",
-    renamed: false,
-    src_prefix: null
-}, ..]
+{
+   "src_prefix":null,
+   "dst_prefix":"7465737431/",
+   "old_key":"1350098.jpg",
+   "new_key":"1350098.jpg",
+   "src_orig_name":"1350098.jpg",
+   "dst_orig_name":"1350098.jpg",
+   "bytes":488475,
+   "renamed":false,
+   "src_locked":false,
+   "src_lock_user_id":"undefined",
+   "guid":"7e49f291-6bda-42c1-8651-b57e9855b7eb"
+}
+```
 
 
 #### Request Example
@@ -531,7 +547,7 @@ curl -s -X POST "http://127.0.0.1/riak/copy/the-poetry-naukovtsi-res/" \
     -H "accept: application/json" \
     -H "Content-Type: application/json" \
     -H "authorization: Token $TOKEN" \
-    -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": [\"something.random\"] }"
+    -d "{ \"src_prefix\": \"64656d6f/\", \"dst_prefix\": \"64656d6f/74657374/\", \"dst_bucket_id\": \"the-poetry-naukovtsi-res\", \"src_object_keys\": {"1350098.jpg": \"1350098.jpg\"} }"
 ```
 
 
@@ -672,7 +688,7 @@ Fetch the history of specified pseudo-directory.
 
 ### Parameters
 
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
 **object_key** : The key that upload/list returns for referencing object in URL.
 		 If provided, the object history of changes will be returned.
@@ -697,7 +713,7 @@ Allow to restore previous version of file.
 
 ### Parameters
 
-**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```.
+**prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
 
 **Auth required** : YES
