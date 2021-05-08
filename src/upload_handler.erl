@@ -948,7 +948,8 @@ value_or_null(Value) -> Value.
 
 to_binary(null) -> null;
 to_binary(undefined) -> null;
-to_binary(Value) -> erlang:list_to_binary(Value).
+to_binary(Value) when erlang:is_list(Value) -> erlang:list_to_binary(Value);
+to_binary(Value) when erlang:is_binary(Value) -> Value.
 
 hex_or_undefined(undefined) -> undefined;
 hex_or_undefined(Value) -> utils:hex(Value).

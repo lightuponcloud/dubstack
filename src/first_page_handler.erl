@@ -21,7 +21,6 @@ init(Req0, _Opts) ->
 	    [H|_] -> H;
 	    _ -> SessionID0
 	end,
-io:fwrite("SessionID0 1: ~p~n", [SessionID1]),
     case login_handler:check_session_id(SessionID1) of
 	false -> login(Req0, Settings);
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
@@ -102,8 +101,10 @@ login(Req0, Settings) ->
 		{root_path, Settings#general_settings.root_path},
 		{csrf_token, CSRFToken0}
 	    ]),
+	    SessionCookieName = utils:to_binary(Settings#general_settings.session_cookie_name),
 	    Req1 = cowboy_req:reply(200, #{
-		<<"content-type">> => <<"text/html">>
+		<<"content-type">> => <<"text/html">>,
+		<<"Set-Cookie">> => <<SessionCookieName/binary, "=deleted; Version=1; Expires=Thu, 01-Jan-1970 00:00:01 GMT">>
 	    }, Body, Req0),
 	    {ok, Req1, []};
 	<<"POST">> ->

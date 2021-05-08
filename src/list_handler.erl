@@ -21,8 +21,8 @@
     validate_post/2, create_pseudo_directory/2, handle_post/2,
     validate_prefix/2, parse_object_record/2]).
 
--export([validate_delete/2, format_delete_results/2, delete_resource/2,
-	 delete_completed/2, delete_pseudo_directory/5, delete_objects/6]).
+-export([validate_delete/2, delete_resource/2, delete_completed/2,
+         delete_pseudo_directory/5, delete_objects/6]).
 
 -include("riak.hrl").
 -include("entities.hrl").
@@ -249,7 +249,17 @@ patch_resource(Req0, State) ->
 patch_operation(Req0, lock, BucketId, Prefix, User, ObjectsList) ->
     UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, true) || K <- ObjectsList],
     UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
-    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req0),
+    %% prepare JSON response
+    UpdatedOnes2 = lists:map(
+	fun(I) ->
+	    IsLocked =
+		case proplists:get_value(is_locked, I) of
+		    <<"true">> -> true;
+		    _ -> false
+		end,
+	    lists:keyreplace(is_locked, 1, I, {is_locked, IsLocked})
+	end, UpdatedOnes1),
+    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes2), Req0),
     UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
 		   || I <- UpdatedOnes1],
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
@@ -259,7 +269,17 @@ patch_operation(Req0, lock, BucketId, Prefix, User, ObjectsList) ->
 patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
     UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, false) || K <- ObjectsList],
     UpdatedOnes1 = [I || I <- UpdatedOnes0, I =/= not_found andalso I =/= error],
-    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes1), Req0),
+    %% prepare JSON response
+    UpdatedOnes2 = lists:map(
+	fun(I) ->
+	    IsLocked =
+		case proplists:get_value(is_locked, I) of
+		    <<"true">> -> true;
+		    _ -> false
+		end,
+	    lists:keyreplace(is_locked, 1, I, {is_locked, IsLocked})
+	end, UpdatedOnes1),
+    Req1 = cowboy_req:set_resp_body(jsx:encode(UpdatedOnes2), Req0),
     UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
 		   || I <- UpdatedOnes1],
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
@@ -329,7 +349,8 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			 {lock_user_tel, undefined},
 			 {is_locked, undefined}]
 		end,
-	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id) andalso WasLocked =/= IsLocked0 of
+	    IsDeleted = proplists:get_value("x-amz-meta-is-deleted", Metadata0),
+	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id) andalso IsDeleted =/= true andalso WasLocked =/= IsLocked0 of
 		true ->
 		    Meta = parse_object_record(Metadata0, Options),
 		    case riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
@@ -612,19 +633,25 @@ validate_delete(Req0, State) ->
 
 delete_pseudo_directory(_BucketId, "", "/", _ActionLogRecord, _Timestamp) -> {dir_name, "/"};
 delete_pseudo_directory(BucketId, Prefix, HexDirName, ActionLogRecord0, Timestamp) ->
+    %%     - mark directory as deleted
+    %%     - mark all nested objects as deleted
+    %%     - leave record in action log
     DstDirectoryName0 = unicode:characters_to_list(utils:unhex(HexDirName)),
 
     case string:str(DstDirectoryName0, "-deleted-") of
 	0 ->
-	    %%     - mark directory as deleted
-	    %%     - mark all nested objects as deleted
-	    %%     - leave record in action log
 	    %% "-deleted-" substring was found in directory name. No need to add another tag.
 	    %% rename_pseudo_directory() marks pseudo-directory as "uncommited".
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
 	    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
-	    rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
-	    unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0);
+	    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
+		unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
+	    case Result of
+		lock -> lock;
+		{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
+		{error, _} -> undefined; %% Client should retry attempt to delete the directory
+		{dir_name, _} -> HexDirName
+	    end;
 	_ ->
 	    case indexing:update(BucketId, Prefix, [{to_delete,
 				    [{HexDirName, Timestamp}]}]) of
@@ -633,7 +660,7 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, ActionLogRecord0, Timestam
 		    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
 		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
 		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-		    {dir_name, HexDirName}
+		    HexDirName
 	    end
     end.
 
@@ -697,47 +724,6 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	    end
     end.
 
-%%
-%% Takes into account result of DELETE operation on list of objects
-%% and result of pseudo-directory processing.
-%%
-format_delete_results(Req0, PseudoDirectoryResults) ->
-    ErrorResults = lists:filter(
-	fun(I) ->
-	    case I of
-		{error, _} -> true;
-		_ -> false
-	    end
-	end, PseudoDirectoryResults),
-    AcceptedResults = lists:filter(
-	fun(I) ->
-	    case I of
-		{accepted, _} -> true;
-		_ -> false
-	    end
-	end, PseudoDirectoryResults),
-    case length(ErrorResults) of
-	0 ->
-	    case length(AcceptedResults) of
-		0 ->
-		    LockErrors = [I || I <- PseudoDirectoryResults, I =:= lock],
-		    case length(LockErrors) =:= 0 of
-			true -> {true, Req0, [{delete_result, PseudoDirectoryResults}]};
-			false ->
-			    %% If for some reason some of pseudo-directories were not renamed,
-			    %% return ``429 Too Many Requests``, so user tries again.
-			    js_handler:too_many(Req0)
-		    end;
-		_ ->
-		    %% Return lists of objects that were skipped
-		    {DirErrors, ObjectErrors} = lists:unzip([proplists:get_value(accepted, I) || I <- AcceptedResults]),
-		    {true, Req0, [{errors, [{dir_errors, DirErrors}, {object_errors, ObjectErrors}]}]}
-	    end;
-	_ ->
-	    %% Return the first error from the list
-	    {error, Number} = lists:nth(1, ErrorResults),
-	    js_handler:bad_request(Req0, Number)
-    end.
 
 delete_resource(Req0, State) ->
     case validate_delete(Req0, State) of
@@ -763,7 +749,9 @@ delete_resource(Req0, State) ->
 							   ActionLogRecord0, Timestamp, User#user.id),
 			    case DeleteResult0 of
 				lock -> js_handler:too_many(Req0);
-				_ -> format_delete_results(Req1, PseudoDirectoryResults)
+				_ ->
+				    Output = [I || I <- PseudoDirectoryResults, I =/= undefined andalso I =/= lock],
+				    {true, Req0, [{delete_result, Output}]}
 			    end
 		    end;
 		false ->
