@@ -19,13 +19,14 @@ def generate_random_name():
     return ''.join(random.sample(alphabet, 20))
 
 
-def encode_to_hex(dir_name=None, dir_names=None):
+def encode_to_hex(dir_name: str = None, dir_names: list = None):
     if dir_name:
         return dir_name.encode().hex() + "/"
     if dir_names:
         result = [name.encode().hex() + "/" for name in dir_names]
         return result
     return False
+
 
 class LightClient:
     """
@@ -57,18 +58,15 @@ class LightClient:
         self.token = data['token']
         self.user_id = data['id']
 
-
-
     def _increment_version(self, last_seen_version, modified_utc):
         """
         Increments provided version or creates a new one, if not provided.
-
         ``last_seen_version`` -- casual version vector value.
                                  It should be encoded as base64(json(value))
         ``modified_utc`` -- it is used to display modified time in web UI.
         """
+        dvvset = DVVSet()
         if not last_seen_version:
-            dvvset = DVVSet()
             dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
             version = b64encode(json.dumps(dot).encode())
         else:
@@ -95,22 +93,22 @@ class LightClient:
         }
         chunk_size = len(chunk)
         if file_size > self.FILE_UPLOAD_CHUNK_SIZE:
-            offset = (part_num-1) * self.FILE_UPLOAD_CHUNK_SIZE
-            limit = offset+chunk_size-1
+            offset = (part_num - 1) * self.FILE_UPLOAD_CHUNK_SIZE
+            limit = offset + chunk_size - 1
             if limit < 0:
                 limit = 0
             ct_range = "bytes {}-{}/{}".format(offset, limit, file_size)
         else:
-            ct_range = "bytes 0-{}/{}".format(file_size-1, file_size)
+            ct_range = "bytes 0-{}/{}".format(file_size - 1, file_size)
             offset = 0
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
             'content-range': ct_range
         }
-        if offset+chunk_size == file_size:
+        if offset + chunk_size == file_size:
             # last chunk
-            etags = ",".join(["{},{}".format(i+1, md5_list[i]) for i in range(len(md5_list))])
+            etags = ",".join(["{},{}".format(i + 1, md5_list[i]) for i in range(len(md5_list))])
             multipart_form_data.update({
                 'etags[]': etags
             })
@@ -121,6 +119,7 @@ class LightClient:
             r_url = "{}riak/upload/{}/{}/{}/".format(self.url, bucket_id, upload_id, part_num)
         # send request without binary data first
         response = requests.post(r_url, files=multipart_form_data, headers=headers)
+
         if response.status_code == 206:
             # skip chunk upload, as server has it aleady
             response_json = response.json()
@@ -128,7 +127,7 @@ class LightClient:
             guid = response_json['guid']
             end_byte = response_json['end_byte']
             part_num += 1
-            if offset+chunk_size == file_size:
+            if offset + chunk_size == file_size:
                 response_json.update({'md5_list': md5_list, 'part_num': part_num, 'end_byte': end_byte})
                 return response_json
             else:
@@ -139,7 +138,7 @@ class LightClient:
         response_json = response.json()
 
         upload_id = response_json['upload_id']
-        guid = response_json['guid'] # server could change GUID
+        guid = response_json['guid']  # server could change GUID
         server_md5 = response_json['md5']
         if md5_digest != server_md5:
             return {'error': 'md5 mismatch'}
@@ -154,7 +153,7 @@ class LightClient:
             return {'error': response.json()}
         response_json = response.json()
         end_byte = response_json['end_byte']
-        if offset+chunk_size == file_size:
+        if offset + chunk_size == file_size:
             # the last chunk has been processed, expect complete_upload response
             response_json.update({'md5_list': md5_list, 'part_num': part_num, 'end_byte': end_byte})
             return response_json
@@ -167,7 +166,7 @@ class LightClient:
         return {'guid': guid, 'upload_id': upload_id, 'end_byte': end_byte,
                 'md5_list': md5_list, 'part_num': part_num}
 
-    def upload(self, bucket_id, file_name, prefix='', guid='', last_seen_version=None):
+    def upload(self, bucket_id, file_name, prefix='', guid='', last_seen_version: str = ''):
         """
         Uploads file to server by splitting it to chunks and testing if server
         has chunk already, before actual upload.
@@ -200,11 +199,11 @@ class LightClient:
                 part_num = result['part_num']
                 md5_list = result['md5_list']
                 end_byte = result['end_byte']
-                if end_byte+1 == file_size:
+                if end_byte + 1 == file_size:
                     break
         return result
 
-    def get_list(self, bucket_id, prefix=None):
+    def get_list(self, bucket_id, prefix: str = ''):
         """
         GET /riak/list/[:bucket_id]
         Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
@@ -222,15 +221,14 @@ class LightClient:
         Code : 404 Not Found When prefix not found
         """
 
-        url = "{}riak/list/{}/".format(self.url, bucket_id)
-        data = {"prefix": prefix}
+        url = "{}riak/list/{}/?prefix={}".format(self.url, bucket_id, prefix)
         headers = {
             'accept': 'application/json',
             'authorization': 'Token {}'.format(self.token),
         }
-        return requests.get(url, data=json.dumps(data), headers=headers)
+        return requests.get(url, headers=headers)
 
-    def delete(self, bucket_id, object_keys, prefix=None):
+    def delete(self, bucket_id, object_keys: list, prefix: str = None):
         """
         DELETE /riak/list/[:bucket_id]
         Used to delete files and pseudo-directories.
@@ -259,7 +257,7 @@ class LightClient:
         }
         return requests.delete(url, data=json.dumps(data), headers=headers)
 
-    def create_pseudo_directory(self, bucket_id, name, prefix=''):
+    def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ''):
         """
         POST /riak/list/[:bucket_id]
         Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
@@ -284,4 +282,129 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.post(url, json=data, headers=headers)
 
+    def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str = ''):
+        """
+        PATCH /riak/list/[:bucket_id]
+        This API andpoint allows to lock, unlock, undelete objects.
+        Undelete operation marks objects as visible again.
+        Lock marks them immutable and unlock reverses that operation.
 
+        Success Response
+        Code : 200
+        """
+
+        headers = {
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "op": operation,  # "undelete", "lock", "unlock"
+            "prefix": prefix,
+            "objects": object_keys
+        }
+
+        url = "{}riak/list/{}/".format(self.url, bucket_id)
+        return requests.patch(url, json=data, headers=headers)
+
+    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = '',
+             dst_prefix: str = ''):
+        """
+        POST /riak/move/[:src_bucket_id]/
+        Move object or directory.
+
+        Auth required : YES
+
+        Success Response
+        Code : 204 No Content
+
+        Parameters
+        {
+           "src_object_keys":["string 1", "string 2"],
+           "dst_bucket_id":"string",
+           "dst_prefix":"string",
+           "src_prefix":"string"
+        }
+
+        """
+
+        headers = {
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "src_object_keys": object_keys,
+            "dst_bucket_id": dst_bucket_id,
+            "src_prefix": src_prefix,
+            "dst_prefix": dst_prefix
+        }
+        url = "{}riak/move/{}/".format(self.url, src_bucket_id)
+        return requests.post(url, json=data, headers=headers)
+
+    def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = '',
+             dst_prefix: str = ''):
+        """
+        POST /riak/copy/[:src_bucket_id]/
+        Copy object or directory.
+
+        Auth required : YES
+
+        Success Response
+        Code : 200 OK
+
+        Body
+        {
+           "src_prefix": "string",
+           "dst_prefix": "string",
+           "dst_bucket_id": "string",
+           "src_object_keys": {"key 1": "Destination Name 1", "key 2": "Destination Name 2"},
+        }
+        Response Example: [{ bytes: 20, src_orig_name: "Something.random", dst_orig_name: "Something.random",
+        old_key: "something.random", new_key: "something.random", dst_prefix: "74657374/",
+        guid: "6caef57f-fc6d-457d-b2b0-210a1ed2f753", renamed: false, src_prefix: null }, ..]
+        """
+
+        headers = {
+
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "src_object_keys": object_keys,
+            "dst_bucket_id": dst_bucket_id,
+            "src_prefix": src_prefix,
+            "dst_prefix": dst_prefix
+        }
+        url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
+        return requests.post(url, json=data, headers=headers)
+
+    def rename(self, src_bucket_id, src_object_key: str, dst_object_name: str, prefix: str = ''):
+        """
+        POST /riak/rename/[:src_bucket_id]/
+        Renames object or directory. Changes "orig_name" meta tag when called on object.
+        Moves nested objects to new prefix when used on pseudo-directories.
+
+        Auth required : YES
+
+        Success Response
+        Code : 204 No Content
+
+        Body
+        {
+           "src_object_key":"string",
+           "dst_object_name":"string",
+           "prefix":"string"
+        }
+        """
+
+        headers = {
+
+            'content-type': 'application/json',
+            'authorization': 'Token {}'.format(self.token),
+        }
+        data = {
+            "src_object_key": src_object_key,
+            "dst_object_name": dst_object_name,
+            "prefix": prefix
+        }
+        url = "{}riak/rename/{}/".format(self.url, src_bucket_id)
+        return requests.post(url, json=data, headers=headers)

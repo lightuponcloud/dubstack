@@ -295,7 +295,11 @@ acc_multipart(Req0, Acc) ->
 		Headers1 = maps:to_list(Headers0),
 		{_, DispositionBin} = lists:keyfind(<<"content-disposition">>, 1, Headers1),
 		{<<"form-data">>, Params} = cow_multipart:parse_content_disposition(DispositionBin),
-		{_, FieldName0} = lists:keyfind(<<"name">>, 1, Params),
+		FieldName0 =
+		    case lists:keyfind(<<"name">>, 1, Params) of
+			false -> undefined;
+			{_, FN} -> FN
+		    end,
 		FieldName1 =
 		    case FieldName0 of
 			<<"version">> -> version;

@@ -7,7 +7,7 @@
 -export([init/2, content_types_provided/2, to_json/2, allowed_methods/2,
          content_types_accepted/2,  forbidden/2, resource_exists/2,
 	 previously_existed/2]).
--export([add_record/3, strip_hidden_part/1, fetch_full_object_history/2,
+-export([add_record/3, fetch_full_object_history/2,
 	 validate_object_key/4, validate_post/3, handle_post/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
@@ -375,18 +375,3 @@ resource_exists(Req0, State) ->
 
 previously_existed(Req0, _State) ->
     {false, Req0, []}.
-
-%%
-%% Removes stuff, regular user is not supposed to see.
-%%
--spec strip_hidden_part(string()) -> string()|undefined.
-
-strip_hidden_part(Name) when erlang:is_list(Name) ->
-    case utils:is_hidden_object({key, Name}) of
-	true -> undefined;
-	false ->
-	    case string:str(Name, "-deleted-") of
-		0 -> Name;
-		_ -> undefined
-	    end
-    end.

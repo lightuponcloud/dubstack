@@ -762,7 +762,8 @@ s3_xml_request(Method, Host, Path, Subresource, Params, POSTData, Headers, Confi
     		_ -> {ok, XML}
 	    end;
 	{error, {http_error, 404,_,_,_}} -> not_found;
-        {error, {failed_connect,_}} -> erlang:error({s3_error, failed_connect, "Connection Failed"});
+	{error, {http_error, 503,_,_,_}} -> erlang:error({s3_error, failed_connect, "Connection Failed"});
+	{error, {failed_connect,_}} -> erlang:error({s3_error, failed_connect, "Connection Failed"});
 	{error, timeout} -> erlang:error({s3_error, timeout, "Timeout"})
     end.
 

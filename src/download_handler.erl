@@ -179,7 +179,6 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
 stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     PartNum0 = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
-    PartNum1 = erlang:integer_to_binary(PartNum0),
     case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -188,20 +187,34 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    {ok, Req1, []};
 	RiakResponse0 ->
 	    Contents = proplists:get_value(contents, RiakResponse0),
-	    List0 = lists:dropwhile(
+	    %% We take into account 'range' header, by taking all parts from specified one
+	    List0 = lists:filtermap(
 		fun(K) ->
-		    ObjectKey0 = proplists:get_value(key, K),
-		    Tokens = string:tokens(ObjectKey0, "/"),
-		    ObjectKey1 = lists:last(Tokens),
-		    not utils:starts_with(ObjectKey1, << PartNum1/binary, "_" >>)
+		    ObjectKey = proplists:get_value(key, K),
+		    Tokens = lists:last(string:tokens(ObjectKey, "/")),
+		    [N,_] = string:tokens(Tokens, "_"),
+		    case utils:to_integer(N) of
+			N when N =< PartNum0 -> false;
+			_ -> {true, ObjectKey}
+		    end
 		end, Contents),
-	    case List0 of
+	    List1 = lists:sort(
+		fun(K1, K2) ->
+		    T1 = lists:last(string:tokens(K1, "/")),
+		    [N1,_] = string:tokens(T1, "_"),
+
+		    T2 = lists:last(string:tokens(K2, "/")),
+		    [N2,_] = string:tokens(T2, "_"),
+
+		    utils:to_integer(N1) < utils:to_integer(N2)
+		end, List0),
+	    case List1 of
 		 [] ->
 		    Req2 = cowboy_req:reply(404, #{
 			<<"content-type">> => <<"text/html">>
 		    }, <<"404: Not found">>, Req0),
 		    {ok, Req2, []};
-		 [CurrentObject | NextObjects] ->
+		 [PrefixedObjectKey | NextKeys] ->
 		    ContentDisposition = << <<"attachment;filename=\"">>/binary, OrigName/binary, <<"\"">>/binary >>,
 		    PartStartByte =
 			case PartNum0 of
@@ -215,7 +228,6 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			<<"range">> => << "bytes=", PartStartByte/binary, "-" >>
 		    },
 		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
-		    PrefixedObjectKey = proplists:get_value(key, CurrentObject),
 		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found ->
         		    Req4 = cowboy_req:reply(404, #{
@@ -224,9 +236,8 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			    {ok, Req4, []};
 			{ok, RequestId} ->
 			    receive
-				{http, {RequestId, stream_start, _Headers, Pid}}  ->
-				    NextObjectKeys = [proplists:get_value(key, I) || I <- NextObjects],
-				    receive_streamed_body(Req3, RequestId, Pid, BucketId, NextObjectKeys);
+				{http, {RequestId, stream_start, _Headers, Pid}} ->
+				    receive_streamed_body(Req3, RequestId, Pid, BucketId, NextKeys);
 				{http, Msg} -> ?ERROR("[download_handler] error starting stream: ~p", [Msg])
 			    end,
 			    {ok, Req3, []}

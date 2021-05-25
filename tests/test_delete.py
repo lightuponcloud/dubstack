@@ -1,14 +1,10 @@
 
 import unittest
-import string
 import random
 
+
 from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1)
-
 from light_client import LightClient, generate_random_name, encode_to_hex
-
-
-
 
 
 class DeleteTest(unittest.TestCase):
@@ -82,7 +78,7 @@ class DeleteTest(unittest.TestCase):
         """
 
         # 1 create main pseudo-directory
-        dir_name = "DeleteTest2"
+        dir_name = generate_random_name()
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         assert response.status_code == 204
         dir_name_prefix = dir_name.encode().hex() + "/"
@@ -120,7 +116,7 @@ class DeleteTest(unittest.TestCase):
         # Delete pseudo-directories from root: one and many
         """
         # create 1 pseudo-directory
-        dir_name = "DeleteTest3"
+        dir_name = generate_random_name()
         response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
         self.assertEqual(response.status_code, 204)
         dir_name_prefix = dir_name.encode().hex() + "/"
@@ -188,5 +184,4 @@ class DeleteTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
 
