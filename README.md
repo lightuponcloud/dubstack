@@ -102,7 +102,23 @@ User Management Interface
 ![User Record Editing Dialog](doc/admin_user_edit.png)
 
 
+## 4. API
+
+[See API reference](API.md)
+
+
 ## Installation
+
+### Dependencies
+
+Apart from erlang packages, it depends on the folliwing packages.
+
+* coreutils ( ``"/usr/bin/head"`` command )
+
+* imagemagick-6.q16
+
+* libmagickwand-dev
+
 
 #### 1. Build Riak CS
 
@@ -219,21 +235,6 @@ and restart DubStack.
 You can login now using credentials of staff user that you have just created.
 Staff user has permission to add other users.
 
-
-## Dependencies
-
-Apart from erlang packages, it depends on the folliwing packages.
-
-* coreutils ( ``"/usr/bin/head"`` command )
-
-* imagemagick-6.q16
-
-* libmagickwand-dev
-
-
-## API Documentation
-
-[See API reference](API.md)
 
 
 
