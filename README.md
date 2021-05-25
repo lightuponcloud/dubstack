@@ -10,14 +10,14 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
 
     This is a server side of the file synchronization software.
     It allows not only file **upload**/**download**, but also file **lock**/**unlock**,
-    **delete**/**undelete**, but to restore previous versions.
+    **delete**/**undelete**, differential sync and automated conflict resolution.
 
 2. **Simple authentication**
 
     Login/password and other credentials are stored in Riak CS bucket,
     called "security" and can be manipulated through web interface.
 
-    You don't have to implement complex ``vN`` AWS signing algorithms.
+    You don't have to implement complex AWS ``vN`` signing algorithms.
 
 3. **Action log and changelog**
 
@@ -27,22 +27,79 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
 
     You can manage objects, users, their groups and tenants using browser or Android App.
 
-5. **Readable URLs**
-
-    It transliterates UTF8 object names. For example pseudo-directory
-    ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
-    file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
-
-6. **Search**
+5. **Search**
 
     It has a simple Solr API implementation, allowing to index contents of uploaded objects.
     Since Yokozuna was removed from Riak CS, you will have to setup Solr and its schema manually.
     See [solr_schema.xml](doc/solr_schema.xml) and [solr_setup.txt](doc/solr_setup.txt).
 
+6. **Readable URLs**
+
+    It transliterates UTF8 object names. For example pseudo-directory
+    ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
+    file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
+
 7. **Thumbnails**
 
     Thumbnails are generated on demand by dedicated gen_server process.
 
+
+## Why Riak CS
+
+I used Riak CS as a main storage backend, as it is AWS S3 compatible and very predictable on resource consumption.
+It has recovery tools, scales automatically, it can store files > 5 TB and has multi-datacenter bidirectional replication.
+It was built using the latest academic research in the area of distributed systems.
+
+## Advantages of DubStack
+
+### 1. Simple Architecture
+
+Erlang applications are much easier to maintain.
+
+Typical setup:
+
+![Typical web application on Python](doc/ordinary_diagram.png)
+
+Erlang web application:
+
+![Erlang Application](doc/erlang_diagram.png)
+
+
+
+### 2. Multi-tenant Setup
+
+DubStack creates buckets with names of the following format.
+```
+<bucket prefix>-<user id>-<tenant id>-<bucket type>"
+```
+**bucket prefix** : A short string that can be used by reverse-proxy, such as Nginx:
+```
+location /the- {
+    proxy_pass_header Authorization;
+    ...
+}
+```
+
+**user id** : Short string, that identifies User bucket created for.
+
+**tenant id** : Short identifier of tenant ( aka project ).
+
+**bucket type** : By default "res", -- restricted. Only users within the same tenant
+can access restricted buckets. Other suffixes can be "public" or "private", but they
+are not yet implemented.
+
+
+## 3. UI
+
+Action Log
+
+![Action Log](doc/action_log.png)
+
+User Management Interface
+
+![User Management](doc/admin_tenants.png)
+
+![User Record Editing Dialog](doc/admin_user_edit.png)
 
 
 ## Installation
@@ -179,56 +236,6 @@ Apart from erlang packages, it depends on the folliwing packages.
 [See API reference](API.md)
 
 
-## Benefits
-
-### 1. Simple Architecture
-
-Erlang applications are much easier to maintain.
-
-Typical setup:
-
-![Typical web application on Python](doc/ordinary_diagram.png)
-
-Erlang web application:
-
-![Erlang Application](doc/erlang_diagram.png)
-
-
-
-### 2. Multi-tenant Setup
-
-DubStack creates buckets with names of the following format.
-```
-<bucket prefix>-<user id>-<tenant id>-<bucket type>"
-```
-**bucket prefix** : A short string that can be used by reverse-proxy, such as Nginx:
-```
-location /the- {
-    proxy_pass_header Authorization;
-    ...
-}
-```
-
-**user id** : Short string, that identifies User bucket created for.
-
-**tenant id** : Short identifier of tenant ( aka project ).
-
-**bucket type** : By default "res", -- restricted. Only users within the same tenant
-can access restricted buckets. Other suffixes can be "public" or "private", but they
-are not yet implemented.
-
-
-## 3. UI
-
-Action Log
-
-![Action Log](doc/action_log.png)
-
-User Management Interface
-
-![User Management](doc/admin_tenants.png)
-
-![User Record Editing Dialog](doc/admin_user_edit.png)
 
 # Contributing
 
