@@ -39,9 +39,12 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
     ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
     file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
 
-7. **Thumbnails**
+7. **Gallery, thumbnails, watermarks**
 
     Thumbnails are generated on demand by dedicated gen_server process.
+    If it finds watermark.png in root of any bucket, it applies watermark on thumbnails.
+
+    You can view the gallery by the link /riak/gallery/[:bucket_id]
 
 
 ## Why Riak CS
