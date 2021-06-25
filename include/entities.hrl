@@ -53,7 +53,7 @@
     upload_time         => integer(),
     bytes               => integer(),
     guid                => string(),
-    upload_id		=> string(),
+    upload_id           => string(),
     copy_from_guid      => string(),  %% before it was copied
     copy_from_bucket_id => string(),
     is_deleted          => boolean(),
@@ -104,7 +104,7 @@
     upload_time         = undefined,
     bytes               = 0,
     guid                = undefined,
-    upload_id		= undefined,
+    upload_id           = undefined,
     copy_from_guid      = undefined,
     copy_from_bucket_id = undefined,
     is_deleted          = false,

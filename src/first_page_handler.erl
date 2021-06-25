@@ -148,9 +148,9 @@ first_page(Req0, Settings, State) ->
 			%% Display the first bucket in list
 			Group = lists:nth(1, UserGroups),
 			GroupId = erlang:binary_to_list(proplists:get_value(id, Group)),
-			TenantId = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
-			Bits = [?RIAK_BACKEND_PREFIX, TenantId, GroupId, ?RESTRICTED_BUCKET_SUFFIX],
-			lists:flatten(utils:join_list_with_separator(Bits, "-", []));
+			TenantId0 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
+			Bits0 = [?RIAK_BACKEND_PREFIX, TenantId0, GroupId, ?RESTRICTED_BUCKET_SUFFIX],
+			lists:flatten(utils:join_list_with_separator(Bits0, "-", []));
 		    false -> undefined
 		end;
 	    false -> BucketId0
@@ -166,6 +166,9 @@ first_page(Req0, Settings, State) ->
 	    {stop, Req1, []};
 	false ->
 	    Locale = Settings#general_settings.locale,
+	    TenantId1 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
+	    Bits1 = [?RIAK_BACKEND_PREFIX, TenantId1, ?PUBLIC_BUCKET_SUFFIX],
+	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits1, "-", [])),
 	    {ok, Body} = index_dtl:render([
 		{hex_prefix, Prefix0},
 		{bucket_id, BucketId1},
@@ -174,7 +177,8 @@ first_page(Req0, Settings, State) ->
 		{root_path, Settings#general_settings.root_path},
 		{bucket_suffix, ""},
 		{private_suffix, ?PRIVATE_BUCKET_SUFFIX},
-		{public_suffix, ?PUBLIC_BUCKET_SUFFIX}
+		{public_suffix, ?PUBLIC_BUCKET_SUFFIX},
+		{public_bucket_id, PublicBucketId}
 	    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>

@@ -12,8 +12,8 @@
           s3_follow_redirect=false::boolean(),
           s3_follow_redirect_count=2::non_neg_integer(),
 	  %% Riak's access key and secret
-          access_key_id="REPLACE_ME"::string(),
-          secret_access_key="REPLACE_ME"::string(),
+          access_key_id="GUXIOJVOKUDDMG0HPWKP"::string(),
+          secret_access_key="SF94xTjigPb1t3deGjlwCls_fgeIho9GnvzxfA"::string(),
           %% Network request timeout; if not specifed, the default timeout will be used:
           timeout=undefined::timeout()|undefined
          }).
@@ -216,11 +216,17 @@
 -define(MAXIMUM_TENANT_NAME_LENGTH, 26).
 -define(MAXIMUM_GROUP_NAME_LENGTH, 25).
 
--define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096). %% maximum image size to try to scale
+%% maximum image size to try to scale, in bytes ( 21 MB )
+-define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
 
 -define(IMAGE_WORKERS, 5). %% The number of imagemagick workers
 
 %%
 %% Object name for preventing removal
 %%
--define(STOP_OBJECT_NAME, ".stop").
+-define(STOP_OBJECT_SUFFIX, ".stop").
+
+%%
+%% If case watermark with this key is present in bucket, thumbnails will have watermark on them.
+%%
+-define(WATERMARK_OBJECT_KEY, "watermark.png").

@@ -1,0 +1,70 @@
+%%
+%% Gallery handler renders HTML page with images of public bucket.
+%%
+-module(gallery_handler).
+
+-export([init/2]).
+
+-include("general.hrl").
+-include("riak.hrl").
+-include("entities.hrl").
+
+
+init(Req0, _Opts) ->
+    BucketId =
+	case cowboy_req:binding(bucket_id, Req0) of
+	    undefined -> undefined;
+	    BV -> erlang:binary_to_list(BV)
+	end,
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    Prefix0 =
+	case list_handler:validate_prefix(BucketId, proplists:get_value(<<"prefix">>, ParsedQs)) of
+	    {error, _} -> not_found;
+	    P -> P
+	end,
+
+    Settings = #general_settings{},
+    case BucketId =:= undefined of
+	true -> not_found_error(Req0);
+	false ->
+	    Prefix1 = list_handler:prefix_lowercase(Prefix0),
+	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
+	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+		not_found -> not_found_error(Req0);
+		RiakResponse ->
+		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
+		    DirectoryName =
+			case Prefix1 of
+			    undefined -> "Portfolio";
+			    _ -> utils:unhex(Prefix1)
+			end,
+		    Locale = Settings#general_settings.locale,
+		    {ok, Body} = gallery_dtl:render([
+			{bucket_id, BucketId},
+			{hex_prefix, Prefix1},
+			{brand_name, Settings#general_settings.brand_name},
+			{static_root, Settings#general_settings.static_root},
+			{root_path, Settings#general_settings.root_path},
+			{objects_list, proplists:get_value(list, List0)},
+			{directories, proplists:get_value(dirs, List0)},
+			{title, DirectoryName}
+		    ], [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"text/html">>
+		    }, Body, Req0),
+		    {ok, Req1, []}
+	    end
+
+    end.
+
+
+not_found_error(Req0) ->
+    Settings = #general_settings{},
+    {ok, Body} = not_found_dtl:render([
+	{brand_name, Settings#general_settings.brand_name}
+    ]),
+    Req1 = cowboy_req:reply(404, #{
+	<<"content-type">> => <<"text/html">>
+    }, Body, Req0),
+    {stop, Req1, []}.
+

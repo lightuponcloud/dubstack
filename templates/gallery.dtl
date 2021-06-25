@@ -1,0 +1,50 @@
+<!DOCTYPE html>{% load dtl_tags %}
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>{{ title }}</title>
+<meta content="width=device-width, initial-scale=1, user-scalable=no" name="viewport">
+<meta http-equiv="imagetoolbar" content="no"/>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="robots" content="NONE,NOARCHIVE" />
+<meta name="robots" content="index, follow" />
+
+<link REL="SHORTCUT ICON" HREF="{{ static_root }}favicon.gif" />
+<link rel="stylesheet" type="text/css" href="{{ static_root }}gallery.css" />
+</head>
+
+<body class="home">
+<main>
+    <div class="container">
+	<div class="gallery">
+
+{% for o in objects_list %}
+<div class="gallery-item" tabindex="0">
+{% if o.object_key == "watermark.jpg" %}
+{% else %}
+ {% if o.content_type == "image/jpeg" %}
+  <a href="/{{ bucket_id }}/{{ o.name }}">
+    <img src="/riak/thumbnail/{{ bucket_id }}?object_key={{ o.object_key }}&prefix={{ hex_prefix }}&w=285&h=285" title="{{ o.orig_name }}" alt="{{ o.orig_name }}" class="gallery-image" /><br/>
+    <div class="gallery-item-info">
+	<ul>
+	    <li class="gallery-item-likes"><span class="visually-hidden">{{ o.name }}</span></li>
+	</ul>
+    </div>
+  </a>
+ {% endif %}
+{% endif %}
+</div>
+{% endfor %}
+
+{% comment %}
+   {% if o.content_type|startswith:"video" %}
+      <a href="/{{ bucket_id }}/{{ o.name }}"><img src="/{{ bucket_id }}/{{ prefix }}/{{ o.name }}" title="{{ o.orig_name }}"><img src="{{ static_root }}icon_video.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+   {% else %}
+     {% if o.content_type == "application/pdf" %}
+       <a href="/{{ bucket_id }}/{{ o.name }}"><img src="{{ static_root }}icon_pdf.png" /><br/><span class="image-fn">{{ o.orig_name }}</span></a>
+     {% endif %}
+   {% endif %}
+{% endcomment %}
+    </div>
+</main>
+</body>
+</html>

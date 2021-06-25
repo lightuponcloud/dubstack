@@ -26,7 +26,11 @@ prepare_object_record(Record0, DeletedObjects) ->
     ObjectKey1 = filename:basename(ObjectKey0),
     OrigName0 = proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey1),
     GUID = proplists:get_value("x-amz-meta-guid", Metadata),
-    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
+    UploadId =
+	case proplists:get_value("x-amz-meta-upload-id", Metadata) of
+	    undefined -> undefined;
+	    ID -> erlang:list_to_binary(ID)
+	end,
     Version = proplists:get_value("x-amz-meta-version", Metadata),
 
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
@@ -93,7 +97,7 @@ prepare_object_record(Record0, DeletedObjects) ->
      {version, erlang:list_to_binary(Version)},
      {upload_time, UploadTimestamp1},
      {guid, erlang:list_to_binary(GUID)},
-     {upload_id, erlang:list_to_binary(UploadId)},
+     {upload_id, UploadId},
      {copy_from_guid, CopyFromGUID},
      {copy_from_bucket_id, CopyFromBucketId},
      {author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
@@ -581,7 +585,9 @@ remove_expired_dvv_lock(BucketId, GUID) ->
 %%
 %% Files are stored by the following URLs
 %% ~object/file-GUID/upload-GUID/N_md5, where N is the part number
-%% Ther's also index that stores {upload_id: version} mapping.
+%%
+%% Ther's also index that stores {upload_id: version} mapping,
+%% that should be updated
 %%
 -spec remove_previous_version(
     BucketId :: string(),
@@ -611,6 +617,7 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 		ok ->
 		    RiakOptions = [{acl, public_read}],
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
+                    %% Update index
 		    riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
 				term_to_binary(NewDVVs), RiakOptions),
 		    %% Remove lock

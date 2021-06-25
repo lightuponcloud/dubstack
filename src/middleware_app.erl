@@ -15,6 +15,7 @@ start(_Type, _Args) ->
 	{'_', [
 	    {"/riak/list/[:bucket_id]/", list_handler, []},
 	    {"/riak/thumbnail/[:bucket_id]/", img_scale_handler, []},
+	    {"/riak/gallery/[:bucket_id]/", gallery_handler, []},
 
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
 	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},

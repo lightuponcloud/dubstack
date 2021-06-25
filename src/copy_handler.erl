@@ -295,7 +295,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 		    %% Put "stop" file on copied real object, to prevent its removal, when
 		    %% a new version uploaded ( we have just created a link to that object ).
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-		    StopSuffix = ?STOP_OBJECT_NAME,
+		    StopSuffix = ?STOP_OBJECT_SUFFIX,
 		    case riak_api:put_object(OldBucketId, RealPrefix, UploadId++StopSuffix, <<>>,
 					     [{acl, public_read}]) of
 			ok ->

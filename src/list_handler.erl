@@ -19,7 +19,7 @@
     to_json/2, allowed_methods/2, forbidden/2, is_authorized/2,
     resource_exists/2, previously_existed/2, patch_resource/2,
     validate_post/2, create_pseudo_directory/2, handle_post/2,
-    validate_prefix/2, parse_object_record/2]).
+    validate_prefix/2, parse_object_record/2, prefix_lowercase/1]).
 
 -export([validate_delete/2, delete_resource/2, delete_completed/2,
          delete_pseudo_directory/5, delete_objects/6]).

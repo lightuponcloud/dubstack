@@ -52,30 +52,62 @@ to_scale(Req0, State) ->
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	not_found -> {<<>>, Req0, []};
 	RiakResponse0 ->
-	    case proplists:get_value("x-amz-meta-bytes", RiakResponse0) of
-		undefined -> {<<>>, Req0, []};
-		TotalBytes ->
-		    case utils:to_integer(TotalBytes) > ?MAXIMUM_IMAGE_SIZE_BYTES of
-			true -> {<<>>, Req0, []};
-			false ->
-			    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
-			    UploadId = proplists:get_value("x-amz-meta-upload-id", RiakResponse0),
-			    BinaryData = riak_api:get_object(BucketId, GUID, UploadId),
-			    Reply0 = img:scale([
-				{from, BinaryData},
-				{to, jpeg},
-				{crop, CropFlag},
-				{scale_width, Width},
-				{scale_height, Height}
-			    ]),
-			    case Reply0 of
-				{error, Reason} -> js_handler:bad_request(Req0, Reason);
-				Output0 -> {Output0, Req0, []}
-			    end
-		    end
+	    TotalBytes =
+		case proplists:get_value("x-amz-meta-bytes", RiakResponse0) of
+		    undefined -> undefined;
+		    V -> utils:to_integer(V)
+		end,
+	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
+	    UploadId = proplists:get_value("x-amz-meta-upload-id", RiakResponse0),
+	    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
+		true ->
+		    %% In case image object size is bigger than the limit, return empty response.
+		    {<<>>, Req0, []};
+		false ->
+		    scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag)
 	    end
     end.
 
+%%
+%% Returns thumbnail as binary.
+%%
+%% Cached images are stored as
+%% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
+%%
+scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
+    %% First check if cached image exists already.
+    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+    CachedKey = UploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
+    PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID, CachedKey),
+    case riak_api:get_object(BucketId, PrefixedCachedKey) of
+	not_found ->
+	    BinaryData = riak_api:get_object(BucketId, GUID, UploadId),
+	    Watermark =
+		case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
+		    not_found -> [];
+		    WatermarkResponse ->
+			WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
+			WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
+			WatermarkBinaryData = riak_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId),
+			[{watermark, WatermarkBinaryData}]
+		end,
+	    Reply0 = img:scale([
+		{from, BinaryData},
+		{to, jpeg},
+		{crop, CropFlag},
+		{scale_width, Width},
+		{scale_height, Height}
+	    ] ++ Watermark),
+	    case Reply0 of
+		{error, Reason} -> js_handler:bad_request(Req0, Reason);
+		_ ->
+		    Options = [{acl, public_read}],
+		    riak_api:put_object(BucketId, PrefixedGUID, CachedKey, Reply0, Options),
+		    {Reply0, Req0, []}
+	    end;
+	RiakResponse ->
+	    {proplists:get_value(content, RiakResponse), Req0, []}
+    end.
 
 
 %%

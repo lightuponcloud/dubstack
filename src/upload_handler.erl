@@ -429,10 +429,9 @@ get_guid(GUID, GUID, false) -> GUID;
 %% For some reason client uploads file with a different GUID. Use an existing one.
 get_guid(_GUID, ExistingGUID, false) -> ExistingGUID;
 
-get_guid(undefined, ExistingGUID, true) -> ExistingGUID;
-get_guid(GUID, GUID, true) -> GUID;
-%% Conflict detected when client tried to upload file with GUID
-get_guid(_GUID, _ExistingGUID, true) -> erlang:binary_to_list(riak_crypto:uuid4()).
+%% Conflict detected when client tried to upload file
+get_guid(undefined, _ExistingGUID, true) -> erlang:binary_to_list(riak_crypto:uuid4());
+get_guid(GUID, _ExistingGUID, true) -> GUID.
 
 %%
 %% Contents of the object storage could have canged since the list command was called.
@@ -510,7 +509,7 @@ check_upload_id(UploadId, State0) ->
 	    IsCorrectGUID =
 		case GUID of
 		    undefined -> true;
-		    GUID ->
+		    _ ->
 			case MetaGUID of
 			    GUID -> true;
 			    _ -> {error, 4}
@@ -807,7 +806,7 @@ upload_part(Req0, <<>>, [], State0) ->
     {stop, Req1, []};
 
 %%
-%% Tries to copy an existing chunk to the destination
+%% Tries to copy an existing chunk to the destination path ( real obj prefix/guid/upload_id )
 %%
 upload_part(Req0, <<>>, [PrefixedSrcObjectKey|_], State0) ->
     case create_upload_id(proplists:get_value(upload_id, State0), State0) of
@@ -933,10 +932,13 @@ complete_upload(Req0, RespCode, State0) ->
 		    case IsConflict of
 			true ->
 			    %% delete older conflict
-			    delete_previous_one(BucketId, GUID, UploadId, Version0);
+			    delete_previous_one(BucketId, GUID, ExistingObject#object.upload_id, Version0);
 			false ->
 			    case ExistingObject#object.guid of
-				GUID -> delete_previous_one(BucketId, ExistingObject#object.guid, UploadId, Version0);
+				GUID -> delete_previous_one(BucketId,
+							    ExistingObject#object.guid,
+							    UploadId,
+							    Version0);
 				_ -> ok %% GUID has changed, do nothing
 			    end
 		    end
@@ -1052,25 +1054,33 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 
 %%
 %% Deletes previous version of object for the same date,
-%% If ther'a no links on previous version ( this is the case when .stop file exists )
+%% if ther'a no links on previous version ( this is the case when .stop file exists )
 %%
 delete_previous_one(BucketId, GUID, UploadId, Version) ->
+    %% Remove Upload id from local index. Even if ther's a link to that upload,
+    %% created by copy operation, it remains accessible. We need to provide user
+    %% with an expectable version history: one version of file per day, in order to
+    %% exclude meaningless versions from history, that we show to user.
     RemovedUploadId = indexing:remove_previous_version(BucketId, GUID, UploadId, Version),
     case RemovedUploadId of
-	undefined -> ok;
+	undefined -> ok;  %% No previous upload was found
 	_ ->
+	    %% Check whether we can remove an old upload
 	    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-	    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, RemovedUploadId) ++ "/",
-	    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
-	    RiakResponse = riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
-	    List0 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse)],
-
-	    PrefixedStopSignName = utils:prefixed_object_key(PrefixedUploadId, ?STOP_OBJECT_NAME),
-	    case lists:member(PrefixedStopSignName, List0) of
-		true -> ok;
-		false ->
+	    StopObjectName = RemovedUploadId ++ ?STOP_OBJECT_SUFFIX,
+	    PrefixedStopSignName = utils:prefixed_object_key(PrefixedGUID, StopObjectName),
+	    case riak_api:head_object(BucketId, PrefixedStopSignName) of
+		not_found ->
+		    %% Delete previous upload for the same day
+		    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+		    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, RemovedUploadId) ++ "/",
+		    RiakResponse0 = riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
+		    List0 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse0)],
 		    ?WARN("Removing ~p~n", [PrefixedUploadId]),
-		    [riak_api:delete_object(BucketId, I) || I <- List0]
+		    [riak_api:delete_object(BucketId, I) || I <- List0];
+		    %% Now delete thumbnails, if ther'a any
+		    %% TODO
+		_ -> ok
 	    end
     end.
 
