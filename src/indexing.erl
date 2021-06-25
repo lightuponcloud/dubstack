@@ -26,11 +26,7 @@ prepare_object_record(Record0, DeletedObjects) ->
     ObjectKey1 = filename:basename(ObjectKey0),
     OrigName0 = proplists:get_value("x-amz-meta-orig-filename", Metadata, ObjectKey1),
     GUID = proplists:get_value("x-amz-meta-guid", Metadata),
-    UploadId =
-	case proplists:get_value("x-amz-meta-upload-id", Metadata) of
-	    undefined -> undefined;
-	    ID -> erlang:list_to_binary(ID)
-	end,
+    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
     Version = proplists:get_value("x-amz-meta-version", Metadata),
 
     UploadTimestamp0 = proplists:get_value(upload_timestamp, Record0, ""),
@@ -97,7 +93,7 @@ prepare_object_record(Record0, DeletedObjects) ->
      {version, erlang:list_to_binary(Version)},
      {upload_time, UploadTimestamp1},
      {guid, erlang:list_to_binary(GUID)},
-     {upload_id, UploadId},
+     {upload_id, erlang:list_to_binary(UploadId)},
      {copy_from_guid, CopyFromGUID},
      {copy_from_bucket_id, CopyFromBucketId},
      {author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
@@ -126,6 +122,8 @@ prepare_object_record(Record0, DeletedObjects) ->
 %%
 %% We store JSON values in index files, in order to speed up listing response.
 %% But sometimes it is necessary to get an original Erlang object record.
+%%
+%% ``to_object`` returns #object{} record
 %%
 -spec to_object(proplist()) -> object().
 
@@ -248,11 +246,16 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 	    case lists:member(element(1, R), IndexKeys) of
 		true -> false;
 		false ->
-		    Metadata = [
-			{metadata, riak_api:get_object_metadata(BucketId, element(1, R))},
-			{upload_timestamp, element(2, R)},
-			{key, element(1, R)}],
-		    {true, prepare_object_record(Metadata, DeletedObjects1)}
+		    Metadata0 = riak_api:get_object_metadata(BucketId, element(1, R)),
+		    case proplists:get_value("x-amz-meta-upload-id", Metadata0) of
+			undefined -> false;  %% skipping objects that are still uploading
+			_ ->
+			    Metadata1 = [
+				{metadata, Metadata0},
+				{upload_timestamp, element(2, R)},
+				{key, element(1, R)}],
+			    {true, prepare_object_record(Metadata1, DeletedObjects1)}
+		    end
 	    end
 	end, ActualListContents),
     PrefixList1 = [[

@@ -61,6 +61,10 @@ img {
     cursor: pointer;
 }
 
+.gallery-item .dir {
+  min-height: 20px;
+}
+
 .gallery-item:hover .gallery-item-info,
 .gallery-item:focus .gallery-item-info {
     display: flex;

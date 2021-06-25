@@ -54,7 +54,6 @@ real_prefix(BucketId, Metadata0) ->
 validate_request(BucketId, undefined, PrefixedObjectKey) ->
     case utils:is_valid_bucket_id(BucketId, undefined) of
 	true ->
-
 	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
 		not_found -> not_found;
 		Metadata -> validate_request(BucketId, Metadata)

@@ -169,7 +169,13 @@ first_page(Req0, Settings, State) ->
 	    TenantId1 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),
 	    Bits1 = [?RIAK_BACKEND_PREFIX, TenantId1, ?PUBLIC_BUCKET_SUFFIX],
 	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits1, "-", [])),
+	    Title =
+		case Prefix0 of
+		    undefined -> "Files";
+		    _ -> utils:unhex(erlang:list_to_binary(Prefix0))
+		end,
 	    {ok, Body} = index_dtl:render([
+		{title, Title},
 		{hex_prefix, Prefix0},
 		{bucket_id, BucketId1},
 		{brand_name, Settings#general_settings.brand_name},

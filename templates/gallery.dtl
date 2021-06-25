@@ -16,11 +16,16 @@
 <main>
     <div class="container">
 	<div class="gallery">
+{% for d in directories %}
+<div class="gallery-item dir" tabindex="0">
+  <a href="?prefix={{ d.prefix }}">{{ d.name }}</a>
+</div>
+{% endfor %}
 
 {% for o in objects_list %}
-<div class="gallery-item" tabindex="0">
 {% if o.object_key == "watermark.jpg" %}
 {% else %}
+<div class="gallery-item" tabindex="0">
  {% if o.content_type == "image/jpeg" %}
   <a href="/{{ bucket_id }}/{{ o.name }}">
     <img src="/riak/thumbnail/{{ bucket_id }}?object_key={{ o.object_key }}&prefix={{ hex_prefix }}&w=285&h=285" title="{{ o.orig_name }}" alt="{{ o.orig_name }}" class="gallery-image" /><br/>
@@ -31,8 +36,8 @@
     </div>
   </a>
  {% endif %}
-{% endif %}
 </div>
+{% endif %}
 {% endfor %}
 
 {% comment %}

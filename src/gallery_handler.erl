@@ -22,23 +22,25 @@ init(Req0, _Opts) ->
 	    {error, _} -> not_found;
 	    P -> P
 	end,
-
     Settings = #general_settings{},
     case BucketId =:= undefined of
 	true -> not_found_error(Req0);
 	false ->
-	    Prefix1 = list_handler:prefix_lowercase(Prefix0),
+	    {Prefix1, DirectoryName} =
+		case Prefix0 of
+		    undefined -> {undefined, "Portfolio"};
+		    _ ->
+			BinPrefix = erlang:list_to_binary(Prefix0),
+			{list_handler:prefix_lowercase(BinPrefix), utils:unhex(BinPrefix)}
+		end,
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
 		not_found -> not_found_error(Req0);
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
-		    DirectoryName =
-			case Prefix1 of
-			    undefined -> "Portfolio";
-			    _ -> utils:unhex(Prefix1)
-			end,
 		    Locale = Settings#general_settings.locale,
+		    Directories0 = proplists:get_value(dirs, List0),
+		    Directories1 = [I ++ [{name, utils:unhex(proplists:get_value(prefix, I))}] || I <- Directories0],
 		    {ok, Body} = gallery_dtl:render([
 			{bucket_id, BucketId},
 			{hex_prefix, Prefix1},
@@ -46,7 +48,7 @@ init(Req0, _Opts) ->
 			{static_root, Settings#general_settings.static_root},
 			{root_path, Settings#general_settings.root_path},
 			{objects_list, proplists:get_value(list, List0)},
-			{directories, proplists:get_value(dirs, List0)},
+			{directories, Directories1},
 			{title, DirectoryName}
 		    ], [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 		    Req1 = cowboy_req:reply(200, #{
