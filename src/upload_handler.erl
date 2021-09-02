@@ -100,8 +100,20 @@ validate_filename(<<Bit:2/binary, _Rest/binary>>) when Bit =:= <<".~">> -> {erro
 validate_filename(FileName)
         when FileName =:= <<"desktop.ini">> orelse
              FileName =:= <<"thumbs.db">> orelse
+             FileName =:= <<"ehthumbs.db">> orelse
              FileName =:= <<".ds_store">> orelse
+             FileName =:= <<".ds_store?">> orelse
              FileName =:= <<".dropbox">> orelse
+             FileName =:= <<".appledouble">> orelse
+             FileName =:= <<".spotlight-v100">> orelse
+             FileName =:= <<".documentrevisions-v100">> orelse
+             FileName =:= <<".temporaryitems">> orelse
+             FileName =:= <<".trashes">> orelse
+             FileName =:= <<".fseventsd">> orelse
+             FileName =:= <<"hiberfil.sys">> orelse
+             FileName =:= <<"pagefile.sys">> orelse
+             FileName =:= <<"$recycle.bin">> orelse
+             FileName =:= <<".pcloud">> orelse
              FileName =:= <<".dropbox.attr">> ->
     {error, 47};
 validate_filename(FileName) ->

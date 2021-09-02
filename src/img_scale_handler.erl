@@ -59,12 +59,30 @@ to_scale(Req0, State) ->
 		end,
 	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
 	    UploadId = proplists:get_value("x-amz-meta-upload-id", RiakResponse0),
+	    %% Old GUID, old bucket id and upload id are needed for 
+	    %% determining URI of the original object, before it was copied
+	    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", RiakResponse0),
+	    OldBucketId =
+		case proplists:get_value("x-amz-meta-copy-from-bucket-id", RiakResponse0) of
+		    undefined -> BucketId;
+		    B -> B
+		end,
+	    OldUploadId =
+		case proplists:get_value("x-amz-meta-copy-from-upload-id", RiakResponse0) of
+		    undefined -> UploadId;
+		    UID -> UID
+		end,
+	    {RealBucketId, RealGUID, RealUploadId} =
+		case OldGUID =/= undefined andalso OldGUID =/= GUID of
+		    true -> {OldBucketId, OldGUID, OldUploadId};
+		    false -> {BucketId, GUID, UploadId}
+		end,
 	    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
 		true ->
 		    %% In case image object size is bigger than the limit, return empty response.
 		    {<<>>, Req0, []};
 		false ->
-		    scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag)
+		    scale_response(Req0, RealBucketId, RealGUID, RealUploadId, Width, Height, CropFlag)
 	    end
     end.
 
@@ -81,6 +99,7 @@ scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
     PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID, CachedKey),
     case riak_api:get_object(BucketId, PrefixedCachedKey) of
 	not_found ->
+            %% Miss
 	    BinaryData = riak_api:get_object(BucketId, GUID, UploadId),
 	    Watermark =
 		case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
@@ -106,6 +125,7 @@ scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
 		    {Reply0, Req0, []}
 	    end;
 	RiakResponse ->
+            %% Return cached image
 	    {proplists:get_value(content, RiakResponse), Req0, []}
     end.
 
