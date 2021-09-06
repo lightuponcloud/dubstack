@@ -163,7 +163,9 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
 	'is_locked': v.is_locked,
 	'lock_modified_utc': v.lock_modified_utc,
 	'lock_user_name': v.lock_user_name,
-	'lock_user_tel': v.lock_user_tel
+	'lock_user_tel': v.lock_user_tel,
+        'width': v.width,
+        'height': v.height
        });
       }
     });
@@ -208,9 +210,39 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
      if(embedded) button='';
      var gid=v.guid;
      var lock_tel=(v.lock_user_tel==undefined?'':'. Tel: '+v.lock_user_tel);
-     var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name" id="'+v.version+'"><a title="'+name+'" class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a></div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
+     var thumb_url='/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name);
+     var pswp_width=v.width;
+     var pswp_height=v.height;
+     if(v.width+""!="NaN"){
+         var maxWidth = 1024;
+         var maxHeight = 768;
+         var ratio = 0;
+         if(v.width>maxWidth){
+            ratio = maxWidth / v.width;
+            pswp_height = v.height * ratio;
+            pswp_width = v.width * ratio;
+         }
+         if(v.height > maxHeight){
+            ratio = maxHeight / v.height;
+            pswp_width = v.width * ratio;
+            pswp_height = v.height * ratio;
+         }
+         if(v.bytes<=563200&&v.width<maxWidth&&v.height<maxHeight){
+           thumb_url=url;
+         } else {
+           thumb_url+="&w="+Math.trunc(pswp_width)+"&h="+Math.trunc(pswp_height);
+       }
+     }
+     var anchor='<a title="'+name+'"  class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a>';
      if(v.ct.substring(0, 5)=='image'){
-	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50');
+       anchor='<a title="'+name+'" data-pswp-width="'+pswp_width+'" data-pswp-height="'+pswp_height+'" class="file-link gallery" href="'+thumb_url+'"><i class="doc-icon"></i>'+name+'</a>';
+     } else if(v.ct=='"application/pdf"'){
+       anchor='<a title="'+name+'" data-pswp-width="700" data-pswp-height="600" class="file-link gallery" href="'+url+'"><i class="doc-icon"></i>'+name+'</a>';
+     }
+
+     var ve = $(lstEl).append('<div class="file-item clearfix" id="'+gid+'">'+input+'<div class="file-name" id="'+v.version+'">'+anchor+'</div><div class="file-size" data-bytes="'+v.bytes+'">'+fsize+'</div><div class="file-modified">'+modified+'</div><div class="file-preview-url">'+(v.is_locked==true?'<img src="'+static_root+'lock.png" title="'+v.lock_user_name+lock_tel+'"/>':'&nbsp;')+'</div><div class="file-url"><a href="'+url+'">link</a></div>'+button+'</div>');
+     if(v.ct.substring(0, 5)=='image'){
+	$(ve).find('div#'+gid).find('.doc-icon').css('background-image', 'url("/riak/thumbnail/'+bucket_id+'/?prefix='+(hex_prefix+""=="NaN"?'':hex_prefix)+'&object_key='+decodeURIComponent(obj_name)+'&w=50&h=50")');
      }
     });
 }
