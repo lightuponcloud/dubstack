@@ -26,8 +26,10 @@
 {% if o.object_key == "watermark.jpg" %}
 {% else %}
 <div class="gallery-item" tabindex="0">
- {% if o.content_type == "image/jpeg" %}
-    <img src="/riak/thumbnail/{{ bucket_id }}?object_key={{ o.object_key }}&prefix={{ hex_prefix }}&w=285&h=285" title="{{ o.orig_name }}" alt="{{ o.orig_name }}" class="gallery-image" /><br/>
+ {% if o.content_type|truncatechars:8 == "image..." %}
+    <a href="{{  }}">
+      <img src="/riak/thumbnail/{{ bucket_id }}?object_key={{ o.object_key }}&prefix={{ hex_prefix }}&w=285&h=285" title="{{ o.orig_name }}" alt="{{ o.orig_name }}" class="gallery-image" /><br/>
+    </a>
     <div class="gallery-item-info">
 	<ul>
 	    <li class="gallery-item-likes"><span class="visually-hidden">{{ o.name }}</span></li>

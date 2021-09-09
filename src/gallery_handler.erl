@@ -38,16 +38,19 @@ init(Req0, _Opts) ->
 		not_found -> not_found_error(Req0);
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
+		    List1 = proplists:get_value(list, List0),
+		    List2 = [I || I <- List1, proplists:get_value(is_deleted, I) =/= true],
 		    Locale = Settings#general_settings.locale,
 		    Directories0 = proplists:get_value(dirs, List0),
-		    Directories1 = [I ++ [{name, utils:unhex(proplists:get_value(prefix, I))}] || I <- Directories0],
+		    Directories1 = [I ++ [{name, utils:unhex(proplists:get_value(prefix, I))}]
+                                    || I <- Directories0, proplists:get_value(is_deleted, I) =/= true],
 		    {ok, Body} = gallery_dtl:render([
 			{bucket_id, BucketId},
 			{hex_prefix, Prefix1},
 			{brand_name, Settings#general_settings.brand_name},
 			{static_root, Settings#general_settings.static_root},
 			{root_path, Settings#general_settings.root_path},
-			{objects_list, proplists:get_value(list, List0)},
+			{objects_list, List2},
 			{directories, Directories1},
 			{title, DirectoryName}
 		    ], [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
@@ -56,7 +59,6 @@ init(Req0, _Opts) ->
 		    }, Body, Req0),
 		    {ok, Req1, []}
 	    end
-
     end.
 
 
