@@ -219,18 +219,18 @@ function display_objects(lstEl, brEl, hex_prefix, data, stack, embedded){
          var ratio = 0;
          if(v.width>maxWidth){
             ratio = maxWidth / v.width;
-            pswp_height = v.height * ratio;
-            pswp_width = v.width * ratio;
+            pswp_height = Math.trunc(v.height * ratio);
+            pswp_width = Math.trunc(v.width * ratio);
          }
          if(v.height > maxHeight){
             ratio = maxHeight / v.height;
-            pswp_width = v.width * ratio;
-            pswp_height = v.height * ratio;
+            pswp_width = Math.trunc(v.width * ratio);
+            pswp_height = Math.trunc(v.height * ratio);
          }
          if(v.bytes<=563200&&v.width<maxWidth&&v.height<maxHeight){
            thumb_url=url;
          } else {
-           thumb_url+="&w="+Math.trunc(pswp_width)+"&h="+Math.trunc(pswp_height);
+           thumb_url+="&w="+pswp_width+"&h="+pswp_height;
        }
      }
      var anchor='<a title="'+name+'"  class="file-link" href="#"><i class="doc-icon"></i>'+name+'</a>';

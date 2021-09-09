@@ -439,3 +439,56 @@ div.pswp__img--placeholder,
 .pswp--one-slide .pswp__counter {
   display: none;
 }
+
+.pswp__download-button {
+	position: relative;
+	display: block;
+	width: 50px;
+	height: 60px;
+	padding: 0;
+	margin: 5px 0;
+	overflow: hidden;
+	cursor: pointer;
+	background: none;
+	border: 0;
+	box-shadow: none;
+	opacity: 0.85;
+	-webkit-appearance: none;
+	-webkit-touch-callout: none;
+}
+
+.pswp__download-button a {
+    width: 50px;
+    height: 60px;
+    display: inline-block;
+    padding: 10px 15px;
+    cursor: pointer;
+}
+
+.pswp__obj-caption {
+  background: rgba(51, 51, 51, 0.75);
+  font-size: 16px;
+  color: #fff;
+  width: calc(100% - 32px);
+  max-width: 400px;
+  padding: 2px 8px;
+  border-radius: 4px;
+
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  height: 40px;
+  min-height: 40px;
+  text-align: center;
+  padding-top: 10px;
+}
+
+.pswp__obj-caption a {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.hidden-caption-content {
+  display: none;
+}

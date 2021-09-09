@@ -1752,7 +1752,7 @@ class TapHandler {
             && currSlide.zoomLevels.secondary !== currSlide.zoomLevels.initial) {
           currSlide.toggleZoom(point);
         } else if (pswp.options.clickToCloseNonZoomable) {
-          pswp.close();
+          if(window.innerWidth < 1159) pswp.close();
         }
         break;
       case 'toggle-controls':
@@ -3063,6 +3063,8 @@ function addButtonHTML(htmlData) {
     // </svg>
     // Can also be any HTML string.
     return htmlData;
+  } else if (typeof htmlData == 'function') {
+    return htmlData();
   }
 
   if (!htmlData || !htmlData.isCustomSVG) {
@@ -3129,6 +3131,9 @@ class UIElement {
       } else if (data.title) {
         element.title = data.title;
       }
+    } else if(data.isLink) {
+      element = createElement(className);
+      element.innerHTML = addButtonHTML(elementHTML);
     } else {
       element = createElement(className);
     }
@@ -3225,19 +3230,6 @@ const arrowNext = {
   }
 };
 
-const closeButton = {
-  name: 'close',
-  title: 'Close',
-  order: 20,
-  isButton: true,
-  html: {
-    isCustomSVG: true,
-    inner: '<path d="M24 10l-2-2-6 6-6-6-2 2 6 6-6 6 2 2 6-6 6 6 2-2-6-6z" id="pswp__icn-close"/>',
-    outlineID: 'pswp__icn-close'
-  },
-  onClick: 'close'
-};
-
 const zoomButton = {
   name: 'zoom',
   title: 'Zoom (z)',
@@ -3251,6 +3243,20 @@ const zoomButton = {
     outlineID: 'pswp__icn-zoom'
   },
   onClick: 'toggleZoom'
+};
+
+
+const closeButton = {
+  name: 'close',
+  title: 'Close',
+  order: 20,
+  isButton: true,
+  html: {
+    isCustomSVG: true,
+    inner: '<path d="M24 10l-2-2-6 6-6-6-2 2 6 6-6 6 2 2 6-6 6 6 2-2-6-6z" id="pswp__icn-close"/>',
+    outlineID: 'pswp__icn-close'
+  },
+  onClick: 'close'
 };
 
 // Delay before indicator will be shown
