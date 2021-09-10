@@ -172,7 +172,7 @@ first_page(Req0, Settings, State) ->
 	    Title =
 		case Prefix0 of
 		    undefined -> "Files";
-		    _ -> utils:unhex(erlang:list_to_binary(Prefix0))
+		    _ -> utils:unhex_path(Prefix0)
 		end,
 	    {ok, Body} = index_dtl:render([
 		{title, Title},
