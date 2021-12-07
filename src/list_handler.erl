@@ -63,6 +63,17 @@ to_json(Req0, State) ->
 		User1 = admin_users_handler:user_to_proplist(User0),
 		proplists:get_value(groups, User1)
 	end,
+    ParsedQs = cowboy_req:parse_qs(Req0),
+    ShowDeleted =
+	case proplists:is_defined(<<"show-deleted">>, ParsedQs) of
+	    true ->
+		case proplists:get_value(<<"show-deleted">>, ParsedQs) of
+		    <<"1">> -> true;
+		    <<"true">> -> true;
+		    _ -> false
+		end;
+	    false -> false
+	end,
     case riak_api:head_bucket(BucketId) of
 	not_found ->
 	    %% Bucket is valid, but it do not exist yet
@@ -75,9 +86,19 @@ to_json(Req0, State) ->
 		not_found -> {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
+		    {Dirs, Objects} =
+			case ShowDeleted of
+			    false ->  %% filter out objects marked as deleted
+				List1 = [I || I <- proplists:get_value(list, List0),
+					 proplists:get_value(is_deleted, I) =:= false],
+				Dirs0 = [I || I <- proplists:get_value(dirs, List0),
+					 proplists:get_value(is_deleted, I) =:= false],
+				{Dirs0, List1};
+			    true -> {proplists:get_value(dirs, List0), proplists:get_value(list, List0)}
+			end,
 		    {jsx:encode([
-			{list, proplists:get_value(list, List0)},
-			{dirs, proplists:get_value(dirs, List0)},
+			{list, Objects},
+			{dirs, Dirs},
 			{groups, Groups}
 		    ]), Req0, []}
 	    end

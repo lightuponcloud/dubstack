@@ -98,6 +98,8 @@ It returns contents of cached index, containing list of objects and pseudo-direc
 
 **prefix** : Hex-encoded UTF8 string. For example "blah" becomes ```"626c6168"```, -- name of pseudo-directory.
 
+**show-deleted** : Flag indicating the output should include deleted objects. Value should be "1" or "true".
+
 **Auth required** : YES
 
 
