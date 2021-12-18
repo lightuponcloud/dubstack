@@ -669,6 +669,15 @@ curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0
     -H "authorization: Token $TOKEN" --output something.random
 ```
 
+Resuming download
+```sh
+curl "http://127.0.0.1/riak/download/the-poetry-naukovtsi-res/d0bfd180d0b8d0bad0bbd0b0d0b4/something.random" \
+    -H "authorization: Token $TOKEN" \
+    -H "range: bytes=2000000-3999999" \
+    --output something.random
+```
+
+
 ### Success Response
 
 **Code** : `200 OK`
