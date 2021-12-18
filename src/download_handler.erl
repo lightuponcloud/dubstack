@@ -175,9 +175,16 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
     end.
 
 
-stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte) ->
+stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
-    PartNum0 = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    PartNumEnd =
+	case EndByte of
+	    infinity ->
+		EB = utils:to_integer(Bytes),
+		(EB div ?FILE_UPLOAD_CHUNK_SIZE) + 1;
+	    _ -> (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1
+	end,
     case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -193,18 +200,16 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		    Tokens = lists:last(string:tokens(ObjectKey, "/")),
 		    [N,_] = string:tokens(Tokens, "_"),
 		    case utils:to_integer(N) of
-			N when N =< PartNum0 -> false;
-			_ -> {true, ObjectKey}
+			I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey};
+			_ -> false
 		    end
 		end, Contents),
 	    List1 = lists:sort(
 		fun(K1, K2) ->
 		    T1 = lists:last(string:tokens(K1, "/")),
 		    [N1,_] = string:tokens(T1, "_"),
-
 		    T2 = lists:last(string:tokens(K2, "/")),
 		    [N2,_] = string:tokens(T2, "_"),
-
 		    utils:to_integer(N1) < utils:to_integer(N2)
 		end, List0),
 	    case List1 of
@@ -216,7 +221,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		 [PrefixedObjectKey | NextKeys] ->
 		    ContentDisposition = << <<"attachment;filename=\"">>/binary, OrigName/binary, <<"\"">>/binary >>,
 		    PartStartByte =
-			case PartNum0 of
+			case PartNumStart of
 			    1 -> erlang:integer_to_binary(StartByte);
 			    _ -> erlang:integer_to_binary(StartByte rem ?FILE_UPLOAD_CHUNK_SIZE)
 			end,
@@ -229,9 +234,9 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
 		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found ->
-        		    Req4 = cowboy_req:reply(404, #{
-            			<<"content-type">> => <<"text/html">>
-        		    }, <<"404: Not found">>, Req0),
+			    Req4 = cowboy_req:reply(404, #{
+				<<"content-type">> => <<"text/html">>
+			    }, <<"404: Not found">>, Req0),
 			    {ok, Req4, []};
 			{ok, RequestId} ->
 			    receive
@@ -282,10 +287,12 @@ init(Req0, _Opts) ->
 		    {ok, Req1, []};
 		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
 		    case validate_range(cowboy_req:header(<<"range">>, Req0), Bytes) of
-			undefined -> stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0);
+			undefined ->
+			    EndByte = utils:to_integer(Bytes),
+			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, 0, EndByte);
 			{error, Number} -> js_handler:bad_request(Req0, Number);
-			{StartByte, _EndByte} ->
-			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte)
+			{StartByte, EndByte} ->
+			    stream_chunks(Req0, OldBucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte)
 		    end
 	    end
     end.
