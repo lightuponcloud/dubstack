@@ -133,7 +133,8 @@ validate_range(Value, TotalBytes) ->
 	    case StartByte =/= undefined andalso EndByte =/= undefined of
 		true -> validate_range(StartByte, EndByte, TotalBytes);
 		false -> {StartByte, EndByte}
-	    end
+	    end;
+	{bytes, _} -> {error, 23}
     catch
 	error:_ -> {error, 23}
     end.
