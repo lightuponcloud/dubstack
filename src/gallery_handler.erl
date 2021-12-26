@@ -56,7 +56,7 @@ init(Req0, _Opts) ->
 		    ], [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 		    Req1 = cowboy_req:reply(200, #{
 			<<"content-type">> => <<"text/html">>
-		    }, Body, Req0),
+		    }, unicode:characters_to_binary(Body), Req0),
 		    {ok, Req1, []}
 	    end
     end.
@@ -69,6 +69,6 @@ not_found_error(Req0) ->
     ]),
     Req1 = cowboy_req:reply(404, #{
 	<<"content-type">> => <<"text/html">>
-    }, Body, Req0),
+    }, unicode:characters_to_binary(Body), Req0),
     {stop, Req1, []}.
 

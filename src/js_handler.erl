@@ -88,7 +88,7 @@ init(Req0, Opts) ->
 	{user_id, User#user.id},
 	{chunk_size, ?FILE_UPLOAD_CHUNK_SIZE}
     ]),
-    Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, Body, Req0),
+    Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, unicode:characters_to_binary(Body), Req0),
     {ok, Req1, Opts}.
 
 bad_request(Req0, MsgCode)

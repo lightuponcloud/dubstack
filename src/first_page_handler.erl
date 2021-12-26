@@ -55,7 +55,7 @@ forbidden_response(Req0) ->
     {ok, Body} = forbidden_dtl:render([]),
     Req1 = cowboy_req:reply(403, #{
 	<<"content-type">> => <<"text/html">>
-    }, Body, Req0),
+    }, unicode:characters_to_binary(Body), Req0),
     {stop, Req1, []}.
 
 
@@ -88,7 +88,7 @@ error_response(Req0, Settings) ->
     ]),
     Req1 = cowboy_req:reply(200, #{
 	<<"content-type">> => <<"text/html">>
-    }, Body, Req0),
+    }, unicode:characters_to_binary(Body), Req0),
     {ok, Req1, []}.
 
 
@@ -105,7 +105,7 @@ login(Req0, Settings) ->
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>,
 		<<"Set-Cookie">> => <<SessionCookieName/binary, "=deleted; Version=1; Expires=Thu, 01-Jan-1970 00:00:01 GMT">>
-	    }, Body, Req0),
+	    }, unicode:characters_to_binary(Body), Req0),
 	    {ok, Req1, []};
 	<<"POST">> ->
 	    case validate_post(Req0) of
@@ -162,7 +162,7 @@ first_page(Req0, Settings, State) ->
 	    ]),
 	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"text/html">>
-	    }, Body, Req0),
+	    }, unicode:characters_to_binary(Body), Req0),
 	    {stop, Req1, []};
 	false ->
 	    Locale = Settings#general_settings.locale,
@@ -188,6 +188,6 @@ first_page(Req0, Settings, State) ->
 	    ] ++ State, [{translation_fun, fun utils:translate/2}, {locale, Locale}]),
 	    Req1 = cowboy_req:reply(200, #{
 		<<"content-type">> => <<"text/html">>
-	    }, Body, Req0),
+	    }, unicode:characters_to_binary(Body), Req0),
 	    {ok, Req1, []}
     end.
