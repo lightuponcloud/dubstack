@@ -57,36 +57,39 @@ validate_data_size(DataSize, StartByte, EndByte) ->
     end.
 
 %%
+%% Values of Dotted Version Vector are supposed to be timestamps.
+%% Make sure the list of timestamps is not empty and all values are integers.
+%%
+validate_timestamp_list([], _DVV) -> {error, 22};
+validate_timestamp_list(List, DVV) ->
+    TimeValid = lists:all(
+	fun(I) ->
+	    try utils:to_integer(I) of
+		_ -> true
+	    catch error:undef -> false end
+	    end, List),
+    case TimeValid of
+	true -> DVV;
+	false -> {error, 22}
+    end.
+
+%%
 %% Checks if dotted version vector is valid ( base64-encoded JSON )
 %%
 validate_version(undefined) -> {error, 44};
 validate_version(null) -> {error, 44};
 validate_version(<<>>) -> {error, 44};
 validate_version(Base64DVV) ->
-    try
-	JSON = base64:decode(Base64DVV),
-	case jsx:is_json(JSON) of
-	    {error, badarg} -> {error, 21};
-	    false -> {error, 21};
-	    true ->
-		DVV = jsx:decode(JSON),
-		case DVV of
-		    [_, _] ->
-			TiimeValid = lists:all(
-			    fun(I) ->
-				try utils:to_integer(I) of
-				    _ -> true
-				catch error:undef -> false end
-			    end, dvvset:values(DVV)),
-			case TiimeValid of
-			    true -> DVV;
-			    false -> {error, 22}
-			end;
-		    _ -> {error, 22}
-		end
-	end
-    catch error:_ ->
-        {error, 22}
+    JSON = base64:decode(Base64DVV),
+    case jsx:is_json(JSON) of
+	{error, badarg} -> {error, 21};
+	false -> {error, 21};
+	true ->
+	    DVV = jsx:decode(JSON),
+	    case DVV of
+		[_, _] -> validate_timestamp_list(dvvset:values(DVV), DVV);
+		_ -> {error, 22}
+	    end
     end.
 
 %%
@@ -355,7 +358,12 @@ handle_post(Req0, State) ->
 	    Prefix0 = list_handler:validate_prefix(BucketId, proplists:get_value(prefix, FieldValues)),
 	    GUID = validate_guid(proplists:get_value(guid, FieldValues)),
 	    UploadTime = erlang:round(utils:timestamp()/1000),
-	    Version = validate_version(proplists:get_value(version, FieldValues)),
+	    Version =
+		try
+		    validate_version(proplists:get_value(version, FieldValues))
+		catch error:_ ->
+		    {error, 22}
+		end,
 	    Blob = proplists:get_value(blob, FieldValues),
 	    Md5 = validate_md5(proplists:get_value(md5, FieldValues)),
 	    StartByte = proplists:get_value(start_byte, State),
