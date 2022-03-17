@@ -1,5 +1,7 @@
 # DubStack
 
+[![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
+
 This middleware is used to synchronize Riak CS contents with filesystem. Also it provides web UI for browsing files.
 
 ![Screenshot](doc/dubstack.png)
