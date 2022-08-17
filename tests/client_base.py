@@ -57,7 +57,7 @@ class TestClient(unittest.TestCase):
     def setUp(self):
 
         creds = {"login": USERNAME_1, "password": PASSWORD_1}
-        response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds),
+        response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds), verify=False,
                                  headers={'content-type': 'application/json'})
         data = response.json()
         self.token = data['token']

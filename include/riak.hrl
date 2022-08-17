@@ -230,3 +230,5 @@
 %% If case watermark with this key is present in bucket, thumbnails will have watermark on them.
 %%
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
+
+-define(DB_VERSION_KEY, ".luc").

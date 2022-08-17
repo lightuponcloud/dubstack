@@ -489,7 +489,8 @@ is_hidden_object(ObjInfo) ->
 	    lists:suffix(?RIAK_INDEX_FILENAME, ObjectKey) =:= true orelse 
 	    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
 	    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
-	    lists:suffix(?RIAK_LOCK_SUFFIX, ObjectKey) =:= true
+	    lists:suffix(?RIAK_LOCK_SUFFIX, ObjectKey) =:= true orelse
+	    lists:suffix(?DB_VERSION_KEY, ObjectKey) =:= true
     end.
 
 %%

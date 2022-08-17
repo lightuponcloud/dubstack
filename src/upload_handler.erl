@@ -135,7 +135,7 @@ validate_filename(FileName) ->
                     NoProhibitedTrailingChrs = lists:all(
                         fun(C) ->
                             utils:ends_with(FileName, C) =:= false
-                	end, ProhibitedTrailingChrs),
+                        end, ProhibitedTrailingChrs),
                     case NoProhibitedTrailingChrs of
                         false -> {error, 47};
                         true -> FileName
