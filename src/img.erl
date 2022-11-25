@@ -210,6 +210,17 @@ flush_queue(Port) when erlang:is_port(Port) ->
 flush_queue(_) ->
     ok.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any
+%% necessary cleaning up. When it returns, the gen_server terminates
+%% with Reason. The return value is ignored.
+%%
+%% @spec terminate(Reason, State) -> void()
+%% @end
+%%--------------------------------------------------------------------
 terminate(Reason, #state{port = Port} = State) ->
     ?WARN("[img] terminating port. Reason: ~p~n", [Reason]),
     if erlang:is_port(Port) ->
@@ -223,4 +234,12 @@ terminate(Reason, #state{port = Port} = State) ->
 	    ok
     end.
 
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Convert process state when code is changed
+%%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% @end
+%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

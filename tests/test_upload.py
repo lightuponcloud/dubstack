@@ -549,6 +549,20 @@ class UploadTest(TestClient):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'error': 22})
 
+        # try to upload first chunk _again_
+        url = "{}/riak/upload/{}/{}/1/".format(BASE_URL, TEST_BUCKET_1, upload_id)
+        form_data = {
+            'prefix': '',
+            'md5': "437b930db84b8079c2dd804a71936b5f",
+            'guid': '',
+            'files[]': ("20180111_165127.jpg", "something"),
+            'version': version
+        }
+        response = self._upload_request(headers, form_data, url=url)
+        self.assertEqual(response.status_code, 200)
+        response_json = response.json()
+        import pdb;pdb.set_trace()
+
         # finish multipart upload to test if it succeeds
         form_data['version'] = version
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_1, upload_id)

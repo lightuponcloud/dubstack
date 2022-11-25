@@ -3,7 +3,8 @@
 %%
 -module(js_handler).
 
--export([init/2, bad_request/2, forbidden/2, forbidden/3, unauthorized/2, not_found/1, too_many/1, not_modified/1,
+-export([init/2, bad_request/2, bad_request_ok/2, forbidden/2, forbidden/3,
+	 unauthorized/2, not_found/1, not_found_ok/1, too_many/1, not_modified/1,
 	 redirect_to_login/1, redirect_to_login/2, incorrect_configuration/2]).
 
 -include("general.hrl").
@@ -98,6 +99,13 @@ bad_request(Req0, MsgCode)
     }, jsx:encode([{error, MsgCode}]), Req0),
     {stop, Req1, []}.
 
+bad_request_ok(Req0, MsgCode)
+	when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) orelse erlang:is_atom(MsgCode) ->
+    Req1 = cowboy_req:reply(400, #{
+	<<"content-type">> => <<"application/json">>
+    }, jsx:encode([{error, MsgCode}]), Req0),
+    {ok, Req1, []}.
+
 forbidden(Req0, MsgCode) when erlang:is_integer(MsgCode) ->
     Req1 = cowboy_req:reply(403, #{
 	<<"content-type">> => <<"application/json">>
@@ -133,6 +141,12 @@ not_found(Req0) ->
 	<<"content-type">> => <<"application/json">>
     }, Req0),
     {stop, Req1, []}.
+
+not_found_ok(Req0) ->
+    Req1 = cowboy_req:reply(404, #{
+	<<"content-type">> => <<"application/json">>
+    }, Req0),
+    {ok, Req1, []}.
 
 not_modified(Req0) ->
     Req1 = cowboy_req:reply(304, #{

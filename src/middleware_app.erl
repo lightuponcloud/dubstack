@@ -16,6 +16,7 @@ start(_Type, _Args) ->
 	    {"/riak/list/[:bucket_id]/", list_handler, []},
 	    {"/riak/thumbnail/[:bucket_id]/", img_scale_handler, []},
 	    {"/riak/gallery/[:bucket_id]/", gallery_handler, []},
+	    {"/riak/version/[:bucket_id]/", version_handler, []},
 
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},
 	    {"/riak/upload/[:bucket_id]/[:upload_id]/[:part_num]/", upload_handler, []},
@@ -55,6 +56,7 @@ start(_Type, _Args) ->
 	    dispatch => Dispatch
 	}}),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],
+    %sqlite_server:start_link(),  %% Processes queries to per-bucket SQLite DBs using locks
     middleware_sup:start_link().
 
 stop(_State) -> ok.

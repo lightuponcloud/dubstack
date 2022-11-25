@@ -3,7 +3,7 @@
 %%
 -module(download_handler).
 
--export([init/2, real_prefix/2]).
+-export([init/2, real_prefix/2, validate_range/2]).
 
 -include("general.hrl").
 -include("riak.hrl").
@@ -175,7 +175,9 @@ receive_streamed_body(Req0, RequestId0, Pid0, BucketId, NextObjectKeys0) ->
 	    cowboy_req:stream_body(<<>>, fin, Req0)
     end.
 
-
+%%
+%% Lists objects in 'real' prefix ( "~object/" ), sorts them and streams them to client.
+%%
 stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByte, EndByte) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,

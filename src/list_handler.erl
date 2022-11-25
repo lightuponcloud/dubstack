@@ -96,19 +96,10 @@ to_json(Req0, State) ->
 				{Dirs0, List1};
 			    true -> {proplists:get_value(dirs, List0), proplists:get_value(list, List0)}
 			end,
-                    %% Get version of DB, where tree is stored
-		    DbVersion =
-			case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
-			    not_found -> null;
-			Meta ->
-			    DbMeta = list_handler:parse_object_record(Meta, []),
-			    proplists:get_value("version", DbMeta)
-			end,
 		    {jsx:encode([
 			{list, Objects},
 			{dirs, Dirs},
-			{groups, Groups},
-			{db_version, DbVersion}
+			{groups, Groups}
 		    ]), Req0, []}
 	    end
     end.

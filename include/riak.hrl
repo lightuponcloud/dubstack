@@ -232,3 +232,8 @@
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
 
 -define(DB_VERSION_KEY, ".luc").
+
+%%
+%% Maximum size of the SQLite db file ( for security reasons )
+%%
+-define(DB_VERSION_MAXIMUM_SIZE, 5242880).

@@ -7,8 +7,10 @@
 
 -export([init/2, resource_exists/2, content_types_accepted/2, handle_post/2,
 	 allowed_methods/2, previously_existed/2, allow_missing_post/2,
-	 content_types_provided/2, is_authorized/2, forbidden/2, to_json/2,
-	 extract_rfc2231_filename/1, validate_version/1]).
+	 content_types_provided/2, is_authorized/2, forbidden/2]).
+
+-export([to_json/2, extract_rfc2231_filename/1, validate_version/1, validate_md5/1,
+	 acc_multipart/2]).
 
 -include("riak.hrl").
 -include("entities.hrl").
@@ -397,7 +399,7 @@ handle_post(Req0, State) ->
 			{width, Width1},
 			{height, Height1}
 		    ] ++ State,
-		    %% If object is locked and current user is now owner of the lock, return lock info
+		    %% If object is locked and current user is not owner of the lock, return lock info
 		    lock_check(Req0, NewState, Blob)
 	    end;
 	_ -> js_handler:bad_request(Req0, 2)
@@ -466,7 +468,7 @@ existing_guid(BucketId, Prefix, ExistingObject) ->
     end.
 
 %%
-%% Returns locked response if object lock exists.
+%% Returns "locked" response if object lock exists.
 %% Otherwise proceeds to the next check.
 %%
 lock_check(Req0, State0, BinaryData) ->
