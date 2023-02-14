@@ -50,6 +50,10 @@ to_scale(Req0, State) ->
 	end,
     CropFlag = proplists:get_value(crop, State),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    {<<>>, Req0, []};
 	not_found -> {<<>>, Req0, []};
 	RiakResponse0 ->
 	    TotalBytes =
@@ -87,6 +91,57 @@ to_scale(Req0, State) ->
     end.
 
 %%
+%% Download image from Riak CS
+%%
+serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag) ->
+    BinaryData =
+	case riak_api:get_object(BucketId, GUID, UploadId) of
+	    not_found ->
+		lager:error("[img_scale_handler] error ~p/~p: image not found", [BucketId, GUID]),
+		throw("[img_scale_handler] error: image not found");
+	    {error, Reason0} ->
+		lager:error("[img_scale_handler] error downloading image ~p/~p: ~p", [BucketId, GUID, Reason0]),
+		throw("[img_scale_handler] error downloading image");
+	    Data -> Data
+	end,
+    Watermark =
+	case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
+	    {error, Reason1} ->
+		lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
+			    [BucketId, ?WATERMARK_OBJECT_KEY, Reason1]),
+		[];
+	    not_found -> [];
+	    WatermarkResponse ->
+		WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
+		WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
+		case riak_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId) of
+		    not_found -> [];
+		    {error, _} -> [];
+		    WatermarkBinaryData -> [{watermark, WatermarkBinaryData}]
+		end
+	end,
+    Reply0 = img:scale([
+	{from, BinaryData},
+	{to, jpeg},
+	{crop, CropFlag},
+	{scale_width, Width},
+	{scale_height, Height}
+    ] ++ Watermark),
+    case Reply0 of
+	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
+	_ ->
+	    Options = [{acl, public_read}],
+	    Response = riak_api:put_object(BucketId, PrefixedGUID, CachedKey, Reply0, Options),
+	    case Response of
+		{error, Reason3} ->
+		    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
+				[BucketId, PrefixedGUID, CachedKey, Reason3]);
+		_ -> ok
+	    end,
+	    {Reply0, Req0, []}
+    end.
+
+%%
 %% Returns thumbnail as binary.
 %%
 %% Cached images are stored as
@@ -98,32 +153,14 @@ scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
     CachedKey = UploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
     PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID, CachedKey),
     case riak_api:get_object(BucketId, PrefixedCachedKey) of
+	{error, Reason} ->
+            %% Miss
+	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
+			[BucketId, PrefixedCachedKey, Reason]),
+	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag);
 	not_found ->
             %% Miss
-	    BinaryData = riak_api:get_object(BucketId, GUID, UploadId),
-	    Watermark =
-		case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
-		    not_found -> [];
-		    WatermarkResponse ->
-			WatermarkGUID = proplists:get_value("x-amz-meta-guid", WatermarkResponse),
-			WatermarkUploadId = proplists:get_value("x-amz-meta-upload-id", WatermarkResponse),
-			WatermarkBinaryData = riak_api:get_object(BucketId, WatermarkGUID, WatermarkUploadId),
-			[{watermark, WatermarkBinaryData}]
-		end,
-	    Reply0 = img:scale([
-		{from, BinaryData},
-		{to, jpeg},
-		{crop, CropFlag},
-		{scale_width, Width},
-		{scale_height, Height}
-	    ] ++ Watermark),
-	    case Reply0 of
-		{error, Reason} -> js_handler:bad_request(Req0, Reason);
-		_ ->
-		    Options = [{acl, public_read}],
-		    riak_api:put_object(BucketId, PrefixedGUID, CachedKey, Reply0, Options),
-		    {Reply0, Req0, []}
-	    end;
+	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag);
 	RiakResponse ->
             %% Return cached image
 	    {proplists:get_value(content, RiakResponse), Req0, []}
@@ -217,7 +254,7 @@ forbidden(Req0, State) ->
 	    _ -> true
 	end,
     case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
-	{error, Number} -> js_handler:forbidden(Req0, Number);
+	{error, Number} -> js_handler:forbidden(Req0, Number, stop);
 	false ->
 	    UserBelongsToGroup =
 		case User =:= undefined orelse utils:is_public_bucket_id(BucketId) of
@@ -229,7 +266,7 @@ forbidden(Req0, State) ->
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
 		_ ->
 		    {false, Req0, [
 			{bucket_id, BucketId},

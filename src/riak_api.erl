@@ -1,19 +1,19 @@
 -module(riak_api).
 
 -export([create_bucket/1, create_bucket/2,
-         delete_bucket/1,
-         head_bucket/1,
-         list_objects/1, list_objects/2,
-         copy_object/4, copy_object/5,
-         delete_object/2, head_object/2,
-         get_object/2, get_object/3,
-         get_object_metadata/2, get_object_metadata/3,
-         put_object/4, put_object/5,
-         start_multipart/2, start_multipart/4,
-         upload_part/5,
-         complete_multipart/4,
-         abort_multipart/3,
-         get_object_url/2,
+	 delete_bucket/1,
+	 head_bucket/1,
+	 list_objects/1, list_objects/2,
+	 copy_object/4, copy_object/5,
+	 delete_object/2, head_object/2,
+	 get_object/2, get_object/3,
+	 get_object_metadata/2, get_object_metadata/3,
+	 put_object/4, put_object/5,
+	 start_multipart/2, start_multipart/4,
+	 upload_part/5,
+	 complete_multipart/4,
+	 abort_multipart/3,
+	 get_object_url/2,
 	 s3_xml_request/8,
 	 validate_upload_id/3,
 	 increment_filename/1,
@@ -110,11 +110,14 @@ delete_bucket(BucketId) ->
 
 delete_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) ->
     Config = #riak_api_config{},
-    {ok, {_Status, Headers, _Body}} = s3_request(delete, BucketId, [$/|Key], "", [], <<>>, [], Config),
-    Marker = proplists:get_value("x-amz-delete-marker", Headers, "false"),
-    Id = proplists:get_value("x-amz-version-id", Headers, "null"),
-    [{delete_marker, list_to_existing_atom(Marker)},
-     {version_id, Id}].
+    case s3_request(delete, BucketId, [$/|Key], "", [], <<>>, [], Config) of
+	{error, {Reason,_,_,_,_}} -> {error, Reason};
+	{ok, {_Status, Headers, _Body}} ->
+	    Marker = proplists:get_value("x-amz-delete-marker", Headers, "false"),
+	    Id = proplists:get_value("x-amz-version-id", Headers, "null"),
+	    [{delete_marker, list_to_existing_atom(Marker)},
+	    {version_id, Id}]
+    end.
 
 
 -spec list_objects(string()) -> proplist().
@@ -216,7 +219,7 @@ get_object(BucketId, GUID, UploadId)
     RealPrefix0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
     RealPrefix1 = utils:prefixed_object_key(RealPrefix0, UploadId) ++ "/",
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
-    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix1}]) of
+    case list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix1}]) of
 	not_found -> not_found;  %% bucket not found
 	RiakResponse0 ->
 	    Contents = proplists:get_value(contents, RiakResponse0),
@@ -530,15 +533,18 @@ get_object_metadata(BucketId, Key, Options)
 	    Version   -> ["versionId=", Version]
         end,
     Config = #riak_api_config{},
-    {ok, {_Status, Headers, _Body}} = s3_request(head, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config),
+    case s3_request(head, BucketId, [$/|Key], Subresource, [], <<>>, RequestHeaders, Config) of
+	{error, _} -> [];
+	{ok, {_Status, Headers, _Body}} ->
+	    [{last_modified, proplists:get_value("last-modified", Headers)},
+	     {etag, proplists:get_value("etag", Headers)},
+	     {content_length, proplists:get_value("content-length", Headers)},
+	     {content_type, proplists:get_value("content-type", Headers)},
+	     {content_encoding, proplists:get_value("content-encoding", Headers)},
+	     {delete_marker, list_to_existing_atom(proplists:get_value("x-amz-delete-marker", Headers, "false"))},
+	     {version_id, proplists:get_value("x-amz-version-id", Headers, "false")}|extract_metadata(Headers)]
+    end.
 
-    [{last_modified, proplists:get_value("last-modified", Headers)},
-     {etag, proplists:get_value("etag", Headers)},
-     {content_length, proplists:get_value("content-length", Headers)},
-     {content_type, proplists:get_value("content-type", Headers)},
-     {content_encoding, proplists:get_value("content-encoding", Headers)},
-     {delete_marker, list_to_existing_atom(proplists:get_value("x-amz-delete-marker", Headers, "false"))},
-     {version_id, proplists:get_value("x-amz-version-id", Headers, "false")}|extract_metadata(Headers)].
 
 extract_metadata(Headers) ->
     [{Key, Value} || {Key = "x-amz-meta-" ++ _, Value} <- Headers].
@@ -572,16 +578,33 @@ put_object(BucketId, Prefix, ObjectKey, BinaryData, Options)
 	     erlang:is_list(ObjectKey), erlang:is_binary(BinaryData),
 	     erlang:is_list(Options) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
-    MimeType = utils:mime_type(ObjectKey),
+    %% No need to guess mime type for service objects
+    MimeType =
+	case ObjectKey of
+	    ?DB_VERSION_KEY -> "application/vnd.sqlite3";
+	    ?DB_VERSION_LOCK_FILENAME -> "application/vnd.lightup";
+	    ?WATERMARK_OBJECT_KEY -> "image/png";
+	    ?RIAK_ACTION_LOG_FILENAME -> "application/xml";
+	    ?RIAK_LOCK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?RIAK_DVV_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?RIAK_LOCK_INDEX_FILENAME -> "application/vnd.lightup";
+	    ?RIAK_INDEX_FILENAME -> "application/vnd.lightup";
+	    _ -> utils:mime_type(ObjectKey)
+	end,
     HTTPHeaders = [{"content-type", MimeType}],
 
     RequestHeaders = [{"x-amz-acl", encode_acl(proplists:get_value(acl, Options))}|HTTPHeaders]
         ++ [{"x-amz-meta-" ++ string:to_lower(MKey), MValue} ||
                {MKey, MValue} <- proplists:get_value(meta, Options, [])],
     Config = #riak_api_config{},
-    {ok, {_Status, _Headers, _Body}} = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [],
-                                  BinaryData, RequestHeaders, Config),
-    ok.
+    Response = s3_request(put, BucketId, [$/|PrefixedObjectKey], "", [], BinaryData, RequestHeaders, Config),
+    case Response of
+	{ok, {_Status, _Headers, _Body}} -> ok;
+	{error, Reason} ->
+	    lager:error("[riak_api] Failed to put object ~p/~p/~p: ~p",
+			[BucketId, Prefix, ObjectKey, Reason]),
+	    {error, Reason}
+    end.
 
 -spec get_object_url(string(), string()) -> string().
 
@@ -702,8 +725,7 @@ complete_multipart(BucketId, Key, UploadId, ETags, HTTPHeaders)
                      POSTData, HTTPHeaders, Config) of
         {ok, {_Status, _Headers, _Body}} ->
             ok;
-        Error ->
-            Error
+        Error -> Error
     end.
 
 -spec abort_multipart(BucketId, Key, UploadId) -> ok | {error, any()} when
@@ -728,10 +750,8 @@ abort_multipart(BucketId, Key, UploadId, Options, HTTPHeaders)
     Config = #riak_api_config{},
     case s3_request(delete, BucketId, [$/|Key], [], [{"uploadId", UploadId}],
                      <<>>, HTTPHeaders, Config) of
-        {ok, _} ->
-            ok;
-        Error ->
-            Error
+        {ok, _} -> ok;
+        Error -> Error
     end.
 
 s3_simple_request(Method, Host, Path, Subresource, Params, POSTData, Headers) ->

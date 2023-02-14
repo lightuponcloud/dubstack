@@ -61,6 +61,10 @@ validate_src_object_key(BucketId, Prefix0, SrcObjectKey0) ->
 check_src_dir(BucketId, Prefix) ->
     PrefixedIndexFilename = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
     case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+	{error, Reason} ->
+	    lager:error("[rename_handler] get_object error ~p/~p: ~p",
+			[BucketId, PrefixedIndexFilename, Reason]),
+	    {error, 5};
 	not_found -> {error, 9};
 	IndexContent0 -> erlang:binary_to_term(proplists:get_value(content, IndexContent0))
     end.
@@ -149,7 +153,6 @@ handle_post(Req0, State0) ->
 		    DstObjectName0 = proplists:get_value(dst_object_name, State1),
 		    IndexContent = check_src_dir(BucketId, Prefix0),
 		    case validate_src_dst_name(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, IndexContent) of
-			lock -> js_handler:too_many(Req0);
 			{error, Number} -> js_handler:bad_request(Req0, Number);
 			{SrcObjectKey1, PrefixedDstDirectoryName1} ->
 			    State2 = lists:keyreplace(src_object_key, 1, State1, {src_object_key, SrcObjectKey1}) ++
@@ -169,13 +172,20 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
     PrefixedObjectKey2 = utils:prefixed_object_key(PrefixedDstDirectoryName, PrefixedObjectKey1),
 
     CopyResult = riak_api:copy_object(BucketId, PrefixedObjectKey2, BucketId, PrefixedObjectKey0, [{acl, public_read}]),
-    case proplists:get_value(content_length, CopyResult, 0) == 0 of
-	true -> PrefixedObjectKey2;
-	false ->
-	    %% Delete regular object
-	    riak_api:delete_object(BucketId, PrefixedObjectKey0),
-	    PrefixedObjectKey2,
-	    ok
+    case CopyResult of 
+	{error, _} -> PrefixedObjectKey2;
+	_ ->
+	    case proplists:get_value(content_length, CopyResult, 0) == 0 of
+		true -> PrefixedObjectKey2;
+		false ->
+		    %% Delete regular object
+		    case riak_api:delete_object(BucketId, PrefixedObjectKey0) of
+			{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey0, Reason]);
+			_ -> ok
+		    end,
+		    PrefixedObjectKey2,
+		    ok
+	    end
     end.
 
 %%
@@ -265,7 +275,10 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 					_ -> ok
 				    end;
 				false ->
-				    riak_api:delete_object(BucketId, PrefixedObjectKey),
+				    case riak_api:delete_object(BucketId, PrefixedObjectKey) of
+					{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]);
+					_ -> ok
+				    end,
 				    ok
 			    end
 		    end
@@ -287,7 +300,10 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 		    Timestamp = ActionLogRecord0#riak_action_log_record.timestamp,
 		    case indexing:update(BucketId, Prefix0, [{to_delete,
 					 [{erlang:list_to_binary(DstDirectoryName1++"/"), Timestamp}]}]) of
-			lock -> lock;
+			lock ->
+			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p",
+				       [BucketId, Prefix0]),
+			    lock;
 			_ ->
 			    DstDirectoryName2 = unicode:characters_to_list(DstDirectoryName0),
 			    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName2, ["/\"."]]),
@@ -298,7 +314,10 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 		_ ->
 		    %% Update pseudo-directory index
 		    case indexing:update(BucketId, Prefix0) of
-			lock -> lock;
+			lock ->
+			    lager:warning("[rename_handler] Can't move directory, as lock exists: ~p/~p",
+				       [BucketId, Prefix0]),
+			    lock;
 			_ ->
 			    SrcObjectKey0 = filename:basename(PrefixedSrcDirectoryName),
 			    SrcObjectKey1 = unicode:characters_to_list(utils:unhex(erlang:list_to_binary(SrcObjectKey0))),
@@ -330,6 +349,10 @@ get_object_meta(IsLocked, LockUserId, User, BucketId, Prefix0, SrcObjectKey0) ->
 	true ->
 	    PrefixedSrcObjectKey = utils:prefixed_object_key(Prefix0, SrcObjectKey0),
 	    case riak_api:head_object(BucketId, PrefixedSrcObjectKey) of
+		{error, Reason} ->
+		    lager:error("[rename_handler] head_object failed ~p/~p: ~p",
+				[BucketId, PrefixedSrcObjectKey, Reason]),
+		    not_found;
 		not_found -> not_found;
 		Metadata0 ->
 		    case proplists:get_value("x-amz-meta-is-deleted", Metadata0) of
@@ -359,6 +382,10 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 		%% Check if source object is locked
 		PrefixedSrcLockKey0 = utils:prefixed_object_key(Prefix0, SrcObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
 		case riak_api:head_object(BucketId, PrefixedSrcLockKey0) of
+		    {error, Reason0} ->
+			lager:error("[rename_handler] head_object failed ~p/~p: ~p",
+				    [BucketId, PrefixedSrcLockKey0, Reason0]),
+			{false, undefined};
 		    not_found -> {false, undefined};
 		    LockMeta -> {true, proplists:get_value("x-amz-meta-lock-user-id", LockMeta)}
 		end;
@@ -374,15 +401,30 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 		ok ->
 		    case ObjectKey0 =:= SrcObjectKey0 of
 			true -> ok;  %% Don't delete object, as it has replaced another one
-			false -> riak_api:delete_object(BucketId, PrefixedSrcObjectKey) %% Delete a regular object
+			false ->
+			    %% Delete a regular object
+			    case riak_api:delete_object(BucketId, PrefixedSrcObjectKey) of
+				{error, Reason1} ->
+				    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
+						[BucketId, PrefixedSrcObjectKey, Reason1]);
+				_ -> ok
+			    end
 		    end,
 		    %% Rename lock file name
 		    case IsLocked of
 			true ->
 			    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?RIAK_LOCK_SUFFIX,
 			    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
-			    riak_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey),
-			    riak_api:delete_object(BucketId, PrefixedDstLockKey);
+			    case riak_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
+				{error, _} -> ok;
+				_ ->
+				    case riak_api:delete_object(BucketId, PrefixedDstLockKey) of
+					{error, Reason2} ->
+					    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
+							[BucketId, PrefixedDstLockKey, Reason2]);
+					_ -> ok
+				    end
+			    end;
 			false -> ok
 		    end,
 		    %% Find original object name for action log record
@@ -393,7 +435,10 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 
 		    %% Update objects index
 		    case indexing:update(BucketId, Prefix0, [{modified_keys, [ObjectKey0]}]) of
-			lock -> lock;
+			lock ->
+			    lager:warning("[rename_handler] Can't wrename object, as lock exists: ~p/~p",
+				       [BucketId, Prefix0]),
+			    lock;
 			_ ->
 			    %% Create action log record
 			    OrigName2 = unicode:characters_to_list(OrigName0),
@@ -403,7 +448,10 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 			    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
 			    [{orig_name, unicode:characters_to_binary(OrigName2)}]
 		    end;
-		_ -> {error, 5}
+		{error, Reason3} ->
+		    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
+			[BucketId, Prefix0, ObjectKey0, Reason3]),
+		    {error, 5}
 	    end
     end.
 
@@ -488,8 +536,8 @@ forbidden(Req0, User) ->
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
 		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
 	    end;
-	false -> js_handler:forbidden(Req0, 7)
+	false -> js_handler:forbidden(Req0, 7, stop)
     end.

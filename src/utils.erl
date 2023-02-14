@@ -2,20 +2,23 @@
 %% This module contains common utilities.
 %%
 -module(utils).
+
 %% Validations
 -export([is_valid_bucket_id/2, is_public_bucket_id/1, is_valid_object_key/1,
 	 is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
 	 is_true/1, is_false/1, has_duplicates/1, ends_with/2, starts_with/2,
 	 even/1, validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
 	 is_hidden_prefix/1, get_token/1]).
+
 %% Conversions
 -export([to_integer/1, to_integer/2, to_float/1, to_float/2, to_number/1, to_list/1,
 	 to_binary/1, to_atom/1, to_boolean/1]).
+
 %% Ancillary
 -export([mime_type/1, slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
-	 translate/2, dirname/1]).
+	 translate/2, dirname/1, read_config/1]).
 
 -include("riak.hrl").
 -include("general.hrl").
@@ -490,7 +493,8 @@ is_hidden_object(ObjInfo) ->
 	    lists:suffix(?RIAK_ACTION_LOG_FILENAME, ObjectKey) =:= true orelse
 	    lists:suffix(?RIAK_LOCK_INDEX_FILENAME, ObjectKey) =:= true orelse
 	    lists:suffix(?RIAK_LOCK_SUFFIX, ObjectKey) =:= true orelse
-	    lists:suffix(?DB_VERSION_KEY, ObjectKey) =:= true
+	    lists:suffix(?DB_VERSION_KEY, ObjectKey) =:= true orelse
+	    lists:suffix(?DB_VERSION_LOCK_FILENAME, ObjectKey) =:= true
     end.
 
 %%
@@ -614,3 +618,15 @@ dirname(Path0) when erlang:is_binary(Path0) ->
 	<<".">> -> undefined;
 	Path3 -> << Path3/binary, <<"/">>/binary >>
     end.
+
+%%
+%% Reads application config from sys.config
+%%
+read_config(App) ->
+    Config = application:get_all_env(App),
+
+    Port = proplists:get_value(http_listen_port, Config),
+    #general_settings{
+        version = proplists:get_value(version, Config),
+        http_listen_port = Port
+    }.

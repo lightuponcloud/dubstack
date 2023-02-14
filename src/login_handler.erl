@@ -5,10 +5,9 @@
 -behavior(cowboy_handler).
 
 -export([init/2, content_types_provided/2, content_types_accepted/2,
-	 allowed_methods/2, to_json/2, handle_post/2,
-	 new_token/2, check_token/1,
-	 check_credentials/2, new_csrf_token/0, check_csrf_token/1,
-	 check_session_id/1, get_user_or_error/2]).
+	 allowed_methods/2, to_json/2, handle_post/2, new_token/2,
+	 check_token/1, check_credentials/2, new_csrf_token/0,
+	 check_csrf_token/1, check_session_id/1, get_user_or_error/2]).
 
 -include_lib("xmerl/include/xmerl.hrl").
 -include("riak.hrl").
@@ -68,9 +67,15 @@ new_token(UserId, TenantId) ->
     RootElement0 = #xmlElement{name=auth, content=[NewToken]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     UUID4 = utils:to_list(riak_crypto:uuid4()),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
-	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-    UUID4.
+    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+				   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+    case Response of
+	{error, Reason} ->
+	    lager:error("[login_handler] Can't put object ~p/~p/~p: ~p", 
+			[?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4, Reason]),
+	    throw("Can't issue tocket at this time.");
+	_ -> UUID4
+    end.
 
 %%
 %% Adds a new CSRF token
@@ -89,9 +94,15 @@ new_csrf_token() ->
     RootElement0 = #xmlElement{name=auth, content=[NewCSRFToken]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
     UUID4 = utils:to_list(riak_crypto:uuid4()),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
+    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4,
 	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-    UUID4.
+    case Response of
+	{error, Reason} ->
+	    lager:error("[login_handler] Can't put object ~p/~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, ?CSRF_TOKEN_PREFIX, UUID4, Reason]),
+	    throw("Can't issue CSRF token at this time");
+	_ -> UUID4
+    end.
 
 %%
 %% Checks if CSRF token exists and has not expired.
@@ -106,6 +117,10 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 	    PrefixedToken = utils:prefixed_object_key(?CSRF_TOKEN_PREFIX,
 		erlang:binary_to_list(CookieValue)),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
+		{error, Reason} ->
+		    lager:error("[login_handler] get_object error ~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, PrefixedToken, Reason]),
+		    false;
 		not_found -> false;
 		TokenObject ->
 		    XMLDocument = utils:to_list(proplists:get_value(content, TokenObject)),
@@ -126,6 +141,10 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 check_token(UUID4) when erlang:is_list(UUID4) ->
     PrefixedToken = utils:prefixed_object_key(?TOKEN_PREFIX, UUID4),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedToken) of
+	{error, Reason} ->
+	    lager:error("[login_handler] get_object error ~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, PrefixedToken, Reason]),
+	    not_found;
 	not_found -> not_found;
 	TokenObject ->
 	    %% Check for error in response first
@@ -150,8 +169,13 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 			    ]},
 			    RootElement1 = #xmlElement{name=auth, content=[NewToken]},
 			    XMLDocument1 = xmerl:export_simple([RootElement1], xmerl_xml),
-			    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
+			    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4,
 				unicode:characters_to_binary(XMLDocument1), [{acl, private}]),
+			    case Response of
+				{error, Reason} -> lager:error("[login_handler] Can't put object ~p/~p/~p: ~p", 
+				       [?SECURITY_BUCKET_NAME, ?TOKEN_PREFIX, UUID4, Reason]);
+				_ -> ok
+			    end,
 			    admin_users_handler:get_user(UserId)
 		    end;
 		_ ->
@@ -237,9 +261,9 @@ handle_post(Req0, _State) ->
 		    Login = proplists:get_value(<<"login">>, FieldValues),
 		    Password = proplists:get_value(<<"password">>, FieldValues),
 		    case check_credentials(Login, Password) of
-			false -> js_handler:forbidden(Req0, 3);
-			not_found -> js_handler:forbidden(Req0, 17);
-			blocked -> js_handler:forbidden(Req0, 19);
+			false -> js_handler:forbidden(Req0, 3, stop);
+			not_found -> js_handler:forbidden(Req0, 17, stop);
+			blocked -> js_handler:forbidden(Req0, 19, stop);
 			User0 ->
 			    UUID4 = new_token(User0#user.id, User0#user.tenant_id),
 			    Req1 = cowboy_req:set_resp_body(jsx:encode(

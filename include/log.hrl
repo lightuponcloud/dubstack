@@ -1,6 +1,6 @@
--define(ERROR(Fmt), error_logger:error_msg(Fmt)).
--define(ERROR(Fmt, Args), error_logger:error_msg(Fmt, Args)).
--define(INFO(Fmt, Args), error_logger:info_msg(Fmt, Args)).
--define(INFO(Fmt), error_logger:info_msg(Fmt)).
--define(WARN(Fmt, Args), error_logger:warning_msg(Fmt, Args)).
--define(WARN(Fmt), error_logger:warning_msg(Fmt)).
+-define(ERROR(Fmt), lager:error(Fmt)).
+-define(ERROR(Fmt, Args), lager:error(Fmt, Args)).
+-define(INFO(Fmt, Args), lager:info(Fmt, Args)).
+-define(INFO(Fmt), lager:info(Fmt)).
+-define(WARN(Fmt, Args), lager:warn(Fmt, Args)).
+-define(WARN(Fmt), lager:warn(Fmt)).

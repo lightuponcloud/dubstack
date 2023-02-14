@@ -47,7 +47,7 @@ start(_Type, _Args) ->
 	    %% {"/riak-media/[...]", cowboy_static, {priv_dir, middleware, ""}}
 	]}
     ]),
-    Settings = #general_settings{},
+    Settings = utils:read_config(middleware),
     %% idle_timeout is set to make sure client has enough time to download big file
     {ok, _} = cowboy:start_clear(middleware_http_listener,
 	[{port, Settings#general_settings.http_listen_port},
@@ -56,7 +56,7 @@ start(_Type, _Args) ->
 	    dispatch => Dispatch
 	}}),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],
-    %sqlite_server:start_link(),  %% Processes queries to per-bucket SQLite DBs using locks
+    sqlite_server:start_link(),  %% Processes queries to per-bucket SQLite DBs using locks
     middleware_sup:start_link().
 
 stop(_State) -> ok.

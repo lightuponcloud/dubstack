@@ -56,6 +56,10 @@ validate_request(BucketId, undefined, PrefixedObjectKey) ->
 	true ->
 	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
 		not_found -> not_found;
+		{error, Reason} ->
+		    lager:error("[download_handler] head_object ~p/~p: ~p",
+				[BucketId, PrefixedObjectKey, Reason]),
+		    not_found;
 		Metadata -> validate_request(BucketId, Metadata)
 	    end;
 	false -> {error, 37}
@@ -74,6 +78,10 @@ validate_request(BucketId, User, PrefixedObjectKey) ->
 		false -> {error, 37};
 		true ->
 		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+			{error, Reason} ->
+			    lager:error("[download_handler] head_object ~p/~p: ~p",
+					[BucketId, PrefixedObjectKey, Reason]),
+			    not_found;
 			not_found -> not_found;
 			Metadata -> validate_request(BucketId, Metadata)
 		    end

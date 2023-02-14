@@ -20,6 +20,7 @@
 %%	Port number for Cowboy to listen on
 %%
 -type general_settings() :: #{
+    version => string(),
     brand_name => string(),
     admin_email => string(),
     domain => string(),
@@ -27,17 +28,18 @@
     csrf_cookie_name => atom(),
     root_path => string(),
     static_root => string(),
-    listen_port => integer(),
+    http_listen_port => integer(),
     locale => string()
 }.
 
 -record(general_settings, {
+    version="0.1"::string(),
     brand_name="LightUponCloud"::string(),
     admin_email="support@xentime.com"::string(),
     session_cookie_name=midsessionid::atom(),
     root_path="/riak/"::string(),
     static_root="/riak-media/"::string(),
-    http_listen_port=8082,
+    http_listen_port=8081,
     locale="uk"
 }).
 

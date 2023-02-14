@@ -37,12 +37,21 @@ add_record(BucketId, Prefix, Record0) ->
 
     Options = [{acl, public_read}],  % TODO: public_read
     case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
+	{error, Reason} ->
+	    lager:error("[action_log] get_object error ~p/~p: ~p",
+			[BucketId, PrefixedActionLogFilename, Reason]),
+	    not_found;
 	not_found ->
 	    %% Create .riak_action_log.xml
 	    RootElement0 = #xmlElement{name=action_log, content=[Record1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
-		unicode:characters_to_binary(XMLDocument0), Options);
+	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
+					   unicode:characters_to_binary(XMLDocument0), Options),
+	    case Response of
+		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
+					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);
+		_ -> ok
+	    end;
 	ExistingObject ->
 	    XMLDocument1 = utils:to_list(proplists:get_value(content, ExistingObject)),
 	    {RootElement1, _} = xmerl_scan:string(XMLDocument1),
@@ -51,8 +60,13 @@ add_record(BucketId, Prefix, Record0) ->
 	    NewRootElement = RootElement1#xmlElement{content=NewContent},
 	    XMLDocument2 = xmerl:export_simple([NewRootElement], xmerl_xml),
 
-	    riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
-		unicode:characters_to_binary(XMLDocument2), Options)
+	    Response = riak_api:put_object(BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME,
+		unicode:characters_to_binary(XMLDocument2), Options),
+	    case Response of
+		{error, Reason} -> lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
+					       [BucketId, Prefix, ?RIAK_ACTION_LOG_FILENAME, Reason]);
+		_ -> ok
+	    end
     end.
 
 init(Req, Opts) ->
@@ -100,19 +114,30 @@ template(E) -> built_in_rules(fun template/1, E).
 get_action_log(Req0, State, BucketId, Prefix) ->
     PrefixedActionLogFilename = utils:prefixed_object_key(
 	Prefix, ?RIAK_ACTION_LOG_FILENAME),
-    ExistingObject0 = riak_api:head_object(BucketId,
-	PrefixedActionLogFilename),
+    ExistingObject0 = riak_api:head_object(BucketId, PrefixedActionLogFilename),
     case ExistingObject0 of
+	{error, Reason} ->
+	    lager:error("[action_log] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedActionLogFilename, Reason]),
+	    {<<"[]">>, Req0, State};
 	not_found -> {<<"[]">>, Req0, State};
 	_ ->
-	    ExistingObject1 = riak_api:get_object(BucketId, PrefixedActionLogFilename),
-	    XMLContent0 = utils:to_list(proplists:get_value(content, ExistingObject1)),
-	    {XMLContent1, _} = xmerl_scan:string(XMLContent0),
+	    case riak_api:get_object(BucketId, PrefixedActionLogFilename) of
+		{error, Reason} ->
+		    lager:error("[action_log] get_object failed ~p/~p: ~p",
+				[BucketId, PrefixedActionLogFilename, Reason]),
+		    {<<>>, Req0, State};
+		not_found ->
+		    {<<>>, Req0, State};
+		ExistingObject1 ->
+		    XMLContent0 = utils:to_list(proplists:get_value(content, ExistingObject1)),
+		    {XMLContent1, _} = xmerl_scan:string(XMLContent0),
 
-	    %% filter out "\n" characters and serialize records to JSON
-	    Output = jsx:encode([R || R <- template(XMLContent1),
-		proplists:is_defined(action, R) =:= true]),
-	    {Output, Req0, State}
+		    %% filter out "\n" characters and serialize records to JSON
+		    Output = jsx:encode([R || R <- template(XMLContent1),
+				        proplists:is_defined(action, R) =:= true]),
+		    {Output, Req0, State}
+	    end
     end.
 
 %%
@@ -146,6 +171,10 @@ fetch_full_object_history(BucketId, GUID, ObjectList0, Marker0)
 get_object_changelog(Req0, State, BucketId, Prefix, ObjectKey) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[action_log] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    js_handler:not_found(Req0);
 	not_found -> js_handler:not_found(Req0);
 	RiakResponse0 ->
 	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
@@ -237,6 +266,10 @@ validate_object_key(BucketId, Prefix, ObjectKey, Version)
 	     erlang:is_binary(ObjectKey), erlang:is_list(Version) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[action_log] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    {error, 5};
 	not_found -> {error, 17};
 	Metadata0 ->
 	    IsLocked = proplists:get_value("x-amz-meta-is-locked", Metadata0),
@@ -310,8 +343,10 @@ handle_post(Req0, State0) ->
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey1]}]) of
-			lock -> js_handler:too_many(Req0);
-    			_ ->
+			lock ->
+			    lager:warning("[action_log] Can't update index: lock exists"),
+			    js_handler:too_many(Req0);
+			_ ->
 			    OrigName = utils:unhex(erlang:list_to_binary(proplists:get_value("orig-filename", Meta))),
 			    [VVTimestamp] = dvvset:values(Version),
 			    PrevDate = utils:format_timestamp(utils:to_integer(VVTimestamp)),
@@ -320,7 +355,11 @@ handle_post(Req0, State0) ->
                 	    log_restore_action(State0 ++ State1),
                 	    {true, Req0, []}
         	    end;
-		_ -> js_handler:too_many(Req1)
+		{error, Reason} ->
+		    lager:error("[action_log] Can't put object ~p/~p/~p: ~p",
+				[BucketId, Prefix, ObjectKey1, Reason]),
+		    lager:warning("[action_log] Can't update index: ~p", [Reason]),
+		    js_handler:too_many(Req1)
 	    end
     end.
 
@@ -330,12 +369,12 @@ handle_post(Req0, State0) ->
 %%
 forbidden(Req0, _State) ->
     case utils:get_token(Req0) of
-	undefined -> js_handler:forbidden(Req0, 28);
+	undefined -> js_handler:forbidden(Req0, 28, stop);
 	Token -> 
 	    %% Extracts token from request headers and looks it up in "security" bucket
 	    case login_handler:check_token(Token) of
-		not_found -> js_handler:forbidden(Req0, 28);
-		expired -> js_handler:forbidden(Req0, 38);
+		not_found -> js_handler:forbidden(Req0, 28, stop);
+		expired -> js_handler:forbidden(Req0, 38, stop);
 		User -> {false, Req0, [{user, User}]}
 	    end
     end.
@@ -370,7 +409,7 @@ resource_exists(Req0, State) ->
 				{prefix, Prefix}]}
 		    end
 	    end;
-	false -> js_handler:forbidden(Req0, 7)
+	false -> js_handler:forbidden(Req0, 7, stop)
     end.
 
 previously_existed(Req0, _State) ->

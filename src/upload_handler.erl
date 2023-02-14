@@ -122,27 +122,35 @@ validate_filename(FileName)
              FileName =:= <<".dropbox.attr">> ->
     {error, 47};
 validate_filename(FileName) ->
-    ProhibitedChrs = [<<"<">>, <<">">>, <<":">>, <<$">>, <<"|">>, <<"?">>, <<"*">>],
-    NoProhibitedChrs = lists:all(
-        fun(C) ->
-            binary:matches(FileName, C) =:= []
-        end, ProhibitedChrs),
-    case NoProhibitedChrs of
-        false -> {error, 47};
-        true ->
-            case length(unicode:characters_to_list(FileName)) > 260 of
-                true -> {error, 48};
-                false ->
-                    ProhibitedTrailingChrs = [<<".">>, <<" ">>, erlang:list_to_binary(?RIAK_LOCK_SUFFIX)],
-                    NoProhibitedTrailingChrs = lists:all(
-                        fun(C) ->
-                            utils:ends_with(FileName, C) =:= false
-                        end, ProhibitedTrailingChrs),
-                    case NoProhibitedTrailingChrs of
-                        false -> {error, 47};
-                        true -> FileName
-                    end
-            end
+    %% Test if service object name is used
+    case utils:is_hidden_object([{key, unicode:characters_to_list(FileName)}]) of
+	true -> {error, 47};
+	false ->
+	    %% Test if it contains prohibited characters
+	    ProhibitedChrs = [<<"<">>, <<">">>, <<":">>, <<$">>, <<"|">>, <<"?">>, <<"*">>],
+	    NoProhibitedChrs = lists:all(
+		fun(C) ->
+		    binary:matches(FileName, C) =:= []
+		end, ProhibitedChrs),
+	    case NoProhibitedChrs of
+		false -> {error, 47};
+		true ->
+		    case length(unicode:characters_to_list(FileName)) > 260 of
+			true -> {error, 48};
+			false ->
+			    %% Test if it ends with prohibited character
+			    ProhibitedTrailingChrs = [<<".">>, <<" ">>,
+				erlang:list_to_binary(?RIAK_LOCK_SUFFIX)],
+			    NoProhibitedTrailingChrs = lists:all(
+				fun(C) ->
+				    utils:ends_with(FileName, C) =:= false
+				end, ProhibitedTrailingChrs),
+			    case NoProhibitedTrailingChrs of
+				false -> {error, 47};
+				true -> FileName
+			    end
+		    end
+	    end
     end.
 
 %%
@@ -463,6 +471,10 @@ existing_guid(_BucketId, _Prefix, undefined) -> undefined;
 existing_guid(BucketId, Prefix, ExistingObject) ->
     ObjectKey = ExistingObject#object.key,
     case riak_api:head_object(BucketId, utils:prefixed_object_key(Prefix, ObjectKey)) of
+	{error, Reason} ->
+	    lager:error("[upload_handler] head_object failed ~p/~p: ~p",
+			[BucketId, utils:prefixed_object_key(Prefix, ObjectKey), Reason]),
+	    undefined;
 	not_found -> undefined;
 	ConflictedMeta -> proplists:get_value("x-amz-meta-guid", ConflictedMeta)
     end.
@@ -511,6 +523,7 @@ check_upload_id(null, State) -> State;
 check_upload_id([], State) -> State;
 check_upload_id(UploadId, State0) ->
     case riak_api:head_object(?UPLOADS_BUCKET_NAME, UploadId) of
+	{error, _} -> {error, 5};
 	not_found -> {error, 5};
 	Meta ->
 	    UploadObjectMeta = list_handler:parse_object_record(Meta, []),
@@ -604,7 +617,13 @@ create_upload_id(undefined, State0) ->
     Options = [{acl, public_read}, {meta, Meta1 ++ Meta2}],
     UploadId = erlang:binary_to_list(riak_crypto:uuid4()),
     Response = riak_api:put_object(?UPLOADS_BUCKET_NAME, undefined, UploadId, <<>>, Options),
-    {GUID, UploadId, Response};
+    case Response of
+	{error, Reason} ->
+	    lager:error("[upload_handler] Can't put object ~p/~p: ~p",
+			[?UPLOADS_BUCKET_NAME, UploadId, Reason]),
+	    {error, Reason};
+	_ -> {GUID, UploadId, Response}
+    end;
 create_upload_id(UploadId, State) ->
     GUID = proplists:get_value(guid, State),
     {GUID, UploadId, ok}.
@@ -772,7 +791,11 @@ upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, Locked
 	    _ -> unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(User#user.tel)))
 	end,
     UploadId = proplists:get_value(upload_id, State0),
-    riak_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId),
+    case riak_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId) of
+	{error, Reason} -> lager:error("[upload_handler] failed to delete upload id ~p: ~p",
+					[UploadId, Reason]);
+	_ -> ok
+    end,
     Req1 = cowboy_req:reply(RespCode, #{
 	<<"content-type">> => <<"application/json">>
     }, jsx:encode([
@@ -858,8 +881,7 @@ upload_part(Req0, <<>>, [PrefixedSrcObjectKey|_], State0) ->
 		    ]), Req0),
 		    {stop, Req1, []}
 	    end;
-	{error, Number} -> js_handler:bad_request(Req0, Number);
-	_ -> js_handler:too_many(Req0)  %% put operation failed
+	{error, Reason} -> js_handler:bad_request(Req0, Reason)
     end.
 
 %%
@@ -880,10 +902,12 @@ upload_part(Req0, BinaryData, State0) ->
 	    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, UploadId),
 	    case riak_api:put_object(BucketId, PrefixedUploadId, ObjectKey, BinaryData, [{acl, public_read}]) of
 		ok -> upload_response(Req0, GUID, UploadId, 200, State0);
-		_ -> js_handler:too_many(Req0)
+		{error, Reason} ->
+		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
+				[BucketId, PrefixedUploadId, ObjectKey, Reason]),
+		    js_handler:too_many(Req0)
 	    end;
-	{error, Number} -> js_handler:bad_request(Req0, Number);
-	_ -> js_handler:too_many(Req0)  %% put operation failed
+	{error, Reason} -> js_handler:bad_request(Req0, Reason)
     end.
 
 %%
@@ -897,7 +921,9 @@ complete_upload(Req0, Etags0, RespCode, State0) ->
     PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, UploadId) ++ "/",
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     case riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]) of
-	not_found -> js_handler:too_many(Req0);
+	not_found ->
+	    lager:warning("[upload_handler] Upload id not found: ~p/~p", [BucketId, PrefixedUploadId]),
+	    js_handler:too_many(Req0);
 	RiakResponse ->
 	    List0 = [lists:last(string:tokens(proplists:get_value(key, I), "/"))
 		     || I <- proplists:get_value(contents, RiakResponse)],
@@ -967,7 +993,10 @@ complete_upload(Req0, RespCode, State0) ->
 	    end,
 	    State1 = lists:keyreplace(guid, 1, State0, {guid, GUID}),
 	    update_index(Req0, OrigName0, RespCode, State1 ++ [{object_key, ObjectKey0}, {is_conflict, IsConflict}]);
-	_ -> js_handler:incorrect_configuration(Req0, "Something's went horribly wrong.")
+	{error, Reason} ->
+	    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
+			[BucketId, Prefix, ObjectKey0, Reason]),
+	    js_handler:incorrect_configuration(Req0, "Something's went horribly wrong.")
     end.
 
 value_or_null(null) -> null;
@@ -996,9 +1025,9 @@ update_index(Req0, OrigName0, RespCode, State0) ->
     GUID = proplists:get_value(guid, State0),
     ObjectKey0 = proplists:get_value(object_key, State0),
     IsConflict = proplists:get_value(is_conflict, State0),
-    {IsLocked0, LockModifiedTime0, LockedUserId0, LockedUserName0, LockedUserTel0} =
+    {IsLocked0, LockModifiedTime0, LockedUserId0, LockedUserName0, LockedUserTel0, LockedUserTime} =
 	case proplists:get_value(object, State0) of
-	    undefined -> {undefined, undefined, undefined, undefined, undefined};
+	    undefined -> {undefined, undefined, undefined, undefined, undefined, undefined};
 	    ExistingObject ->
 		case IsConflict of
 		    true -> {undefined, undefined, undefined, undefined, undefined};
@@ -1006,15 +1035,17 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 			      ExistingObject#object.lock_modified_utc,
 			      ExistingObject#object.lock_user_id,
 			      ExistingObject#object.lock_user_name,
-			      ExistingObject#object.lock_user_tel}
+			      ExistingObject#object.lock_user_tel,
+			      ExistingObject#object.lock_modified_utc}
 		end
 	end,
     LockedUserName1 = hex_or_undefined(LockedUserName0),
     LockedUserTel1 = hex_or_undefined(LockedUserTel0),
+    EncodedVersion = erlang:binary_to_list(base64:encode(jsx:encode(Version))),
     %% Put link to the real object at the specified prefix
     Meta = list_handler:parse_object_record([], [
 	    {orig_name, utils:hex(OrigName0)},
-	    {version, base64:encode(jsx:encode(Version))},
+	    {version, EncodedVersion},
 	    {upload_time, UploadTime},
 	    {guid, GUID},
 	    {upload_id, UploadId},
@@ -1038,13 +1069,18 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		 {"height", proplists:get_value(height, State0)}];
 	    false ->
 		case riak_api:get_object(BucketId, GUID, UploadId) of
+		    {error, Reason0} ->
+			lager:error("[upload_handler] get_object error ~p/~p: ~p",
+				    [BucketId, GUID, Reason0]),
+			[{"width", proplists:get_value(width, State0)},
+			 {"height", proplists:get_value(height, State0)}];
 		    not_found ->
 			[{"width", proplists:get_value(width, State0)},
 			 {"height", proplists:get_value(height, State0)}];
 		    RiakResponse ->
 			Reply0 = img:scale([{from, RiakResponse}, {just_get_size, true}]),
 			case Reply0 of
-			    {error, _Reason} ->
+			    {error, _} ->
 				[{"width", proplists:get_value(width, State0)},
 				 {"height", proplists:get_value(height, State0)}];
 			    {Width, Height} -> [{"width", Width}, {"height", Height}]
@@ -1059,17 +1095,43 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 		ok ->
 		    %% Update pseudo-directory index for faster listing.
 		    case indexing:update(BucketId, Prefix, [{modified_keys, [ObjectKey0]}]) of
-			lock -> js_handler:too_many(Req0);
+			lock ->
+			    lager:warning("[list_handler] Can't update index during upload, as lock exist: ~p/~p",
+				       [BucketId, Prefix]),
+			    js_handler:too_many(Req0);
 			_ ->
 			    %% Update Solr index if file type is supported
 			    %% TODO: uncomment the following
 			    %%gen_server:abcast(solr_api, [{bucket_id, BucketId},
 			    %% {prefix, Prefix},
 			    %% {total_bytes, TotalBytes}]),
-			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0, LockedUserId0, LockedUserName0, LockedUserTel0, RespCode, State0)
+
+			    %% Update SQLite db
+			    Obj = #object{
+				key = ObjectKey0,
+				orig_name = unicode:characters_to_list(OrigName0),
+				bytes = TotalBytes,
+				guid = GUID,
+				version = EncodedVersion,
+				upload_time = UploadTime,
+				is_deleted = false,
+				author_id = User#user.id,
+				author_name = User#user.name,
+				author_tel = User#user.tel,
+				is_locked = false,
+				lock_user_id = LockedUserId0,
+				lock_user_name = LockedUserName1,
+				lock_user_tel = LockedUserTel1,
+				lock_modified_utc = LockedUserTime
+			    },
+			    sqlite_server:add_object(BucketId, Prefix, Obj),
+			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0,
+					    LockedUserId0, LockedUserName0, LockedUserTel0,
+					    RespCode, State0)
 		    end;
-		{error, Reason} ->
-		    ?WARN("[upload_handler] Error: ~p~n", [Reason]),
+		{error, Reason1} ->
+		    lager:error("[upload_handler] Can't put object ~p/~p/~p: ~p",
+				[BucketId, Prefix, ObjectKey0, Reason1]),
 		    js_handler:incorrect_configuration(Req0, 5)
 	    end
     end.
@@ -1092,13 +1154,17 @@ delete_previous_one(BucketId, GUID, UploadId, Version) ->
 	    StopObjectName = RemovedUploadId ++ ?STOP_OBJECT_SUFFIX,
 	    PrefixedStopSignName = utils:prefixed_object_key(PrefixedGUID, StopObjectName),
 	    case riak_api:head_object(BucketId, PrefixedStopSignName) of
+		{error, Reason} ->
+		    lager:error("[upload_handler] head_object failed ~p/~p: ~p",
+				[BucketId, PrefixedStopSignName, Reason]),
+		    ok;
 		not_found ->
 		    %% Delete previous upload for the same day
 		    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
 		    PrefixedUploadId = utils:prefixed_object_key(PrefixedGUID, RemovedUploadId) ++ "/",
 		    RiakResponse0 = riak_api:list_objects(BucketId, [{prefix, PrefixedUploadId}, {max_keys, MaxKeys}]),
 		    List0 = [proplists:get_value(key, I) || I <- proplists:get_value(contents, RiakResponse0)],
-		    ?WARN("Removing ~p~n", [PrefixedUploadId]),
+		    lager:warning("Removing ~p~n", [PrefixedUploadId]),
 		    [riak_api:delete_object(BucketId, I) || I <- List0];
 		    %% Now delete thumbnails, if ther'a any
 		    %% TODO
@@ -1145,14 +1211,14 @@ forbidden(Req0, User) ->
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
 		true ->
 		    case validate_content_range(Req0) of
-			{error, Reason} -> js_handler:forbidden(Req0, Reason);
+			{error, Reason} -> js_handler:forbidden(Req0, Reason, stop);
 			State1 -> {false, Req0, State1++[{user, User}, {bucket_id, BucketId}]}
 		    end
 	    end;
-	false -> js_handler:forbidden(Req0, 7)
+	false -> js_handler:forbidden(Req0, 7, stop)
     end.
 
 %%

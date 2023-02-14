@@ -209,6 +209,10 @@ parse_user(RootElement) ->
 get_user(UserId) when erlang:is_list(UserId) ->
     PrefixedUserId = utils:prefixed_object_key(?USER_PREFIX, UserId),
     case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedUserId) of
+	{error, Reason0} ->
+	    lager:error("[admin_users_handler] get_object failed: ~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, PrefixedUserId, Reason0]),
+	    throw("[admin_users_handler] get_object failed");
 	not_found -> not_found;
 	UserObject ->
 	    XMLDocument0 = utils:to_list(proplists:get_value(content, UserObject)),
@@ -216,6 +220,10 @@ get_user(UserId) when erlang:is_list(UserId) ->
             User0 = parse_user(RootElement0),
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, User0#user.tenant_id),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
+		{error, Reason1} ->
+		    lager:error("[admin_users_handler] get_object failed: ~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason1]),
+		    throw("[admin_users_handler] get_object failed");
 		not_found -> not_found;
 		TenantObject ->
 		    XMLDocument1 = utils:to_list(proplists:get_value(content, TenantObject)),
@@ -348,10 +356,23 @@ new_user(Req0, User0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=user, content=[User1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
-		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-
-	    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User0)), Req0),
+	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id,
+					   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+	    case Response of
+		{error, Reason} ->
+		    lager:error("[admin_users_handler] Can't put object ~p/~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, ?USER_PREFIX, User0#user.id, Reason]),
+		    js_handler:bad_request(Req0, "PUT failed");
+		_ ->
+		    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User0)), Req0),
+		    {stop, Req1, []}
+	    end;
+	{error, Reason} ->
+	    lager:error("[admin_users_handler] head_object failed ~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, PrefixedUserId, Reason]),
+	    Req1 = cowboy_req:reply(500, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode([{error, <<"Can't create user at the moment.">>}]), Req0),
 	    {stop, Req1, []};
 	_ ->
 	    Req1 = cowboy_req:reply(400, #{
@@ -388,10 +409,17 @@ edit_user(Req0, User) ->
 	]},
     RootElement0 = #xmlElement{name=user, content=[EditedUser]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
+    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id,
 	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User)), Req0),
-    {true, Req1, []}.
+    case Response of
+	{error, Reason} ->
+	    lager:error("[admin_users_handler] Can't put object ~p/~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, ?USER_PREFIX, User#user.id, Reason]),
+	    js_handler:bad_request(Req0, "PUT failed");
+	_ ->
+	    Req1 = cowboy_req:set_resp_body(jsx:encode(user_to_proplist(User)), Req0),
+	    {true, Req1, []}
+    end.
 
 %%
 %% Returns { user ID, user name }
@@ -438,6 +466,10 @@ validate_login(Login0, IsLoginRequired) when erlang:is_binary(Login0) ->
 	    PrefixedLogin = utils:prefixed_object_key(?USER_PREFIX, UserId),
 	    case riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedLogin) of
 		not_found -> {UserId, utils:hex(Login0)};
+		{error, Reason} ->
+		    lager:error("[admin_users_handler] head_object failed ~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, PrefixedLogin, Reason]),
+		    {error, {login, <<"Try later">>}};
 		_ ->
 		    %% PATCH request
 		    case IsLoginRequired of

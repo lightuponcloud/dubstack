@@ -89,26 +89,26 @@ prepare_object_record(Record0, DeletedObjects) ->
 	    CFGuid -> CFGuid
 	end,
     Result = [
-     {orig_name, unicode:characters_to_binary(OrigName1)},
-     {version, erlang:list_to_binary(Version)},
-     {upload_time, UploadTimestamp1},
-     {guid, erlang:list_to_binary(GUID)},
-     {upload_id, erlang:list_to_binary(UploadId)},
-     {copy_from_guid, CopyFromGUID},
-     {copy_from_bucket_id, CopyFromBucketId},
-     {author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
-     {author_name, utils:unhex(erlang:list_to_binary(proplists:get_value("x-amz-meta-author-name", Metadata)))},
-     {author_tel, AuthorTel},
-     {is_locked, IsLocked},
-     {lock_user_id, LockUserId},
-     {lock_user_name, LockUserName},
-     {lock_user_tel, LockUserTel},
-     {lock_modified_utc, LockModifiedTime},
-     {is_deleted, IsDeleted},
-     {object_key, erlang:list_to_binary(ObjectKey1)},
-     {bytes, Bytes},
-     {content_type, unicode:characters_to_binary(ContentType)},
-     {md5, unicode:characters_to_binary(Md5)}
+	{orig_name, unicode:characters_to_binary(OrigName1)},
+	{version, erlang:list_to_binary(Version)},
+	{upload_time, UploadTimestamp1},
+	{guid, erlang:list_to_binary(GUID)},
+	{upload_id, erlang:list_to_binary(UploadId)},
+	{copy_from_guid, CopyFromGUID},
+	{copy_from_bucket_id, CopyFromBucketId},
+	{author_id, erlang:list_to_binary(proplists:get_value("x-amz-meta-author-id", Metadata))},
+	{author_name, utils:unhex(erlang:list_to_binary(proplists:get_value("x-amz-meta-author-name", Metadata)))},
+	{author_tel, AuthorTel},
+	{is_locked, IsLocked},
+	{lock_user_id, LockUserId},
+	{lock_user_name, LockUserName},
+	{lock_user_tel, LockUserTel},
+	{lock_modified_utc, LockModifiedTime},
+	{is_deleted, IsDeleted},
+	{object_key, erlang:list_to_binary(ObjectKey1)},
+	{bytes, Bytes},
+	{content_type, unicode:characters_to_binary(ContentType)},
+	{md5, unicode:characters_to_binary(Md5)}
     ],
     Width = proplists:get_value("x-amz-meta-width", Metadata),
     Height = proplists:get_value("x-amz-meta-height", Metadata),
@@ -159,21 +159,21 @@ to_object(IndexMeta) ->
 	orig_name = proplists:get_value(orig_name, IndexMeta),
 	version = jsx:decode(base64:decode(Version)),
 	upload_time = proplists:get_value(upload_time, IndexMeta),
-        bytes = proplists:get_value(bytes, IndexMeta),
-        guid = erlang:binary_to_list(proplists:get_value(guid, IndexMeta)),
-        upload_id = erlang:binary_to_list(proplists:get_value(upload_id, IndexMeta)),
+	bytes = proplists:get_value(bytes, IndexMeta),
+	guid = erlang:binary_to_list(proplists:get_value(guid, IndexMeta)),
+	upload_id = erlang:binary_to_list(proplists:get_value(upload_id, IndexMeta)),
 	copy_from_guid = proplists:get_value(copy_from_guid, IndexMeta),
 	copy_from_bucket_id = proplists:get_value(copy_from_bucket_id, IndexMeta),
-        is_deleted = erlang:atom_to_list(proplists:get_value(is_deleted, IndexMeta)),
-        author_id = erlang:binary_to_list(proplists:get_value(author_id, IndexMeta)),
-        author_name = proplists:get_value(author_name, IndexMeta),
-        author_tel = AuthorTel,
-        is_locked = proplists:get_value(is_locked, IndexMeta),
-        lock_user_id = LockUserId,
-        lock_user_name = LockUserName,
-        lock_user_tel = LockUserTel,
+	is_deleted = erlang:atom_to_list(proplists:get_value(is_deleted, IndexMeta)),
+	author_id = erlang:binary_to_list(proplists:get_value(author_id, IndexMeta)),
+	author_name = proplists:get_value(author_name, IndexMeta),
+	author_tel = AuthorTel,
+	is_locked = proplists:get_value(is_locked, IndexMeta),
+	lock_user_id = LockUserId,
+	lock_user_name = LockUserName,
+	lock_user_tel = LockUserTel,
 	lock_modified_utc = LockModifiedTime,
-        md5 = erlang:binary_to_list(proplists:get_value(md5, IndexMeta)),
+	md5 = erlang:binary_to_list(proplists:get_value(md5, IndexMeta)),
 	content_type = proplists:get_value(content_type, IndexMeta)
     }.
 
@@ -258,8 +258,7 @@ get_diff_list(BucketId, Prefix0, List0, DeletedObjects0, ModifiedKeys, IsUncommi
 		    end
 	    end
 	end, ActualListContents),
-    PrefixList1 = [[
-		    {prefix, unicode:characters_to_binary(I)},
+    PrefixList1 = [[{prefix, unicode:characters_to_binary(I)},
 		    {bytes, 0},
 		    {is_deleted, proplists:is_defined(erlang:list_to_binary(filename:basename(I)++"/"),
 						      DeletedObjects1)}
@@ -314,10 +313,14 @@ fetch_full_list(BucketId, Prefix, ObjectList0, Marker0)
 -spec get_index(list(), list()) -> list().
 
 get_index(BucketId, Prefix0)
-	when erlang:is_list(BucketId), erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
+	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
     PrefixedIndexFilename = utils:prefixed_object_key(Prefix0, ?RIAK_INDEX_FILENAME),
     %% Get index object in destination directory
     case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+	{error, Reason} ->
+	    lager:error("[indexing] get_object error ~p/~p: ~p",
+			[BucketId, PrefixedIndexFilename, Reason]),
+	    [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];
 	not_found -> [{dirs, []}, {list, []}, {renamed, []}, {to_delete, []}];
 	C -> erlang:binary_to_term(proplists:get_value(content, C))
     end.
@@ -475,13 +478,21 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	     erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
     PrefixedLockFilename = utils:prefixed_object_key(Prefix0, ?RIAK_LOCK_INDEX_FILENAME),
     case riak_api:head_object(BucketId, PrefixedLockFilename) of
+	{error, Reason0} ->
+	    lager:error("[indexing] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedLockFilename, Reason0]),
+	    throw("head_object failed");
 	not_found ->
 	    %% Create lock file instantly
 	    LockMeta = [{"modified-utc", erlang:round(utils:timestamp()/1000)}],
 	    LockOptions = [{acl, public_read}, {meta, LockMeta}],
 
-	    riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, LockOptions),
-
+	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, <<>>, LockOptions),
+	    case Response of
+		{error, Reason1} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
+					       [BucketId, Prefix0, ?RIAK_LOCK_INDEX_FILENAME, Reason1]);
+		_ -> ok
+	    end,
 	    %% Retrieve existing index object first
 	    List0 = get_index(BucketId, Prefix0),
 
@@ -499,6 +510,10 @@ update(BucketId, Prefix0, Options, RiakOptions)
 			SrcPrefix = proplists:get_value(prefix, CopyFrom),
 			PrefixedSrcIndexFilename = utils:prefixed_object_key(SrcPrefix, ?RIAK_INDEX_FILENAME),
 			case riak_api:get_object(SrcBucketId, PrefixedSrcIndexFilename) of
+			    {error, Reason} ->
+				lager:error("[indexing] get_object error ~p/~p: ~p",
+					    [SrcBucketId, PrefixedSrcIndexFilename, Reason]),
+				{[], []};
 			    not_found -> {[], []};
 			    Content ->
 				CopiedNames = proplists:get_value(copied_names, CopyFrom, []),
@@ -522,8 +537,12 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    List1 = get_diff_list(BucketId, Prefix0, List0,
 				  DeletedObjects2 ++ DeletedObjects3,
 				  ModifiedKeys2, IsUncommitted),
-	    riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List1), RiakOptions),
-
+	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List1), RiakOptions),
+	    case Response of
+		{error, Reason2} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
+					       [BucketId, Prefix0, ?RIAK_INDEX_FILENAME, Reason2]);
+		_ -> ok
+	    end,
 	    %% Remove lock
 	    riak_api:delete_object(BucketId, PrefixedLockFilename),
 	    List1; %% necessary for pseudo_directory_exists()
@@ -553,6 +572,10 @@ get_object_index(BucketId, GUID) when erlang:is_list(BucketId), erlang:is_list(G
 
     %% Get dotted version vectors object in destination pseudo-directory
     case riak_api:get_object(BucketId, PrefixedDVVObjectName) of
+	{error, Reason} ->
+	    lager:error("[indexing] get_object error ~p/~p: ~p",
+			[BucketId, PrefixedDVVObjectName, Reason]),
+	    [];
 	not_found -> [];
 	Response -> erlang:binary_to_term(proplists:get_value(content, Response))
     end.
@@ -565,6 +588,10 @@ remove_expired_dvv_lock(BucketId, GUID) ->
     RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
     PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
     case riak_api:head_object(BucketId, PrefixedLockFilename) of
+	{error, Reason} ->
+	    lager:error("[indexing] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedLockFilename, Reason]),
+	    throw("head_object failed");
 	not_found -> ok;
 	DVVLockMeta ->
 	    %% Check for stale index
@@ -621,8 +648,13 @@ remove_previous_version(BucketId, GUID, UploadId0, Version) when erlang:is_list(
 		    RiakOptions = [{acl, public_read}],
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID++"/"),
                     %% Update index
-		    riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
-				term_to_binary(NewDVVs), RiakOptions),
+		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
+						 term_to_binary(NewDVVs), RiakOptions),
+		    case Response of
+			{error, Reason} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
+						       [BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME, Reason]);
+			_ -> ok
+		    end,
 		    %% Remove lock
 		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
 		    riak_api:delete_object(BucketId, PrefixedLockFilename),
@@ -658,7 +690,9 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 	     erlang:is_list(UserId), erlang:is_list(UserName),
 	     erlang:is_list(Version) ->
     case remove_expired_dvv_lock(BucketId, GUID) of
-	lock -> lock;
+	lock ->
+	    lager:warning("[indexing] Can't remove expired dvv lock: ~p/~p", [BucketId, GUID]),
+	    lock;
 	ok ->
 	    %% Get an existing list of version vectors first.
 	    List0 = get_object_index(BucketId, GUID),
@@ -675,12 +709,18 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 		    List1 = List0 ++ [{UploadId, Record}],
 		    RiakOptions = [{acl, public_read}],
 		    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID) ++ "/",
-		    riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
-				term_to_binary(List1), RiakOptions),
+		    Response = riak_api:put_object(BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME,
+						   term_to_binary(List1), RiakOptions),
 		    %% Remove lock
 		    PrefixedLockFilename = utils:prefixed_object_key(RealPrefix, ?RIAK_LOCK_DVV_INDEX_FILENAME),
 		    riak_api:delete_object(BucketId, PrefixedLockFilename),
-		    {UploadId, List0}
+		    case Response of
+			{error, Reason} ->
+			    lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
+					[BucketId, RealPrefix, ?RIAK_DVV_INDEX_FILENAME, Reason]),
+			    {error, Reason};
+			_ -> {UploadId, List0}
+		    end
 	    end
     end.
 

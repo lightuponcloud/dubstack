@@ -99,8 +99,8 @@
 
 -record(object, {
     key                 = "",
-    orig_name           = "",
     version             = undefined,
+    orig_name           = "",
     upload_time         = undefined,
     bytes               = 0,
     guid                = undefined,

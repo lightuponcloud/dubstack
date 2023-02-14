@@ -136,7 +136,7 @@ handle_info({Port, {data, Term0}}, #state{port=Port}=State) ->
     {Tag, Term1} = erlang:binary_to_term(Term0),
     case Tag of
 	error ->
-	    ?WARN("[img] ~p~n", [Term1]),
+	    lager:warning("[img] ~p~n", [Term1]),
 	    {noreply, State};
 	_ ->
 	    Pid = erlang:binary_to_term(Tag),
@@ -222,7 +222,7 @@ flush_queue(_) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(Reason, #state{port = Port} = State) ->
-    ?WARN("[img] terminating port. Reason: ~p~n", [Reason]),
+    lager:warning("[img] terminating port. Reason: ~p~n", [Reason]),
     if erlang:is_port(Port) ->
 	    catch port_close(Port),
 	    sets:filter(

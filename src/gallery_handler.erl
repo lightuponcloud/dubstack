@@ -35,6 +35,10 @@ init(Req0, _Opts) ->
 		end,
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+		{error, Reason} ->
+		    lager:error("[gallery_handler] get_object error ~p/~p: ~p",
+				[BucketId, PrefixedIndexFilename, Reason]),
+		    not_found_error(Req0);
 		not_found -> not_found_error(Req0);
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),

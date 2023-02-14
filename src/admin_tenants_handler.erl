@@ -75,6 +75,10 @@ get_tenant(TenantId0) when erlang:is_list(TenantId0) ->
 	_ ->
 	    PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, TenantId0),
 	    case riak_api:get_object(?SECURITY_BUCKET_NAME, PrefixedTenantId) of
+		{error, Reason} ->
+		    lager:error("[admin_tenants_handler] get_object error ~p/~p: ~p",
+				[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason]),
+		    not_found;
 		not_found -> not_found;
 		Response ->
 		    XMLDocument0 = utils:to_list(proplists:get_value(content, Response)),
@@ -239,9 +243,9 @@ forbidden(Req0, _State) ->
 		end
 	end,
     case State1 of
-	not_found -> js_handler:forbidden(Req0, 28);
-	expired -> js_handler:forbidden(Req0, 38);
-	not_staff -> js_handler:forbidden(Req0, 39);
+	not_found -> js_handler:forbidden(Req0, 28, stop);
+	expired -> js_handler:forbidden(Req0, 38, stop);
+	not_staff -> js_handler:forbidden(Req0, 39, stop);
 	_ -> {false, Req0, State1}
     end.
 
@@ -481,6 +485,10 @@ new_tenant(Req0, Tenant0) ->
     PrefixedTenantId = utils:prefixed_object_key(?TENANT_PREFIX, Tenant0#tenant.id),
     ExistingTenantObject = riak_api:head_object(?SECURITY_BUCKET_NAME, PrefixedTenantId),
     case ExistingTenantObject of
+	{error, Reason} ->
+	    lager:error("[download_handler] head_object ~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, PrefixedTenantId, Reason]),
+	    throw("[admin_tenants_handler] head_object failed");
 	not_found ->
 	    Groups = [{group, [
 		      {id, [G#group.id]},
@@ -494,8 +502,13 @@ new_tenant(Req0, Tenant0) ->
 	    ]},
 	    RootElement0 = #xmlElement{name=tenant, content=[Tenant1]},
 	    XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-	    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
-		unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+	    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id,
+					   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+	    case Response of
+		{error, Reason} -> lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
+					       [?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant0#tenant.id, Reason]);
+		_ -> ok
+	    end,
 	    Req1 = cowboy_req:set_resp_body(jsx:encode([
 		{id, list_to_binary(Tenant0#tenant.id)},
 		{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant0#tenant.name)))},
@@ -530,19 +543,25 @@ edit_tenant(Req0, Tenant) ->
 	]},
     RootElement0 = #xmlElement{name=tenant, content=[EditedTenant]},
     XMLDocument0 = xmerl:export_simple([RootElement0], xmerl_xml),
-    riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
-	unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
-
-    Req1 = cowboy_req:set_resp_body(jsx:encode([
-	{id, list_to_binary(Tenant#tenant.id)},
-	{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
-	{enabled, Tenant#tenant.enabled},
-	{groups, [
-	    [{id, list_to_binary(G#group.id)},
-	    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
-	    || G <- Tenant#tenant.groups]}
-    ]), Req0),
-    {true, Req1, []}.
+    Response = riak_api:put_object(?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id,
+				   unicode:characters_to_binary(XMLDocument0), [{acl, private}]),
+    case Response of
+	{error, Reason} ->
+	    lager:error("[admin_tenants_handler] Can't put object ~p/~p/~p: ~p",
+			[?SECURITY_BUCKET_NAME, ?TENANT_PREFIX, Tenant#tenant.id, Reason]),
+	    js_handler:bad_request(Req0, "PUT request failed");
+	_ ->
+	    Req1 = cowboy_req:set_resp_body(jsx:encode([
+		{id, list_to_binary(Tenant#tenant.id)},
+		{name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(Tenant#tenant.name)))},
+		{enabled, Tenant#tenant.enabled},
+		{groups, [
+		    [{id, list_to_binary(G#group.id)},
+		    {name, unicode:characters_to_binary(utils:unhex(erlang:list_to_binary(G#group.name)))}]
+		    || G <- Tenant#tenant.groups]}
+	    ]), Req0),
+	    {true, Req1, []}
+    end.
 
 %%
 %% Creates Tenant record

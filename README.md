@@ -116,9 +116,9 @@ User Management Interface
 
 ### Dependencies
 
-Apart from erlang packages, it depends on the folliwing packages.
+* Erlang >= 23, < 25
 
-* coreutils ( ``"/usr/bin/head"`` command )
+* coreutils ( ``"/usr/bin/head"``, ``/bin/mktemp`` commands )
 
 * imagemagick-6.q16
 

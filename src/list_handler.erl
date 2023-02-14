@@ -22,7 +22,7 @@
     validate_prefix/2, parse_object_record/2, prefix_lowercase/1]).
 
 -export([validate_delete/2, delete_resource/2, delete_completed/2,
-         delete_pseudo_directory/5, delete_objects/6]).
+         delete_pseudo_directory/6, delete_objects/6]).
 
 -include("riak.hrl").
 -include("entities.hrl").
@@ -83,6 +83,10 @@ to_json(Req0, State) ->
 	    Prefix1 = prefix_lowercase(Prefix0),
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:get_object(BucketId, PrefixedIndexFilename) of
+		{error, Reason} ->
+		    lager:warning("[list_handler] get_object error ~p/~p: ~p",
+				[BucketId, PrefixedIndexFilename, Reason]),
+		    {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		not_found -> {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
@@ -145,12 +149,12 @@ forbidden(Req0, User) ->
 			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
 			false ->
 			    PUser = admin_users_handler:user_to_proplist(User),
-			    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser))
+			    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), ok)
 		    end;
 		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
 		undefined -> {false, Req0, [{bucket_id, BucketId}]}
 	    end;
-	false -> js_handler:forbidden(Req0, 7)
+	false -> js_handler:forbidden(Req0, 7, ok)
     end.
 
 %%
@@ -284,8 +288,12 @@ patch_operation(Req0, lock, BucketId, Prefix, User, ObjectsList) ->
     UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
 		   || I <- UpdatedOnes1],
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
-	lock -> js_handler:too_many(Req1);
-	_ -> {true, Req1, []}
+	lock ->
+	    lager:warning("[list_handler] Can't update index during locking object, as index lock exists: ~p/~p",
+		       [BucketId, Prefix]),
+	    js_handler:too_many(Req1);
+	_ ->
+	    {true, Req1, []}
     end;
 patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
     UpdatedOnes0 = [update_lock(User, BucketId, Prefix, K, false) || K <- ObjectsList],
@@ -304,7 +312,10 @@ patch_operation(Req0, unlock, BucketId, Prefix, User, ObjectsList) ->
     UpdatedKeys = [erlang:binary_to_list(proplists:get_value(object_key, I))
 		   || I <- UpdatedOnes1],
     case indexing:update(BucketId, Prefix, [{modified_keys, UpdatedKeys}]) of
-	lock -> js_handler:too_many(Req1);
+	lock ->
+	    lager:warning("[list_handler] Can't update index during unlocking object, as index lock exists",
+		       [BucketId, Prefix]),
+	    js_handler:too_many(Req1);
 	_ -> {true, Req1, []}
     end;
 patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
@@ -312,7 +323,10 @@ patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
     ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
 		     || I <- ModifiedKeys0, I =/= not_found],
     case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
-	lock -> js_handler:too_many(Req0);
+	lock ->
+	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
+		       [BucketId, Prefix]),
+	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
     end.
 
@@ -320,6 +334,9 @@ patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
 undelete(BucketId, Prefix, ObjectKey) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[list_handler] head_object failed ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]),
+	    not_found;
 	not_found -> not_found;
 	Metadata0 ->
 	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
@@ -332,7 +349,10 @@ undelete(BucketId, Prefix, ObjectKey) ->
 		    [{object_key, ObjectKey},
 		     {is_locked, IsLocked},
 		     {lock_modified_utc, LockModifiedTime}];
-		_ -> error
+		{error, Reason} ->
+		    lager:error("[list_handler] Can't put object: ~p/~p/~p: ~p",
+				[BucketId, Prefix, ObjectKey, Reason]),
+		    error
 	    end
     end.
 
@@ -342,6 +362,10 @@ undelete(BucketId, Prefix, ObjectKey) ->
 update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean(IsLocked0) ->
     PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason} ->
+	    lager:error("[list_handler] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason]),
+	    not_found;
 	not_found -> not_found;
 	Metadata0 ->
 	    WasLocked =
@@ -382,11 +406,14 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			    %% add lock object, to improve speed of copy/move/rename
 			    LockObjectKey = ObjectKey ++ ?RIAK_LOCK_SUFFIX,
 			    case IsLocked0 of
-				true -> riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
-							    [{acl, public_read}, {meta, Meta}]);
+				true ->
+				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
+							[{acl, public_read}, {meta, Meta}]),
+				    sqlite_server:lock_object(BucketId, Prefix, LockObjectKey, true, User#user.id);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
-				    riak_api:delete_object(BucketId, PrefixedLockObjectKey)
+				    riak_api:delete_object(BucketId, PrefixedLockObjectKey),
+				    sqlite_server:lock_object(BucketId, Prefix, LockObjectKey, false, User#user.id)
 			    end,
 			    LockUserTel =
 				case User#user.tel of
@@ -399,7 +426,10 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			     {lock_user_name, utils:unhex(erlang:list_to_binary(User#user.name))},
 			     {lock_user_tel, LockUserTel},
 			     {lock_modified_utc, erlang:list_to_binary(LockModifiedTime0)}];
-			_ -> error
+			{error, Reason} ->
+			    lager:error("[list_handler] Can't put object ~p/~p/~p: ~p",
+					[BucketId, Prefix, ObjectKey, Reason]),
+			    error
 		    end;
 		false ->
 		    OldLockUserName =
@@ -465,6 +495,7 @@ validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	    %% Check if prefix exists
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
 	    case riak_api:head_object(BucketId, PrefixedIndexFilename) of
+		{error, _} -> {error, 5};
 		not_found -> {error, 11};
 		_ -> Prefix1
 	    end
@@ -545,23 +576,30 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
     Prefix = proplists:get_value(prefix, State),
 
     case indexing:update(BucketId, PrefixedDirectoryName++"/") of
-       lock -> js_handler:too_many(Req0);
+	lock ->
+	    lager:warning("[list_handler] Can't update index during create pseudo dir, as index lock exists: ~p/~p",
+		       [BucketId, PrefixedDirectoryName++"/"]),
+	    js_handler:too_many(Req0);
        _ ->
-           case indexing:update(BucketId, Prefix) of
-               lock -> js_handler:too_many(Req0);
+	    case indexing:update(BucketId, Prefix) of
+		lock ->
+		    lager:warning("[list_handler] Can't update index during locking object as index lock exists: ~p/~p",
+			       [BucketId, Prefix]),
+		    js_handler:too_many(Req0);
                _ ->
-                   User = proplists:get_value(user, State),
-                   ActionLogRecord0 = #riak_action_log_record{
+                    User = proplists:get_value(user, State),
+		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName, User#user.id),
+                    ActionLogRecord0 = #riak_action_log_record{
                        action="mkdir",
                        user_name=User#user.name,
                        tenant_name=User#user.tenant_name,
                        timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
-                   },
-                   Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
-                   ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-                   action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-                   {true, Req0, []}
-           end
+                    },
+                    Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
+                    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+                    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+                    {true, Req0, []}
+	    end
     end.
 
 %%
@@ -652,8 +690,8 @@ validate_delete(Req0, State) ->
 	    end
     end.
 
-delete_pseudo_directory(_BucketId, "", "/", _ActionLogRecord, _Timestamp) -> {dir_name, "/"};
-delete_pseudo_directory(BucketId, Prefix, HexDirName, ActionLogRecord0, Timestamp) ->
+delete_pseudo_directory(_BucketId, "", "/", _User, _ActionLogRecord, _Timestamp) -> {dir_name, "/"};
+delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Timestamp) ->
     %%     - mark directory as deleted
     %%     - mark all nested objects as deleted
     %%     - leave record in action log
@@ -661,28 +699,34 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, ActionLogRecord0, Timestam
 
     case string:str(DstDirectoryName0, "-deleted-") of
 	0 ->
-	    %% "-deleted-" substring was found in directory name. No need to add another tag.
-	    %% rename_pseudo_directory() marks pseudo-directory as "uncommited".
-	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
-	    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
-	    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
-		unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
-	    case Result of
-		lock -> lock;
-		{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
-		{error, _} -> undefined; %% Client should retry attempt to delete the directory
-		{dir_name, _} -> HexDirName
+	    %% "-deleted-" string was not found
+	    case indexing:update(BucketId, Prefix, [{to_delete, [{HexDirName, Timestamp}]}]) of
+		lock ->
+		    lager:warning("[list_handler] Can't update index during deleting pseudo-dir ~p/~p",
+			       [BucketId, Prefix]),
+		    lock;
+		_ ->
+		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
+		    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
+		    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
+			unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
+		    case Result of
+			lock -> lock;
+			{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
+			{error, _} -> undefined; %% Client should retry attempt to delete the directory
+			{dir_name, _} ->
+			    sqlite_server:delete_pseudo_directory(BucketId, Prefix,
+				DstDirectoryName0, User#user.id),
+			    HexDirName
+		    end
 	    end;
 	_ ->
-	    case indexing:update(BucketId, Prefix, [{to_delete,
-				    [{HexDirName, Timestamp}]}]) of
-		lock -> lock;
-		_ ->
-		    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
-		    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
-		    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
-		    HexDirName
-	    end
+	    %% "-deleted-" substring was found in directory name. Directory is marked as deleted already.
+	    %% No need to add another tag. rename_pseudo_directory() marks pseudo-directory as "uncommited".
+	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
+	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
+	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
+	    HexDirName
     end.
 
 %    %% Just delete files
@@ -703,6 +747,10 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	    PrefixedLockKey = utils:prefixed_object_key(Prefix, Key ++ ?RIAK_LOCK_SUFFIX),
 	    %% Skip locked objects
 	    case riak_api:head_object(BucketId, PrefixedLockKey) of
+		{error, Reason} ->
+		    lager:error("[list_handler] head_object failed ~p/~p: ~p",
+				[BucketId, PrefixedLockKey, Reason]),
+		    {true, {K, Timestamp}};
 		not_found -> {true, {K, Timestamp}};
 		LockMeta ->
 		    LockUserId = proplists:get_value("x-amz-meta-lock-user-id", LockMeta),
@@ -714,14 +762,25 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	end, ObjectKeys0),
     %% Mark object as deleted
     case indexing:update(BucketId, Prefix, [{to_delete, ObjectKeys1}]) of
-	lock -> lock;
+	lock ->
+	    lager:warning("[list_handler] Can't update index during deleting object: ~p/~p",
+		       [BucketId, Prefix]),
+	    lock;
 	_ ->
+	    %% Update SQLite db
+	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K)), UserId)
+	     || K <- ObjectKeys1],
+
 	    %% Leave record in action log and update object records with is_deleted flag
 	    OrigNames = lists:map(
 		fun(I) ->
 		    ObjectKey = element(1, I),
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(ObjectKey)),
 		    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+			{error, Reason} ->
+			    lager:error("[list_handler] head_object error ~p/~p: ~p",
+					[BucketId, PrefixedObjectKey, Reason]),
+			    [];
 			not_found -> [];
 			Metadata0 ->
 			    Meta = parse_object_record(Metadata0, [{is_deleted, "true"}]),
@@ -731,7 +790,10 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 				    UnicodeObjectName0 = proplists:get_value("orig-filename", Meta),
 				    UnicodeObjectName1 = utils:unhex(erlang:list_to_binary(UnicodeObjectName0)),
 				    ["\"", unicode:characters_to_list(UnicodeObjectName1), "\""];
-				_ -> []
+				{error, Reason} ->
+				    lager:error("[list_handler] Can't put object ~p/~p/~p: ~p",
+						[BucketId, Prefix, erlang:binary_to_list(ObjectKey), Reason]),
+				    []
 			    end
 		    end
 		end, ObjectKeys1),
@@ -762,10 +824,13 @@ delete_resource(Req0, State) ->
 	    case length(PseudoDirectories) > 0 of
 		true ->
 		    case indexing:update(BucketId, Prefix, [{uncommitted, true}]) of
-			lock -> js_handler:too_many(Req1);
+			lock ->
+			    lager:warning("[list_handler] Can't update index during deleting object, as index lock exists: ~p/~p",
+				       [BucketId, Prefix]),
+			    js_handler:too_many(Req1);
 			_ ->
 			    PseudoDirectoryResults = [delete_pseudo_directory(
-				BucketId, Prefix, P, ActionLogRecord0, Timestamp) || P <- PseudoDirectories],
+				BucketId, Prefix, P, User, ActionLogRecord0, Timestamp) || P <- PseudoDirectories],
 			    DeleteResult0 = delete_objects(BucketId, Prefix, ObjectKeys1,
 							   ActionLogRecord0, Timestamp, User#user.id),
 			    case DeleteResult0 of

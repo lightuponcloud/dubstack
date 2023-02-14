@@ -186,7 +186,6 @@
 %% Default: "tenants/"
 %%
 -define(TENANT_PREFIX, "tenants/").
-
 %%
 %% Enable this to allow the creation of an admin user when
 %% setting up a system. It is recommended to only enable this
@@ -220,20 +219,25 @@
 -define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
 
 -define(IMAGE_WORKERS, 5). %% The number of imagemagick workers
-
 %%
 %% Object name for preventing removal
 %%
 -define(STOP_OBJECT_SUFFIX, ".stop").
-
 %%
 %% If case watermark with this key is present in bucket, thumbnails will have watermark on them.
 %%
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
-
+%%
+%% SQLite db object key. This db stores file tree.
+%%
 -define(DB_VERSION_KEY, ".luc").
-
 %%
-%% Maximum size of the SQLite db file ( for security reasons )
+%% SQLite db lock object key. If that file present, other processes can't overwrite db.
 %%
--define(DB_VERSION_MAXIMUM_SIZE, 5242880).
+%% Default: ".riak_index.lock"
+%%
+-define(DB_VERSION_LOCK_FILENAME, ".luc.lock").
+%%
+%% The number of seconds SQLite lock can exist.
+%%
+-define(DB_VERSION_LOCK_COOLOFF_TIME, 30).

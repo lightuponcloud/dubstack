@@ -36,11 +36,11 @@ handle_cast(Message, State) ->
     {noreply, State}.
 
 handle_info(Info, State) ->
-    ?WARN("unexpected info request ~p~n", [Info]),
+    lager:warning("unexpected info request ~p~n", [Info]),
     {noreply, State}.
 
 handle_call(Req, _, S) ->
-    ?WARN("unexpected call request ~p~n", [Req]),
+    lager:warning("unexpected call request ~p~n", [Req]),
     {noreply, S}.
 
 %%--------------------------------------------------------------------

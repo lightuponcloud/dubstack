@@ -79,10 +79,10 @@ search(_BucketId, _Prefix, Term0) ->
 	    [get_riak_object(URL) || URL <- RiakURLs,
 		utils:is_hidden_object(URL) =/= true];
 	{error, {http_error, _, StatusLine,Body,_}} ->
-	    ?WARN("Riak ~p: ~p~n", [StatusLine, Body]),
+	    lager:warning("[search_handler] Riak ~p: ~p~n", [StatusLine, Body]),
 	    [];
 	_ ->
-	    ?WARN("Riak request failed", []),
+	    lager:warning("[search_handler] Riak request failed", []),
 	    []
     end.
 
@@ -144,8 +144,8 @@ forbidden(Req0, User) ->
 	    case UserBelongsToGroup of
 		false ->
 		    PUser = admin_users_handler:user_to_proplist(User),
-		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser));
+		    js_handler:forbidden(Req0, 37, proplists:get_value(groups, PUser), stop);
 		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]}
 	    end;
-	false -> js_handler:forbidden(Req0, 7)
+	false -> js_handler:forbidden(Req0, 7, stop)
     end.

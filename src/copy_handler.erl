@@ -203,6 +203,13 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 	end,
     OldKey = filename:basename(PrefixedObjectKey0),
     case riak_api:head_object(SrcBucketId, PrefixedObjectKey0) of
+	{error, Reason} ->
+	    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
+			[SrcBucketId, PrefixedObjectKey0, Reason]),
+	    [{src_prefix, SrcPrefix},
+	     {dst_prefix, DstPrefix1},
+	     {old_key, erlang:list_to_binary(OldKey)},
+	     {skipped, non_existing}];
 	not_found ->
 	    [{src_prefix, SrcPrefix},
 	     {dst_prefix, DstPrefix1},
@@ -310,6 +317,8 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				    "true" -> true;
 				    _ -> false
 				end,
+			    Version = proplists:get_value("version", ObjectMeta0),
+			    UploadTime = proplists:get_value("upload-time", ObjectMeta0),
 			    SrcLockUserId = proplists:get_value("x-amz-meta-lock-user-id", Metadata0),
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix1},
@@ -318,17 +327,21 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 			     {src_orig_name, OrigName0},
 			     {dst_orig_name, OrigName2},
 			     {bytes, Bytes},
+			     {upload_time, UploadTime},
 			     {renamed, IsRenamed},
 			     {src_locked, SrcIsLocked},  %% this flag is used in move operation
 			     {src_lock_user_id, SrcLockUserId},
-			     {guid, erlang:list_to_binary(NewGUID)}];
+			     {guid, erlang:list_to_binary(NewGUID)},
+			     {version, Version}];
 			_ ->
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix0},
 			     {old_key, erlang:list_to_binary(OldKey)},
 			     {skipped, server_error}]
 		    end;
-		_ ->
+		{error, Reason} ->
+		    lager:error("[copy_handler] Can't put object ~p/~p/~p: ~p",
+				[DstBucketId, DstPrefix0, ObjectKey0, Reason]),
 		    [{src_prefix, SrcPrefix},
 		     {dst_prefix, DstPrefix0},
 		     {old_key, erlang:list_to_binary(OldKey)},
@@ -424,6 +437,11 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 	    SrcActionLog = utils:prefixed_object_key(CurrentPrefix, ?RIAK_ACTION_LOG_FILENAME),
 	    DstActionLog = utils:prefixed_object_key(NewDstPrefix, ?RIAK_ACTION_LOG_FILENAME),
 	    case riak_api:head_object(DstBucketId, DstActionLog) of
+		{error, Reason} ->
+		    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
+				[DstBucketId, DstActionLog, Reason]),
+		    riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
+						  SrcActionLog, [{acl, public_read}]);
 		not_found -> riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
 						  SrcActionLog, [{acl, public_read}]);
 		_ -> ok
@@ -440,6 +458,24 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 			    {copied_names, [I || I <- Copied0, proplists:is_defined(skipped, I) =:= false]}]}]),
 	    %% Update parent directory
 	    indexing:update(DstBucketId, utils:dirname(NewDstPrefix)),
+
+	    lists:map(
+		fun(I) ->
+		    case proplists:is_defined(skipped, I) of
+			false -> ok;
+			_ ->
+			    ObjectKey = proplists:get_value(new_key, I),
+			    OrigName = proplists:get_value(dst_orig_name, I),
+			    Bytes = proplists:get_value(bytes, I),
+			    GUID = proplists:get_value(guid, I),
+			    EncodedVersion = proplists:get_value(version, I),
+			    UploadTime = proplists:get_value(upload_time, I),
+			    %% Add records to SQLite db
+			    sqlite_server:add_object(DstBucketId, DstPrefix, ObjectKey, OrigName,
+						     Bytes, GUID, EncodedVersion,
+						     UploadTime, User#user.id)
+		    end
+		end, Copied0),
 	    Copied0
 	end, SrcIndexPaths),
     %% Make one flat list from all requested objects and pseudo-directories
@@ -627,7 +663,7 @@ copy_forbidden(Req0, User0) ->
 				end
 			end,
 		    case DstBucketCanBeModified of
-			false -> js_handler:forbidden(Req1, 26);
+			false -> js_handler:forbidden(Req1, 26, stop);
 			true -> {false, Req1, [
 				    {user, User0},
 				    {src_bucket_id, SrcBucketId},
@@ -640,7 +676,7 @@ copy_forbidden(Req0, User0) ->
 	    end;
 	false ->
 	    User1 = admin_users_handler:user_to_proplist(User0),
-	    js_handler:forbidden(Req0, 27, proplists:get_value(groups, User1))
+	    js_handler:forbidden(Req0, 27, proplists:get_value(groups, User1), stop)
     end.
 
 %%

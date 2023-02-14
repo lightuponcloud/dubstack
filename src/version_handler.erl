@@ -1,7 +1,7 @@
 %%
 %% Version handler returns info on provided bucket DVV ( Dotted version Vector )
 %%
-%% GET application/json
+%% HEAD application/json
 %%	Returns version of DB in JSON format.
 %%
 %% GET application/octet-stream
@@ -59,16 +59,6 @@ check_user_access(BucketId, User) ->
 	false -> {error, 7}
     end.
 
-
-%%
-%% Checks if uploaded file is less in size than 5MB ( unlikely SQLite db can be bigger ).
-%% Make sure content-range header matches size of uploaded data
-%%
-validate_data_size(DataSize) when DataSize =:= 0 -> {error, 2};
-validate_data_size(DataSize) when DataSize > ?DB_VERSION_MAXIMUM_SIZE -> {error, 24};
-validate_data_size(_DataSize) -> true.
-
-
 %%
 %% Receives stream from httpc and passes it to cowboy
 %%
@@ -116,44 +106,6 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
 	    {ok, Req1, []}
     end.
 
-handle_post(Req0, BucketId) ->
-    {FieldValues, Req1} = upload_handler:acc_multipart(Req0, []),
-    Version0 =
-	try
-	    upload_handler:validate_version(proplists:get_value(version, FieldValues))
-	catch error:_ ->
-	    {error, 22}
-	end,
-    Blob = proplists:get_value(blob, FieldValues),
-    Md5 = upload_handler:validate_md5(proplists:get_value(md5, FieldValues)),
-    DataSizeOk =
-	case Blob of
-	    undefined -> {error, 2};
-	    _ -> validate_data_size(byte_size(Blob))
-	end,
-    case lists:keyfind(error, 1, [Version0, DataSizeOk, Md5]) of
-	{error, Number} -> js_handler:bad_request_ok(Req1, Number);
-	false ->
-	    %% TODO: check if object is locked using sqlite_server
-	    Version1 = base64:encode(jsx:encode(Version0)),
-	    Checksum = utils:hex(riak_crypto:md5(Blob)),
-	    Meta = [{acl, public_read}, {meta, [
-		{"version", Version1},
-		{"bytes", byte_size(Blob)},
-		{"md5", Checksum}
-	    ]}],
-	    %% TODO: add user id ( just in case )
-	    case riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, Meta) of
-		ok ->
-		    Req2 = cowboy_req:reply(200, #{
-			<<"content-type">> => <<"application/json">>
-		    }, jsx:encode([
-			{md5, Md5}
-		    ]), Req0),
-		    {ok, Req2, []};
-		_ -> js_handler:too_many(Req0)
-	    end
-    end.
 
 %%
 %% HEAD HTTP request returns DVV in JSON format
@@ -164,6 +116,9 @@ handle_post(Req0, BucketId) ->
 %%
 response(Req0, <<"HEAD">>, BucketId) ->
     case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+	{error, Reason} ->
+	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
+	    js_handler:not_found_ok(Req0);
 	not_found -> js_handler:not_found_ok(Req0);
 	Meta ->
 	    DbMeta = list_handler:parse_object_record(Meta, []),
@@ -177,6 +132,9 @@ response(Req0, <<"HEAD">>, BucketId) ->
 
 response(Req0, <<"GET">>, BucketId) ->
     case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
+	{error, Reason} ->
+	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
+	    js_handler:not_found_ok(Req0);
 	not_found -> js_handler:not_found_ok(Req0);
 	Meta ->
 	    Bytes =
@@ -190,9 +148,6 @@ response(Req0, <<"GET">>, BucketId) ->
 		{StartByte, _EndByte} -> stream_db(Req0, BucketId, Bytes, StartByte)
 	    end
     end;
-
-response(Req0, <<"POST">>, BucketId) ->
-    handle_post(Req0, BucketId);
 
 response(Req0, _Method, _BucketId) ->
     js_handler:bad_request_ok(Req0, 17).
