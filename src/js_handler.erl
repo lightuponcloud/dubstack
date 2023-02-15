@@ -57,6 +57,9 @@ decode_messages_json(Path, DefaultPath) ->
 	    end
     end.
 
+%%
+%% Returns Javascript module for UI initialization.
+%%
 init(Req0, Opts) ->
     BucketId =
 	case cowboy_req:binding(bucket_id, Req0) of

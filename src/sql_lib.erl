@@ -4,8 +4,8 @@
 -module(sql_lib).
 
 -export([create_table_if_not_exist/1, create_pseudo_directory/2, add_object/2,
-	 delete_pseudo_directory/3, lock_object/3, delete_object/3, get_object/2,
-	 get_pseudo_directory/2]).
+	 lock_object/3, delete_object/2, get_object/2,
+	 get_pseudo_directory/2, delete_pseudo_directory/2]).
 
 -include("entities.hrl").
 
@@ -19,24 +19,24 @@ create_table_if_not_exist(DbName) ->
     case proplists:get_value(rows, Result) of
 	[] ->
 	    TableInfo = [{id, integer, [{primary_key, [asc, autoincrement]}]},
-		 {prefix, text},
+		 {prefix, text, [{default, ""}]},
 		 {key, text, [not_null]},  %% object key in URL
 		 {orig_name, text, [not_null]},  %% UTF-8 filename
 		 {is_dir, boolean, not_null},  %% flag indicating whether record is directory
 		 {is_deleted, boolean, not_null},
 		 {is_locked, boolean, not_null},
 		 {bytes, integer},
-		 {guid, text},  %% unique identifier on filesystem ( dirs do not have GUID )
-		 {version, text},  %% DVV
+		 {guid, text, [{default, ""}]},  %% unique identifier on filesystem ( dirs do not have GUID )
+		 {version, text, [{default, ""}]},  %% DVV
 		 {last_modified_utc, integer},  %% timestamp
-		 {author_id, text},
-		 {author_name, text},
-		 {author_tel, text},
-		 {lock_user_id, text},
-		 {lock_user_name, text},
-		 {lock_user_tel, text},
+		 {author_id, text, [{default, ""}]},
+		 {author_name, text, [{default, ""}]},
+		 {author_tel, text, [{default, ""}]},
+		 {lock_user_id, text, [{default, ""}]},
+		 {lock_user_name, text, [{default, ""}]},
+		 {lock_user_tel, text, [{default, ""}]},
 		 {lock_modified_utc, integer},
-		 {md5, text}],
+		 {md5, text, [{default, ""}]}],
 	    case sqlite3:create_table(DbName, items, TableInfo) of
 		ok -> ok;
 		{error, _, Reason} ->
@@ -89,6 +89,19 @@ get_pseudo_directory(Prefix, OrigName)
     end.
 
 
+-spec(delete_pseudo_directory(Prefix :: string(), Name :: binary()) -> ok | {error, any()}).
+delete_pseudo_directory(Prefix, Name)
+	when erlang:is_list(Prefix) orelse Prefix =:= undefined
+	    andalso erlang:is_binary(Name) ->
+    SQL0 = ["UPDATE items SET is_deleted = ", sqlite3_lib:value_to_sql(true),
+	    " WHERE orig_name = ", sqlite3_lib:value_to_sql(Name),
+	    " AND is_dir = ", sqlite3_lib:value_to_sql(true)],
+    case Prefix of
+	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
+	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
+    end.
+
+
 -spec(add_object(Prefix :: string() | undefined,
 		 Obj :: #object{}) -> ok | {error, any()}).
 add_object(Prefix, Obj)
@@ -132,20 +145,6 @@ get_object(Prefix, OrigName)
     end.
 
 
--spec(delete_pseudo_directory(Prefix :: string() | undefined,
-	Key :: string(), UserId :: string()) -> ok | {error, any()}).
-delete_pseudo_directory(Prefix, Key, UserId)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined
-	    andalso erlang:is_list(Key) andalso erlang:is_list(UserId) ->
-    SQL0 = ["UPDATE items SET is_deleted = ", sqlite3_lib:value_to_sql(true),
-	    " WHERE key = ", sqlite3_lib:value_to_sql(Key),
-	    " AND is_dir = ", sqlite3_lib:value_to_sql(true)],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
-
-
 -spec(lock_object(Prefix :: string() | undefined,
 	Key :: string(), Value :: boolean()) -> ok | {error, any()}).
 lock_object(Prefix, Key, Value) ->
@@ -158,11 +157,9 @@ lock_object(Prefix, Key, Value) ->
     end.
 
 
--spec(delete_object(Prefix :: string() | undefined,
-	Key :: string(), UserId :: string() ) -> ok | {error, any()}).
-delete_object(Prefix, Key, UserId)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined
-	    andalso erlang:is_list(Key) andalso erlang:is_list(UserId) ->
+-spec(delete_object(Prefix :: string() | undefined, Key :: string()) -> ok | {error, any()}).
+delete_object(Prefix, Key)
+	when erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(Key) ->
     SQL0 = ["UPDATE items SET is_deleted = ", sqlite3_lib:value_to_sql(true),
 	    " WHERE key = ", sqlite3_lib:value_to_sql(Key),
 	    " AND is_dir = ", sqlite3_lib:value_to_sql(false)],
@@ -170,3 +167,4 @@ delete_object(Prefix, Key, UserId)
 	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
 	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
     end.
+

@@ -572,7 +572,8 @@ validate_post(Body, BucketId) ->
 create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
     BucketId = proplists:get_value(bucket_id, State),
     PrefixedDirectoryName = proplists:get_value(prefixed_directory_name, State),
-    DirectoryName = unicode:characters_to_list(proplists:get_value(directory_name, State)),
+    DirectoryName0 = proplists:get_value(directory_name, State),
+    DirectoryName1 = unicode:characters_to_list(DirectoryName0),
     Prefix = proplists:get_value(prefix, State),
 
     case indexing:update(BucketId, PrefixedDirectoryName++"/") of
@@ -588,14 +589,14 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 		    js_handler:too_many(Req0);
                _ ->
                     User = proplists:get_value(user, State),
-		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName, User#user.id),
+		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User#user.id),
                     ActionLogRecord0 = #riak_action_log_record{
                        action="mkdir",
                        user_name=User#user.name,
                        tenant_name=User#user.tenant_name,
                        timestamp=io_lib:format("~p", [erlang:round(utils:timestamp()/1000)])
                     },
-                    Summary0 = lists:flatten([["Created directory \""], DirectoryName ++ ["/\"."]]),
+                    Summary0 = lists:flatten([["Created directory \""], DirectoryName1 ++ ["/\"."]]),
                     ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
                     action_log:add_record(BucketId, Prefix, ActionLogRecord1),
                     {true, Req0, []}
@@ -695,9 +696,10 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
     %%     - mark directory as deleted
     %%     - mark all nested objects as deleted
     %%     - leave record in action log
-    DstDirectoryName0 = unicode:characters_to_list(utils:unhex(HexDirName)),
+    DstDirectoryName0 = utils:unhex(HexDirName),
+    DstDirectoryName1 = unicode:characters_to_list(DstDirectoryName0),
 
-    case string:str(DstDirectoryName0, "-deleted-") of
+    case string:str(DstDirectoryName1, "-deleted-") of
 	0 ->
 	    %% "-deleted-" string was not found
 	    case indexing:update(BucketId, Prefix, [{to_delete, [{HexDirName, Timestamp}]}]) of
@@ -707,9 +709,9 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 		    lock;
 		_ ->
 		    PrefixedObjectKey = utils:prefixed_object_key(Prefix, erlang:binary_to_list(HexDirName)),
-		    DstDirectoryName1 = lists:concat([DstDirectoryName0, "-deleted-", Timestamp]),
+		    DstDirectoryName2 = lists:concat([DstDirectoryName1, "-deleted-", Timestamp]),
 		    Result = rename_handler:rename_pseudo_directory(BucketId, Prefix, PrefixedObjectKey,
-			unicode:characters_to_binary(DstDirectoryName1), ActionLogRecord0),
+			unicode:characters_to_binary(DstDirectoryName2), ActionLogRecord0),
 		    case Result of
 			lock -> lock;
 			{accepted, _} -> undefined; %% Rename is not complete, as Riak CS was busy.
@@ -723,7 +725,7 @@ delete_pseudo_directory(BucketId, Prefix, HexDirName, User, ActionLogRecord0, Ti
 	_ ->
 	    %% "-deleted-" substring was found in directory name. Directory is marked as deleted already.
 	    %% No need to add another tag. rename_pseudo_directory() marks pseudo-directory as "uncommited".
-	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName0 ++ ["/\"."]]),
+	    Summary0 = lists:flatten([["Deleted directory \""], DstDirectoryName1 ++ ["/\"."]]),
 	    ActionLogRecord1 = ActionLogRecord0#riak_action_log_record{details=Summary0},
 	    action_log:add_record(BucketId, Prefix, ActionLogRecord1),
 	    HexDirName

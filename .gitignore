@@ -30,3 +30,4 @@ tests/.pytest_cache
 *.orig
 .venv
 .env
+tests/.venv
