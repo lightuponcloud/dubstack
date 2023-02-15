@@ -58,13 +58,13 @@ create_pseudo_directory(Prefix, Name)
 	    {is_deleted, false},
 	    {is_locked, false},
 	    {bytes, 0},
-	    {guid, null},
-	    {version, null},
+	    {guid, ""},
+	    {version, ""},
 	    {last_modified_utc, Timestamp},
-	    {author_id, null},
-	    {author_name, null},
-	    {author_tel, null},
-	    {md5, null}],
+	    {author_id, ""},
+	    {author_name, ""},
+	    {author_tel, ""},
+	    {md5, ""}],
     try sqlite3_lib:write_sql(items, Data) of
         SQL -> SQL
     catch
@@ -102,11 +102,16 @@ delete_pseudo_directory(Prefix, Name)
     end.
 
 
--spec(add_object(Prefix :: string() | undefined,
+-spec(add_object(Prefix0 :: string() | undefined,
 		 Obj :: #object{}) -> ok | {error, any()}).
-add_object(Prefix, Obj)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    Data = [{prefix, Prefix},
+add_object(Prefix0, Obj)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined ->
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    Data = [{prefix, Prefix1},
 	    {key, Obj#object.key},
 	    {orig_name, Obj#object.orig_name},
 	    {is_dir, false},
@@ -167,4 +172,3 @@ delete_object(Prefix, Key)
 	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
 	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
     end.
-

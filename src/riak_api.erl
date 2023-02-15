@@ -115,8 +115,7 @@ delete_object(BucketId, Key) when erlang:is_list(BucketId), erlang:is_list(Key) 
 	{ok, {_Status, Headers, _Body}} ->
 	    Marker = proplists:get_value("x-amz-delete-marker", Headers, "false"),
 	    Id = proplists:get_value("x-amz-version-id", Headers, "null"),
-	    [{delete_marker, list_to_existing_atom(Marker)},
-	    {version_id, Id}]
+	    {ok, [{delete_marker, list_to_existing_atom(Marker)}, {version_id, Id}]}
     end.
 
 

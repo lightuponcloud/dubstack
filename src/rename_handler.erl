@@ -181,7 +181,7 @@ copy_delete(BucketId, PrefixedSrcDirectoryName, PrefixedDstDirectoryName, Prefix
 		    %% Delete regular object
 		    case riak_api:delete_object(BucketId, PrefixedObjectKey0) of
 			{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey0, Reason]);
-			_ -> ok
+			{ok, _} -> ok
 		    end,
 		    PrefixedObjectKey2,
 		    ok
@@ -277,7 +277,7 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
 				false ->
 				    case riak_api:delete_object(BucketId, PrefixedObjectKey) of
 					{error, Reason} -> lager:error("[rename_handler] Can't delete object ~p/~p: ~p", [BucketId, PrefixedObjectKey, Reason]);
-					_ -> ok
+					{ok, _} -> ok
 				    end,
 				    ok
 			    end
@@ -407,7 +407,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 				{error, Reason1} ->
 				    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
 						[BucketId, PrefixedSrcObjectKey, Reason1]);
-				_ -> ok
+				{ok, _} -> ok
 			    end
 		    end,
 		    %% Rename lock file name
@@ -422,7 +422,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 					{error, Reason2} ->
 					    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
 							[BucketId, PrefixedDstLockKey, Reason2]);
-					_ -> ok
+					{ok, _} -> ok
 				    end
 			    end;
 			false -> ok

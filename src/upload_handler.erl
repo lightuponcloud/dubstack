@@ -794,7 +794,7 @@ upload_response(Req0, OrigName, IsLocked, LockModifiedTime, LockedUserId, Locked
     case riak_api:delete_object(?UPLOADS_BUCKET_NAME, UploadId) of
 	{error, Reason} -> lager:error("[upload_handler] failed to delete upload id ~p: ~p",
 					[UploadId, Reason]);
-	_ -> ok
+	{ok, _} -> ok
     end,
     Req1 = cowboy_req:reply(RespCode, #{
 	<<"content-type">> => <<"application/json">>

@@ -76,8 +76,9 @@ lock_object(BucketId, Prefix, Key, Value, UserId) ->
 delete_object(BucketId, Prefix, Key, UserId)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_list(Key) andalso erlang:is_list(UserId) ->
+    Timestamp = erlang:round(utils:timestamp()/1000),
     SQL = sql_lib:delete_object(Prefix, Key),
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, undefined}).
+    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
 
 
 %%--------------------------------------------------------------------
@@ -158,7 +159,7 @@ handle_cast({create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}
 				SQL1 ->
 				    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
 				    update_db(DbPid, DbName, TempFn, BucketId, UserId, Version1, SQL1),
-				    unlock_db(BucketId, DbPid, TempFn),
+				    unlock_db(BucketId, TempFn),
 				    {noreply, State0}
 			    end
 		    end
@@ -182,7 +183,7 @@ handle_cast({exec_sql, BucketId, UserId, SQL, Timestamp}, State0) ->
 		{ok, DbPid, TempFn, Version0} ->
 		    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
 		    update_db(DbPid, DbName, TempFn, BucketId, UserId, Version1, SQL),
-		    unlock_db(BucketId, DbPid, TempFn),
+		    unlock_db(BucketId, TempFn),
 		    {noreply, State0}
 	    end;
 	locked ->
@@ -370,8 +371,7 @@ lock_db(BucketId) ->
 %% Remove lock object
 %$ remove temporary db file
 %%
-unlock_db(BucketId, DbPid, TempFn) ->
+unlock_db(BucketId, TempFn) ->
     riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME),
-    sqlite3:close(DbPid),
     file:delete(TempFn),
     ok.
