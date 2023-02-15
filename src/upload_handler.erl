@@ -1030,7 +1030,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	    undefined -> {undefined, undefined, undefined, undefined, undefined, undefined};
 	    ExistingObject ->
 		case IsConflict of
-		    true -> {undefined, undefined, undefined, undefined, undefined};
+		    true -> {undefined, undefined, undefined, undefined, undefined, undefined};
 		    false -> {ExistingObject#object.is_locked,
 			      ExistingObject#object.lock_modified_utc,
 			      ExistingObject#object.lock_user_id,
