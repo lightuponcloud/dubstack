@@ -24,7 +24,6 @@ create_table_if_not_exist(DbName) ->
 		 {key, text, [not_null]},  %% object key in URL
 		 {orig_name, text, [not_null]},  %% UTF-8 filename
 		 {is_dir, boolean, not_null},  %% flag indicating whether record is directory
-		 {is_deleted, boolean, not_null},
 		 {is_locked, boolean, not_null},
 		 {bytes, integer},
 		 {guid, text, [{default, ""}]},  %% unique identifier on filesystem ( dirs do not have GUID )
@@ -56,7 +55,6 @@ create_pseudo_directory(Prefix, Name)
 	    {key, Key},
 	    {orig_name, unicode:characters_to_list(Name)},
 	    {is_dir, true},
-	    {is_deleted, false},
 	    {is_locked, false},
 	    {bytes, 0},
 	    {guid, ""},
@@ -94,9 +92,9 @@ get_pseudo_directory(Prefix, OrigName)
 delete_pseudo_directory(Prefix, Name)
 	when erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_binary(Name) ->
-    SQL0 = ["UPDATE items SET is_deleted = ", sqlite3_lib:value_to_sql(true),
-	    " WHERE orig_name = ", sqlite3_lib:value_to_sql(Name),
-	    " AND is_dir = ", sqlite3_lib:value_to_sql(true)],
+    SQL0 = ["DELETE FROM items WHERE (orig_name = ", sqlite3_lib:value_to_sql(Name),
+	    " AND is_dir = ", sqlite3_lib:value_to_sql(true), ")"
+	    " OR prefix LIKE \"", erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\""],
     case Prefix of
 	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
 	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
@@ -129,7 +127,6 @@ add_object(Prefix0, Obj)
 	    {key, Obj#object.key},
 	    {orig_name, Obj#object.orig_name},
 	    {is_dir, false},
-	    {is_deleted, Obj#object.is_deleted},
 	    {is_locked, Obj#object.is_locked},
 	    {bytes, Obj#object.bytes},
 	    {guid, Obj#object.guid},
@@ -193,8 +190,7 @@ lock_object(Prefix, Key, Value) ->
 -spec(delete_object(Prefix :: string() | undefined, Key :: string()) -> ok | {error, any()}).
 delete_object(Prefix, Key)
 	when erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(Key) ->
-    SQL0 = ["UPDATE items SET is_deleted = ", sqlite3_lib:value_to_sql(true),
-	    " WHERE key = ", sqlite3_lib:value_to_sql(Key),
+    SQL0 = ["DELETE FROM items WHERE key = ", sqlite3_lib:value_to_sql(Key),
 	    " AND is_dir = ", sqlite3_lib:value_to_sql(false)],
     case Prefix of
 	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];

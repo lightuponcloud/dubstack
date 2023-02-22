@@ -58,7 +58,6 @@ rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName, User)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
     SQL = sql_lib:rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName),
-io:fwrite("SQL: ~p~n", [SQL]),
     Timestamp = erlang:round(utils:timestamp()/1000),
     UserId = User#user.id,
     gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
