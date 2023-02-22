@@ -69,31 +69,30 @@ init(Req0, Opts) ->
     Settings = #general_settings{},
     SessionCookieName = Settings#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
-    {User, Token} =
-	case login_handler:check_session_id(SessionID0) of
-	    false -> {undefined, <<>>};
-	    {error, _} -> {undefined, <<>>};
-	    U -> {U, SessionID0}
-	end,
-    %% Since ther's no way to detect browser language preference, Accept-Language should be used instead
-    LanguageCode = parse_language_tag(cowboy_req:header(<<"accept-language">>, Req0)),
-    %% Load messages from catalog, stored in JSON file in filesystem
-    EbinDir = filename:dirname(code:which(js_handler)),
-    AppDir = filename:dirname(EbinDir),
-    MessagesFilePath = filename:join([AppDir, "priv", lists:flatten([LanguageCode, ".json"])]),
-    DefaultMessagesFilePath = filename:join([AppDir, "priv", "en.json"]),
-    JSONMessages = decode_messages_json(MessagesFilePath, DefaultMessagesFilePath),
-    {ok, Body} = jquery_riak_js_dtl:render([
-	{messages, JSONMessages},
-	{root_path, Settings#general_settings.root_path},
-	{static_root, Settings#general_settings.static_root},
-	{bucket_id, BucketId},
-	{token, Token},
-	{user_id, User#user.id},
-	{chunk_size, ?FILE_UPLOAD_CHUNK_SIZE}
-    ]),
-    Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, unicode:characters_to_binary(Body), Req0),
-    {ok, Req1, Opts}.
+    case login_handler:check_session_id(SessionID0) of
+	false -> bad_request(Req0, 28);
+	{error, _} -> bad_request(Req0, 28);
+	User ->
+	    %% Since ther's no way to detect browser language preference, Accept-Language should be used instead
+	    LanguageCode = parse_language_tag(cowboy_req:header(<<"accept-language">>, Req0)),
+	    %% Load messages from catalog, stored in JSON file in filesystem
+	    EbinDir = filename:dirname(code:which(js_handler)),
+	    AppDir = filename:dirname(EbinDir),
+	    MessagesFilePath = filename:join([AppDir, "priv", lists:flatten([LanguageCode, ".json"])]),
+	    DefaultMessagesFilePath = filename:join([AppDir, "priv", "en.json"]),
+	    JSONMessages = decode_messages_json(MessagesFilePath, DefaultMessagesFilePath),
+	    {ok, Body} = jquery_riak_js_dtl:render([
+		{messages, JSONMessages},
+		{root_path, Settings#general_settings.root_path},
+		{static_root, Settings#general_settings.static_root},
+		{bucket_id, BucketId},
+		{token, SessionID0},
+		{user_id, User#user.id},
+		{chunk_size, ?FILE_UPLOAD_CHUNK_SIZE}
+	    ]),
+	    Req1 = cowboy_req:reply(200, #{<<"content-type">> => <<"text/html">>}, unicode:characters_to_binary(Body), Req0),
+	    {ok, Req1, Opts}
+    end.
 
 bad_request(Req0, MsgCode)
 	when erlang:is_integer(MsgCode) orelse erlang:is_list(MsgCode) orelse erlang:is_atom(MsgCode) ->

@@ -4,8 +4,9 @@
 -module(sql_lib).
 
 -export([create_table_if_not_exist/1, create_pseudo_directory/2, add_object/2,
-	 lock_object/3, delete_object/2, get_object/2,
-	 get_pseudo_directory/2, delete_pseudo_directory/2]).
+	 lock_object/3, delete_object/2, get_object/2, 
+	 get_pseudo_directory/2, delete_pseudo_directory/2,
+	 rename_object/5, rename_pseudo_directory/4]).
 
 -include("entities.hrl").
 
@@ -102,6 +103,19 @@ delete_pseudo_directory(Prefix, Name)
     end.
 
 
+-spec(rename_pseudo_directory(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
+		    DstName :: binary()) -> ok | {error, any()}).
+rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName)
+    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+	andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
+    SQL = ["UPDATE items SET orig_name = ", sqlite3_lib:value_to_sql(DstName),
+	   " WHERE key = ", sqlite3_lib:value_to_sql(SrcKey)],
+    case Prefix of
+	undefined -> SQL ++ [" AND prefix is NULL", ";"];
+	_ -> SQL ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
+    end.
+
+
 -spec(add_object(Prefix0 :: string() | undefined,
 		 Obj :: #object{}) -> ok | {error, any()}).
 add_object(Prefix0, Obj)
@@ -147,6 +161,20 @@ get_object(Prefix, OrigName)
     case Prefix of
 	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
 	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
+    end.
+
+
+-spec(rename_object(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
+		    DstKey :: string(), DstName :: binary()) -> ok | {error, any()}).
+rename_object(BucketId, Prefix, SrcKey, DstKey, DstName)
+    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+	andalso erlang:is_list(SrcKey) andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
+    SQL = ["UPDATE items SET key = ", sqlite3_lib:value_to_sql(DstKey),
+	   ", orig_name = ", sqlite3_lib:value_to_sql(DstName),
+	   " WHERE key = ", sqlite3_lib:value_to_sql(SrcKey)],
+    case Prefix of
+	undefined -> SQL ++ [" AND prefix is NULL", ";"];
+	_ -> SQL ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
     end.
 
 

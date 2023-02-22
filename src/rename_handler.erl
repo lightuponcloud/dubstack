@@ -446,7 +446,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 						      [OrigName2], ["\""]]),
 			    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
 			    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
-			    [{orig_name, unicode:characters_to_binary(OrigName2)}]
+			    [{orig_name, unicode:characters_to_binary(OrigName2)}, {key, ObjectKey0}]
 		    end;
 		{error, Reason3} ->
 		    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
@@ -482,6 +482,8 @@ rename(Req0, BucketId, State, IndexContent) ->
 		    {true, Req1, []};
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		{dir_name, DstDirectoryName0} ->
+		    SrcObjectKey2 = lists:sublist(SrcObjectKey1, length(SrcObjectKey1)-1),  %% remove last "/"
+		    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, SrcObjectKey2, DstDirectoryName0, User),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
 		    {true, Req1, []}
 	    end;
@@ -490,8 +492,10 @@ rename(Req0, BucketId, State, IndexContent) ->
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		lock -> js_handler:too_many(Req0);
 		not_found -> js_handler:not_found(Req0);
-		Body ->
-		    Req1 = cowboy_req:set_resp_body(jsx:encode(Body), Req0),
+		NewObj ->
+		    DstKey = proplists:get_value(key, NewObj),
+		    sqlite_server:rename_object(BucketId, Prefix0, SrcObjectKey1, DstKey, DstObjectName0, User),
+		    Req1 = cowboy_req:set_resp_body(jsx:encode(NewObj), Req0),
 		    {true, Req1, []}
 	    end
     end.
