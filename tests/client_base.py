@@ -20,11 +20,11 @@ from botocore.utils import fix_s3_host
 env = Env()
 env.read_env('.env')
 
-#logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
-for name in ['botocore', 's3transfer', 'boto3']:
-    logging.getLogger(name).setLevel(logging.CRITICAL)
+logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+for name in ['botocore', 's3transfer', 'boto3', 'boto']:
+    logging.getLogger(name).setLevel(logging.INFO)
 
-BASE_URL = env.str("BASE_URL", "https://lightupon.cloud")
+BASE_URL = env.str("BASE_URL", "https://lightup.cloud")
 USERNAME_1 = env.str("USERNAME_1")
 PASSWORD_1 = env.str("PASSWORD_1")
 USERNAME_2 = env.str("USERNAME_2")
@@ -35,7 +35,7 @@ UPLOADS_BUCKET_NAME = env.str("UPLOADS_BUCKET_NAME")
 
 ACCESS_KEY = env.str("ACCESS_KEY")
 SECRET_KEY = env.str("SECRET_KEY")
-HTTP_PROXY = env.str("HTTP_PROXY")
+HTTP_PROXY = env.str("HTTP_PROXY")  # if connection hangs, make sure proxy port is corret
 
 RIAK_ACTION_LOG_FILENAME = ".riak_action_log.xml"
 
@@ -47,9 +47,11 @@ def configure_boto3():
         aws_access_key_id=ACCESS_KEY,
         aws_secret_access_key=SECRET_KEY,
     )
-    resource = session.resource('s3', config=Config(proxies={'http': HTTP_PROXY}), use_ssl=False)
-    resource.meta.client.meta.events.unregister('before-sign.s3', fix_s3_host)
-    boto3.set_stream_logger('botocore')
+    config = Config(proxies={"http": HTTP_PROXY},
+                    s3={"addressing_style": "path"})
+    resource = session.resource("s3", config=config, use_ssl=False)
+    resource.meta.client.meta.events.unregister("before-sign.s3", fix_s3_host)
+    # boto3.set_stream_logger("botocore")
     return resource
 
 
@@ -58,36 +60,54 @@ class TestClient(unittest.TestCase):
 
         creds = {"login": USERNAME_1, "password": PASSWORD_1}
         response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds), verify=False,
-                                 headers={'content-type': 'application/json'})
+                                 headers={"content-type": "application/json"})
         data = response.json()
-        self.token = data['token']
-        self.user_id = data['id']
+        self.token = data["token"]
+        self.user_id = data["id"]
         self.resource = configure_boto3()
         self.purge_test_buckets()
 
+    def get_default_headers(self):
+        return {
+            "authorization": "Token {}".format(self.token),
+            "content-type": "application/json"
+        }
+
+    def get_all_headers(self, headers):
+        headers = headers or {}
+
+        defaults = self.get_default_headers()
+        defaults.update(headers)
+
+        return defaults
+
     def get_json(self, url, status=200, **kwargs):
-        response = requests.get(url, headers={'content-type': 'application/json',
-                                          'authorization': 'Token {}'.format(self.token)}, **kwargs)
-        assert response.status_code == status
-        assert response.headers['content-type'] == 'application/json'
-        return response.json()
+        headers = kwargs.pop('headers', {})
+        headers = self.get_all_headers(headers)
+        response = requests.get(url, headers=headers, **kwargs)
+        self.assertEqual(response.status_code, status)
+        response_content_type = response.headers.get("content-type")
+        if response_content_type is not None:
+            self.assertEqual(response_content_type, "application/json")
+            return response.json()
+        return response
 
     def post_json(self, url, data, status=200, **kwargs):
-        response = requests.post(url, data=json.dumps(data),
-                                 headers={'content-type': 'application/json',
-                                          'authorization': 'Token {}'.format(self.token)})
-        assert response.status_code == status
-        return json.loads(response.data.decode('utf8'))
+        headers = kwargs.pop('headers', {})
+        headers = self.get_all_headers(headers)
+        response = requests.post(url, data=json.dumps(data), headers=headers)
+        self.assertEqual(response.status_code, status)
+        return json.loads(response.content.decode("utf8"))
 
     def delete_json(self, url, data, status=200, **kwargs):
-        response = requests.delete(url, data=json.dumps(data),
-                                   headers={'content-type': 'application/json',
-                                            'authorization': 'Token {}'.format(self.token)})
-        assert response.status_code == status
-        assert response.headers['content-type'] == 'application/json'
+        headers = kwargs.pop('headers', {})
+        headers = self.get_all_headers(headers)
+        response = requests.delete(url, data=json.dumps(data), headers=headers)
+        self.assertEqual(response.status_code, status)
+        self.assertEqual(response.headers["content-type"], "application/json")
         return response.json()
 
-    def upload_file(self, url, fn, prefix='', guid='',
+    def upload_file(self, url, fn, prefix="", guid="",
                     last_seen_version=None, form_data=None, **kwargs):
         """
         Uploads file to server by splitting it to chunks and testing if server
@@ -95,7 +115,7 @@ class TestClient(unittest.TestCase):
 
         ``url`` -- The base upload API endpoint
         ``fn`` -- filename
-        ``prefix`` -- an object's prefix on server
+        ``prefix`` -- an object"s prefix on server
         ``guid`` -- unique identifier ( UUID4 ) for tracking history of changes
         ``last_seen_version`` -- casual history value, generated by DVVSet()
         """
@@ -116,22 +136,22 @@ class TestClient(unittest.TestCase):
             version = b64encode(json.dumps(version)).encode()
 
         result = None
-        with open(fn, 'rb') as fd:
+        with open(fn, "rb") as fd:
             _read_chunk = lambda: fd.read(FILE_UPLOAD_CHUNK_SIZE)
             part_num = 1
             md5_list = []
             upload_id = None
             offset = 0
-            for chunk in iter(_read_chunk, ''):
+            for chunk in iter(_read_chunk, ""):
                 md5 = hashlib.md5(chunk)
                 md5_digest = md5.hexdigest()
                 md5_list.append(md5_digest)
                 multipart_form_data = {
-                    'files[]': (fn, ''),
-                    'md5': md5_digest,
-                    'prefix': prefix,
-                    'guid': guid,
-                    'version': version
+                    "files[]": (fn, ""),
+                    "md5": md5_digest,
+                    "prefix": prefix,
+                    "guid": guid,
+                    "version": version
                 }
                 chunk_size = len(chunk)
                 if form_data:
@@ -145,9 +165,9 @@ class TestClient(unittest.TestCase):
                 else:
                     ct_range = "bytes 0-{}/{}".format(size-1, size)
                 headers = {
-                    'accept': 'application/json',
-                    'authorization': 'Token {}'.format(self.token),
-                    'content-range': ct_range
+                    "accept": "application/json",
+                    "authorization": "Token {}".format(self.token),
+                    "content-range": ct_range
                 }
                 if part_num == 1:
                     r_url = url
@@ -158,7 +178,7 @@ class TestClient(unittest.TestCase):
                     # last chunk
                     etags = ",".join(["{},{}".format(i+1, md5_list[i]) for i in range(len(md5_list))])
                     multipart_form_data.update({
-                        'etags[]': etags
+                        "etags[]": etags
                     })
 
                 # send request without binary data first
@@ -167,8 +187,8 @@ class TestClient(unittest.TestCase):
                 if response.status_code == 206:
                     # skip chunk upload, as server has it aleady
                     response_json = response.json()
-                    upload_id = response_json['upload_id']
-                    guid = response_json['guid']
+                    upload_id = response_json["upload_id"]
+                    guid = response_json["guid"]
                     part_num += 1
                     if offset+chunk_size == size:
                         result = response_json
@@ -177,37 +197,37 @@ class TestClient(unittest.TestCase):
                         continue
                 self.assertEqual(response.status_code, 200)
                 response_json = response.json()
-                upload_id = response_json['upload_id']
-                guid = response_json['guid'] # server could change GUID
-                server_md5 = response_json['md5']
+                upload_id = response_json["upload_id"]
+                guid = response_json["guid"] # server could change GUID
+                server_md5 = response_json["md5"]
                 self.assertEqual(md5_digest, server_md5)
 
                 # upload an actual data now
                 multipart_form_data.update({
-                    'files[]': (fn, chunk),
-                    'guid': guid  # GUID could change
+                    "files[]": (fn, chunk),
+                    "guid": guid  # GUID could change
                 })
                 response = requests.post(r_url, files=multipart_form_data, headers=headers)
                 self.assertEqual(response.status_code, 200)
                 response_json = response.json()
                 if offset+chunk_size == size:
                     # the last chunk has been processed, expect complete_upload response
-                    expected = set(['lock_user_tel', 'lock_user_name', 'guid', 'upload_id',
-                                    'lock_modified_utc', 'lock_user_id', 'is_locked',
-                                    'author_tel', 'is_deleted', 'upload_time', 'md5',
-                                    'version', 'height', 'author_id', 'author_name',
-                                    'object_key', 'bytes', 'width', 'orig_name', 'end_byte'])
+                    expected = set(["lock_user_tel", "lock_user_name", "guid", "upload_id",
+                                    "lock_modified_utc", "lock_user_id", "is_locked",
+                                    "author_tel", "is_deleted", "upload_time", "md5",
+                                    "version", "height", "author_id", "author_name",
+                                    "object_key", "bytes", "width", "orig_name", "end_byte"])
                     self.assertEqual(expected, set(response_json.keys()))
                     result = response_json
                     break
                 else:
-                    self.assertEqual(set(['end_byte', 'upload_id', 'guid', 'upload_id', 'md5']),
+                    self.assertEqual(set(["end_byte", "upload_id", "guid", "upload_id", "md5"]),
                                      set(response_json.keys()))
-                    #self.assertEqual(response_json['guid'], guid)
-                    #self.assertEqual(response_json['upload_id'], upload_id)
-                    server_md5 = response_json['md5']
+                    #self.assertEqual(response_json["guid"], guid)
+                    #self.assertEqual(response_json["upload_id"], upload_id)
+                    server_md5 = response_json["md5"]
                     self.assertEqual(md5_digest, server_md5)
-                    upload_id = response_json['upload_id']
+                    upload_id = response_json["upload_id"]
                     part_num += 1
         return result
 
@@ -226,7 +246,7 @@ class TestClient(unittest.TestCase):
         """
         This method uses /riak/download/ API endpoint to download file
         """
-        url = '{}/riak/download/{}/{}'.format(BASE_URL, bucketId, objectKey)
+        url = "{}/riak/download/{}/{}".format(BASE_URL, bucketId, objectKey)
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
         return response.content
 
@@ -271,20 +291,20 @@ class TestClient(unittest.TestCase):
         user_name = record.find("user_name").text
         tenant_name = record.find("tenant_name").text
         return {
-            'action': action,
-            'details': details,
-            'user_name': user_name,
-            'tenant_name': tenant_name
+            "action": action,
+            "details": details,
+            "user_name": user_name,
+            "tenant_name": tenant_name
         }
 
     def create_pseudo_directory(self, name):
         req_headers = {
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
-            'prefix': '',
-            'directory_name': name
+            "prefix": "",
+            "directory_name": name
         }
         url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)
         return requests.post(url, json=data, headers=req_headers)

@@ -15,11 +15,17 @@ from dvvset import DVVSet
 
 
 def generate_random_name():
+    """
+    Returns a random name of weird characters.
+    """
     alphabet = '{}{}ЄєІіЇїҐґ'.format(string.digits, string.ascii_lowercase)
     return ''.join(random.sample(alphabet, 20))
 
 
 def encode_to_hex(dir_name: str = None, dir_names: list = None):
+    """
+    Encodes directory name to hex format, as server expects.
+    """
     if dir_name:
         return dir_name.encode().hex() + "/"
     if dir_names:
@@ -51,7 +57,7 @@ class LightClient:
         used to perform all the further requests.
         """
         creds = {"login": username, "password": password}
-        url = "{}riak/login".format(self.url)
+        url = "{}riak/login/".format(self.url)
         response = requests.post(url, data=json.dumps(creds),
                                  headers={'content-type': 'application/json'})
         data = response.json()

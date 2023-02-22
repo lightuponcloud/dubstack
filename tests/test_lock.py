@@ -1,4 +1,3 @@
-
 import unittest
 
 from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1, USERNAME_2, PASSWORD_2)

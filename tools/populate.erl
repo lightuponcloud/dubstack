@@ -14,7 +14,7 @@
 
 
 %%
-%% Find parent directory id for adding new dir
+%% Find parent directory for adding new dir
 %%
 get_pseudo_directory(_DbName, _Prefix, undefined) -> undefined;
 get_pseudo_directory(DbName, Prefix, Name) ->
@@ -28,10 +28,12 @@ get_pseudo_directory(DbName, Prefix, Name) ->
     end.
 
 %%
-%% Add pseudo-directories first
+%% Add pseudo-directories recursively.
+%% For example /path/to/somewhere, three directories will be created.
 %%
-create_pseudo_directories(_DbName, undefined) -> ok;  %% root dir
-create_pseudo_directories(DbName, Prefix) ->
+create_pseudo_directories(_DbName, undefined, _IsDeleted) -> ok;  %% root dir
+create_pseudo_directories(_DbName, _Prefix, true) -> ok;  %% skip deleted dirs
+create_pseudo_directories(DbName, Prefix, IsDeleted) ->
     DirName = utils:unhex(erlang:list_to_binary(filename:basename(Prefix))),
     ParentPrefix = utils:dirname(Prefix),
     io:fwrite("Checking if dir exists: ~p / ~p~n", [ParentPrefix, DirName]),
@@ -46,7 +48,7 @@ create_pseudo_directories(DbName, Prefix) ->
 		    case sqlite3:sql_exec(DbName, SQL0) of
 			{rowid, _} ->
 			    io:fwrite("Created directory ~p~n", [Prefix]),
-			    create_pseudo_directories(DbName, ParentPrefix);
+			    create_pseudo_directories(DbName, ParentPrefix, IsDeleted);
 			Error1 ->
 			    io:fwrite("Error creating directory ~p: ~p~n", [Prefix, Error1]),
 			    throw("Error executing SQL")
@@ -56,9 +58,9 @@ create_pseudo_directories(DbName, Prefix) ->
     end.
 
 
-sql_exec(DbName, Prefix0, Obj0) ->
+sql_exec(DbName, Prefix0, Obj0, true) -> ok; %% skip deleted files
+sql_exec(DbName, Prefix0, Obj0, IsDeleted0) ->
     Key = proplists:get_value(object_key, Obj0),
-io:fwrite("Key: ~p~n", [Key]),
     OrigName = proplists:get_value(orig_name, Obj0),
     UserId = proplists:get_value(author_id, Obj0),
     UserName = proplists:get_value(author_name, Obj0),
@@ -68,6 +70,11 @@ io:fwrite("Key: ~p~n", [Key]),
 	    null -> erlang:round(utils:timestamp()/1000);
 	    T -> T
 	end,
+    IsDeleted1 =
+	case IsDeleted0 of
+	    true -> true;
+	    false -> proplists:get_value(is_deleted, Obj0)
+	end,
     Obj1 = #object{
 	key = Key,
 	orig_name = OrigName,
@@ -75,7 +82,7 @@ io:fwrite("Key: ~p~n", [Key]),
 	guid = proplists:get_value(guid, Obj0),
 	version = proplists:get_value(version, Obj0),
 	upload_time = proplists:get_value(upload_time, Obj0),
-	is_deleted = proplists:get_value(is_deleted, Obj0),
+	is_deleted = IsDeleted1,
 	author_id = UserId,
 	author_name = UserName,
 	author_tel = UserTel,
@@ -167,6 +174,25 @@ upload_db(BucketId, UserId, DbFn, Timestamp) ->
 	{"bytes", byte_size(Blob)}]}],
     riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions).
 
+%%
+%% Returns true, if any directory in hierarchy contains "-deleted-<timestamp>"
+%%
+is_deleted([H|T]) ->
+    Name = erlang:binary_to_list(utils:unhex(H)),
+    case string:str(Name, "-deleted-") of
+	0 ->
+	    %% "-deleted-" string was not found
+	    is_deleted(T);
+	_ -> true
+    end;
+is_deleted([]) -> false;
+
+is_deleted(HexPrefix) when erlang:is_binary(HexPrefix) ->
+    case erlang:byte_size(HexPrefix) > 0 of
+	false -> false;
+	true -> is_deleted(binary:split(HexPrefix, <<"/">>, [global]))
+    end.
+
 
 main() ->
     inets:start(),
@@ -204,8 +230,15 @@ main() ->
 	fun(I) ->
 	    case utils:ends_with(erlang:list_to_binary(I), IndexName1) of
 		true ->
+		    DirPrefix = utils:dirname(I),
+		    IsDeleted =
+			case DirPrefix of
+			    undefined -> false;
+			    _ -> is_deleted(erlang:list_to_binary(DirPrefix))
+			end,
+		    io:fwrite("IsDeleted: ~p~n", [IsDeleted]),
 		    %% Add pseudo-directories first
-		    create_pseudo_directories(DbName, utils:dirname(I)),
+		    create_pseudo_directories(DbName, DirPrefix, IsDeleted),
 		    case riak_api:get_object(BucketId, I) of
 			{error, _Reason} -> ok;
 			not_found -> ok;
@@ -214,12 +247,11 @@ main() ->
 			    List1 = proplists:get_value(list, Index),
 			    lists:foreach(
 				fun(J) ->
-				    sql_exec(DbName, utils:dirname(I), J)
+				    sql_exec(DbName, utils:dirname(I), J, IsDeleted)
 				end, List1)
 		    end;
 		false -> ok
 	    end
 	end, List0),
     sqlite3:close(Pid),
-
     update_db(BucketId, UserId, TempFn1).

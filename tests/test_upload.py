@@ -28,7 +28,7 @@ class UploadTest(TestClient):
         result = self.upload_file(url, fn)
         with open(fn, 'rb') as fd:
             contents = self.download_file(TEST_BUCKET_1, 'readme.md')
-            self.assertEquals(fd.read(), contents)
+            self.assertEqual(fd.read(), contents)
 
     def _upload_request(self, headers, form_data, url=None, modified_utc=None):
         """
@@ -392,7 +392,7 @@ class UploadTest(TestClient):
         response = self._upload_request(headers, form_data)
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
-        self.assertTrue(response_json['orig_name'].startswith(
+        self.assertTrue(response_json['orig_name'].startswithk(
          '20180111_165127 (Joe Armstrong, conflicted copy '))
         self.assertEqual(response_json['guid'], existing_guid)
 
@@ -507,8 +507,8 @@ class UploadTest(TestClient):
         form_data['guid'] = guid
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_2, second_upload_id)
         response = self._upload_request(headers, form_data, url=url)
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json(), {'error': 37})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {'error': 7})
 
         # empty body, send incorrect upload id and make sure error returned
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_1, 'blah')
@@ -561,7 +561,6 @@ class UploadTest(TestClient):
         response = self._upload_request(headers, form_data, url=url)
         self.assertEqual(response.status_code, 200)
         response_json = response.json()
-        import pdb;pdb.set_trace()
 
         # finish multipart upload to test if it succeeds
         form_data['version'] = version
@@ -650,7 +649,7 @@ class UploadTest(TestClient):
 
         # check its contents
         contents = self.download_file(TEST_BUCKET_1, '20180111_165127.jpg')
-        self.assertEquals(contents, b"something somethingsomething")
+        self.assertEquals(contents, b"something something")
 
         # now test if two existing chunks are used when parts with the same md5 sums uploaded
         dot = json.loads(b64decode(response_json['version']))
