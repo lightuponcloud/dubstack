@@ -1,4 +1,5 @@
 import unittest
+from pprint import pprint
 
 from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1, USERNAME_2, PASSWORD_2)
 from light_client import LightClient, generate_random_name, encode_to_hex
@@ -59,6 +60,8 @@ class RenameTest(unittest.TestCase):
 
     def setUp(self):
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.resource = configure_boto3()
+        self.purge_test_buckets()
 
     def test_negative_case1(self):
         """
@@ -126,8 +129,10 @@ class RenameTest(unittest.TestCase):
         hex_decoder = lambda x: bytes.fromhex(x).decode('utf-8')
         prefixes = encode_to_hex(dir_names=dir_names)
         print("prefixes: ", prefixes)
-        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[0])
-        self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[1], prefixes[0])
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[0])
+        self.assertEqual(response.status_code, 204)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_names[1], prefixes[0])
+        self.assertEqual(response.status_code, 204)
 
         # 1.2 delete nested directory
         self.client.delete(TEST_BUCKET_1, [prefixes[1]], prefixes[0])
@@ -135,25 +140,15 @@ class RenameTest(unittest.TestCase):
         # 1.3 try to rename nested deleted directory
         res = self.client.get_list(TEST_BUCKET_1, prefixes[0])
         print("GET list:")
-        from pprint import pprint
         pprint(res.json())
-        pseudo_dir = None
-        for obj in res.json()['dirs']:
-            if hex_decoder(obj['prefix'].split('/')[1]).split("-")[0] == dir_names[1]:
-                pseudo_dir = obj
-                break
-        else:
-            raise Exception('Something went wrong')
+        pseudo_dir = dir_names[0]
+        self.assertEqual(res.json()['dirs'], [])
 
-        # print(hex_decoder(dir['prefix'].split('/')[1]).split("-")[0])
         dst_name = generate_random_name()
         print("dst_name: ", dst_name)
-        print("pseudo_dir prefix: ", pseudo_dir['prefix'])
-        res = self.client.rename(TEST_BUCKET_1, pseudo_dir['prefix'].split("/")[1] + '/', dst_name, prefixes[0])
+        res = self.client.rename(TEST_BUCKET_1, dir_names[0], prefixes[0])
         print("status code: ", res.status_code, "Expected: ", 400)
         print("result: ", res.json(), "- renamed and undelete")
-        # self.assertEqual(res.status_code, 400)
-        # self.assertEqual(res.json(), {"error": 9})  # "9": "Incorrect object name.",
 
         # Clean: delete all created
         self.client.delete(TEST_BUCKET_1, [prefixes[0]])
@@ -273,7 +268,7 @@ class RenameTest(unittest.TestCase):
         res = self.client.upload(TEST_BUCKET_1, fn)
         version = res['version']
 
-        fn2 = 'REQUIREMENTS.Txt'
+        fn2 = 'requirements.txt'
         res = self.client.upload(TEST_BUCKET_1, fn2, last_seen_version=version)
         self.assertEqual(res['orig_name'], fn2)
         self.assertNotEqual(version, res['version'])
@@ -395,7 +390,7 @@ class RenameTest(unittest.TestCase):
         orig_name1 = res["orig_name"]
 
         # 2 Upload another one
-        res = self.client.upload(TEST_BUCKET_1, object_key1)
+        res = self.client.upload(TEST_BUCKET_1, fn)
         object_key2 = res["object_key"]
         orig_name2 = res["orig_name"]
 
@@ -411,6 +406,85 @@ class RenameTest(unittest.TestCase):
 
         # Clean: delete all created
         self.client.delete(TEST_BUCKET_1, [object_key1, object_key2])
+
+    def test_sqlite_update(self):
+        # 1. Upload file
+        fn = "20180111_165127.jpg"
+        res = self.client.upload(TEST_BUCKET_1, fn)
+        object_key = res['object_key']
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["key"], fn)
+        self.assertEqual(result[0]["orig_name"], fn)
+        self.assertEqual(result[0]["is_dir"], 0)
+        self.assertEqual(result[0]["is_locked"], 0)
+        self.assertEqual(result[0]["bytes"], 2773205)
+        self.assertTrue(("guid" in result[0]))
+        self.assertTrue(("bytes" in result[0]))
+        self.assertTrue(("version" in result[0]))
+        self.assertTrue(("last_modified_utc" in result[0]))
+        self.assertTrue(("author_id" in result[0]))
+        self.assertTrue(("author_name" in result[0]))
+        self.assertTrue(("author_tel" in result[0]))
+        self.assertTrue(("lock_user_id" in result[0]))
+        self.assertTrue(("lock_user_name" in result[0]))
+        self.assertTrue(("lock_user_tel" in result[0]))
+        self.assertTrue(("lock_modified_utc" in result[0]))
+        self.assertTrue(("md5" in result[0]))
+
+        # 2. Rename it
+        random_name = generate_random_name()
+        res = self.client.rename(TEST_BUCKET_1, object_key, random_name)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['orig_name'], random_name)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["orig_name"], random_name)
+        self.assertEqual(result[0]["is_dir"], 0)
+        self.assertEqual(result[0]["is_locked"], 0)
+        self.assertEqual(result[0]["bytes"], 2773205)
+        self.assertTrue(("guid" in result[0]))
+        self.assertTrue(("bytes" in result[0]))
+        self.assertTrue(("version" in result[0]))
+        self.assertTrue(("last_modified_utc" in result[0]))
+        self.assertTrue(("author_id" in result[0]))
+        self.assertTrue(("author_name" in result[0]))
+        self.assertTrue(("author_tel" in result[0]))
+        self.assertTrue(("lock_user_id" in result[0]))
+        self.assertTrue(("lock_user_name" in result[0]))
+        self.assertTrue(("lock_user_tel" in result[0]))
+        self.assertTrue(("lock_modified_utc" in result[0]))
+        self.assertTrue(("md5" in result[0]))
+
+        # 3. Create directory with the same name
+        random_dir_name = generate_random_name()
+        res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name)
+        self.assertEqual(res.status_code, 204)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 2)
+        names = [i["orig_name"] for i in result]
+        self.assertEqual(set(names), set([random_name, random_dir_name]))
+        self.assertEqual(result[0]["is_dir"], 0)
+        self.assertEqual(result[0]["is_locked"], 0)
+        self.assertEqual(result[0]["bytes"], 2773205)
+        self.assertTrue(("guid" in result[0]))
+        self.assertTrue(("bytes" in result[0]))
+        self.assertTrue(("version" in result[0]))
+        self.assertTrue(("last_modified_utc" in result[0]))
+        self.assertTrue(("author_id" in result[0]))
+        self.assertTrue(("author_name" in result[0]))
+        self.assertTrue(("author_tel" in result[0]))
+        self.assertTrue(("lock_user_id" in result[0]))
+        self.assertTrue(("lock_user_name" in result[0]))
+        self.assertTrue(("lock_user_tel" in result[0]))
+        self.assertTrue(("lock_modified_utc" in result[0]))
+        self.assertTrue(("md5" in result[0]))
 
 
 if __name__ == '__main__':

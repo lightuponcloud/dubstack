@@ -495,7 +495,8 @@ rename(Req0, BucketId, State, IndexContent) ->
 		NewObj ->
 		    DstKey = proplists:get_value(key, NewObj),
 		    sqlite_server:rename_object(BucketId, Prefix0, SrcObjectKey1, DstKey, DstObjectName0, User),
-		    Req1 = cowboy_req:set_resp_body(jsx:encode(NewObj), Req0),
+		    Req1 = cowboy_req:set_resp_body(
+			jsx:encode([{orig_name, proplists:get_value(orig_name, NewObj)}]), Req0),
 		    {true, Req1, []}
 	    end
     end.

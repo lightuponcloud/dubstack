@@ -272,7 +272,7 @@ validate_object_key(BucketId, Prefix, ObjectKey, Version)
 	    {error, 5};
 	not_found -> {error, 17};
 	Metadata0 ->
-	    IsLocked = proplists:get_value("x-amz-meta-is-locked", Metadata0),
+	    IsLocked = utils:to_list(proplists:get_value("x-amz-meta-is-locked", Metadata0)),
 	    case IsLocked of
 		"true" -> {error, 43};
 		_ ->

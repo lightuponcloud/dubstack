@@ -4,10 +4,13 @@ import logging
 import json
 import os
 import io
+import time
 import unittest
 import hashlib
 import xml.etree.ElementTree as ET
 import requests
+import tempfile
+import sqlite3
 from base64 import b64encode
 from environs import Env
 
@@ -38,6 +41,7 @@ SECRET_KEY = env.str("SECRET_KEY")
 HTTP_PROXY = env.str("HTTP_PROXY")  # if connection hangs, make sure proxy port is corret
 
 RIAK_ACTION_LOG_FILENAME = ".riak_action_log.xml"
+RIAK_DB_VERSION_KEY = ".luc"
 
 FILE_UPLOAD_CHUNK_SIZE = 2000000
 
@@ -57,10 +61,12 @@ def configure_boto3():
 
 class TestClient(unittest.TestCase):
     def setUp(self):
-
         creds = {"login": USERNAME_1, "password": PASSWORD_1}
+        t1 = time.time()
         response = requests.post("{}/riak/login".format(BASE_URL), data=json.dumps(creds), verify=False,
                                  headers={"content-type": "application/json"})
+        t2 = time.time()
+        print("Login request: {} ms".format(int(t2-t1)))
         data = response.json()
         self.token = data["token"]
         self.user_id = data["id"]
@@ -231,7 +237,6 @@ class TestClient(unittest.TestCase):
                     part_num += 1
         return result
 
-
     def download_object(self, bucketId, objectKey):
         """
         This method downloads aby object from the object storage.
@@ -247,7 +252,10 @@ class TestClient(unittest.TestCase):
         This method uses /riak/download/ API endpoint to download file
         """
         url = "{}/riak/download/{}/{}".format(BASE_URL, bucketId, objectKey)
+        t1 = time.time()
         response = requests.get(url, headers={"authorization": "Token {}".format(self.token)})
+        t2 = time.time()
+        print("Download time: {} ( {} )".format(int(t2-t1), url))
         return response.content
 
     def head(self, bucketId, objectKey):
@@ -308,3 +316,24 @@ class TestClient(unittest.TestCase):
         }
         url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)
         return requests.post(url, json=data, headers=req_headers)
+
+    def check_sql(self, bucketId, sql, *args):
+        """
+        Download SQLite db and execute SQL
+        """
+        def dict_factory(cursor, row):
+            fields = [column[0] for column in cursor.description]
+            return {key: value for key, value in zip(fields, row)}
+
+        dbcontent = self.download_object(bucketId, RIAK_DB_VERSION_KEY)
+        fn = tempfile.mktemp()
+        with open(fn, "wb") as fd:
+            fd.write(dbcontent)
+        con = sqlite3.connect(fn)
+        con.row_factory = dict_factory
+        cur = con.cursor()
+        cur.execute(sql, *args)
+        result = cur.fetchall()
+        con.close()
+        os.unlink(fn)
+        return result

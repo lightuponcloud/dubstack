@@ -394,8 +394,9 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 			 {lock_user_tel, undefined},
 			 {is_locked, undefined}]
 		end,
-	    IsDeleted = proplists:get_value("x-amz-meta-is-deleted", Metadata0),
-	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id) andalso IsDeleted =/= true andalso WasLocked =/= IsLocked0 of
+	    IsDeleted = utils:to_list(proplists:get_value("x-amz-meta-is-deleted", Metadata0)),
+	    case (LockUserId0 =:= undefined orelse LockUserId0 =:= User#user.id)
+		    andalso IsDeleted =/= "true" andalso WasLocked =/= IsLocked0 of
 		true ->
 		    Meta = parse_object_record(Metadata0, Options),
 		    case riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,

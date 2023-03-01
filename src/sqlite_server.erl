@@ -83,6 +83,7 @@ rename_object(BucketId, Prefix, SrcKey, DstKey, DstName, User) when erlang:is_li
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(SrcKey)
 	    andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
     SQL = sql_lib:rename_object(BucketId, Prefix, SrcKey, DstKey, DstName),
+io:fwrite("SQL: ~p~n", [SQL]),
     Timestamp = erlang:round(utils:timestamp()/1000),
     UserId = User#user.id,
     gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
@@ -92,7 +93,8 @@ rename_object(BucketId, Prefix, SrcKey, DstKey, DstName, User) when erlang:is_li
 		  Value :: boolean(), UserId :: string()) -> ok | {error, any()}).
 lock_object(BucketId, Prefix, Key, Value, UserId) ->
     SQL = sql_lib:lock_object(Prefix, Key, Value),
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, undefined}).
+    Timestamp = erlang:round(utils:timestamp()/1000),
+    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
 
 
 -spec(delete_object(BucketId :: string(), Prefix :: string(),
@@ -164,8 +166,8 @@ handle_cast({create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}
     %% Acquire lock on db first
     case lock_db(BucketId) of
 	ok ->
-	    DbName = db_files,
-	    case open_db(BucketId, UserId, db_files, Timestamp) of
+	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
+	    case open_db(BucketId, UserId, DbName, Timestamp) of
 		{error, _Reason} -> {noreply, State0};
 		{ok, TempFn, DbPid, Version0} ->
 		    %% Check if pseudo-directory exists first
@@ -203,7 +205,7 @@ handle_cast({delete_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}
     %% Acquire lock on db first
     case lock_db(BucketId) of
 	ok ->
-	    DbName = db_files,
+	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
 	    case open_db(BucketId, UserId, DbName, Timestamp) of
 		{error, _Reason} -> {noreply, State0};
 		{ok, TempFn, DbPid, Version0} ->
@@ -233,7 +235,7 @@ handle_cast({exec_sql, BucketId, UserId, SQL, Timestamp}, State0) ->
     %% Acquire lock on db first
     case lock_db(BucketId) of
 	ok ->
-	    DbName = db_files,
+	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
 	    case open_db(BucketId, UserId, DbName, Timestamp) of
 		{error, _Reason} -> {noreply, State0};
 		{ok, TempFn, DbPid, Version0} ->
@@ -335,7 +337,7 @@ open_db(BucketId, UserId, DbName, Timestamp) ->
 	not_found ->
 	    %% No SQLite db found, create a new one
 	    {ok, Pid0} = sqlite3:open(DbName, [{file, TempFn1}]),
-	    case sql_lib:create_table_if_not_exist() of
+	    case sql_lib:create_table_if_not_exist(DbName) of
 		ok ->
 		    %% Create a new version
 		    Version0 = indexing:increment_version(undefined, Timestamp, UserId),

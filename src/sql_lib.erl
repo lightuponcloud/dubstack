@@ -76,42 +76,48 @@ create_pseudo_directory(Prefix, Name)
 %% Prefix0 -- prefix of directory name we are looking for
 %% Name -- the name of directory, hex-encoded
 %%
--spec(get_pseudo_directory(Prefix :: string() | undefined, OrigName :: binary()) -> ok | {error, any()}).
-get_pseudo_directory(Prefix, OrigName)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined
+-spec(get_pseudo_directory(Prefix0 :: string() | undefined, OrigName :: binary()) -> ok | {error, any()}).
+get_pseudo_directory(Prefix0, OrigName)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	    andalso erlang:is_binary(OrigName) ->
-    SQL0 = ["SELECT key FROM items WHERE is_dir = ", sqlite3_lib:value_to_sql(true),
+    SQL = ["SELECT key FROM items WHERE is_dir = ", sqlite3_lib:value_to_sql(true),
 	    " AND orig_name = ", sqlite3_lib:value_to_sql(OrigName)],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(delete_pseudo_directory(Prefix :: string(), Name :: binary()) -> ok | {error, any()}).
-delete_pseudo_directory(Prefix, Name)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined
+-spec(delete_pseudo_directory(Prefix0 :: string(), Name :: binary()) -> ok | {error, any()}).
+delete_pseudo_directory(Prefix0, Name)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	    andalso erlang:is_binary(Name) ->
-    SQL0 = ["DELETE FROM items WHERE (orig_name = ", sqlite3_lib:value_to_sql(Name),
+    SQL = ["DELETE FROM items WHERE (orig_name = ", sqlite3_lib:value_to_sql(Name),
 	    " AND is_dir = ", sqlite3_lib:value_to_sql(true), ")"
 	    " OR prefix LIKE \"", erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\""],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(rename_pseudo_directory(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
+-spec(rename_pseudo_directory(BucketId :: string(), Prefix0 :: string(), SrcKey :: string(),
 		    DstName :: binary()) -> ok | {error, any()}).
-rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName)
-    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+rename_pseudo_directory(BucketId, Prefix0, SrcKey, DstName)
+    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
     SQL = ["UPDATE items SET orig_name = ", sqlite3_lib:value_to_sql(DstName),
 	   " WHERE key = ", sqlite3_lib:value_to_sql(SrcKey)],
-    case Prefix of
-	undefined -> SQL ++ [" AND prefix is NULL", ";"];
-	_ -> SQL ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
 -spec(add_object(Prefix0 :: string() | undefined,
@@ -149,50 +155,58 @@ add_object(Prefix0, Obj)
 %%
 %% Get object key if exists
 %%
--spec(get_object(Prefix :: string() | undefined, OrigName :: binary()) -> ok | {error, any()}).
-get_object(Prefix, OrigName)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined
+-spec(get_object(Prefix0 :: string() | undefined, OrigName :: binary()) -> ok | {error, any()}).
+get_object(Prefix0, OrigName)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	    andalso erlang:is_binary(OrigName) ->
-    SQL0 = ["SELECT key FROM items WHERE is_dir = ", sqlite3_lib:value_to_sql(false),
+    SQL = ["SELECT key FROM items WHERE is_dir = ", sqlite3_lib:value_to_sql(false),
 	    " AND orig_name = ", sqlite3_lib:value_to_sql(OrigName)],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(rename_object(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
+-spec(rename_object(BucketId :: string(), Prefix0 :: string(), SrcKey :: string(),
 		    DstKey :: string(), DstName :: binary()) -> ok | {error, any()}).
-rename_object(BucketId, Prefix, SrcKey, DstKey, DstName)
-    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+rename_object(BucketId, Prefix0, SrcKey, DstKey, DstName)
+    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	andalso erlang:is_list(SrcKey) andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
     SQL = ["UPDATE items SET key = ", sqlite3_lib:value_to_sql(DstKey),
 	   ", orig_name = ", sqlite3_lib:value_to_sql(DstName),
 	   " WHERE key = ", sqlite3_lib:value_to_sql(SrcKey)],
-    case Prefix of
-	undefined -> SQL ++ [" AND prefix is NULL", ";"];
-	_ -> SQL ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(lock_object(Prefix :: string() | undefined,
+-spec(lock_object(Prefix0 :: string() | undefined,
 	Key :: string(), Value :: boolean()) -> ok | {error, any()}).
-lock_object(Prefix, Key, Value) ->
-    SQL0 = ["UPDATE items SET is_locked = ", sqlite3_lib:value_to_sql(Value),
+lock_object(Prefix0, Key, Value) ->
+    SQL = ["UPDATE items SET is_locked = ", sqlite3_lib:value_to_sql(Value),
 	    " WHERE key = ", sqlite3_lib:value_to_sql(Key),
 	    " AND is_dir = ", sqlite3_lib:value_to_sql(false)],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(delete_object(Prefix :: string() | undefined, Key :: string()) -> ok | {error, any()}).
-delete_object(Prefix, Key)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(Key) ->
-    SQL0 = ["DELETE FROM items WHERE key = ", sqlite3_lib:value_to_sql(Key),
+-spec(delete_object(Prefix0 :: string() | undefined, Key :: string()) -> ok | {error, any()}).
+delete_object(Prefix0, Key)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined andalso erlang:is_list(Key) ->
+    SQL = ["DELETE FROM items WHERE key = ", sqlite3_lib:value_to_sql(Key),
 	    " AND is_dir = ", sqlite3_lib:value_to_sql(false)],
-    case Prefix of
-	undefined -> SQL0 ++ [" AND prefix is NULL", ";"];
-	_ -> SQL0 ++ [" AND prefix = ", sqlite3_lib:value_to_sql(Prefix), ";"]
-    end.
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].

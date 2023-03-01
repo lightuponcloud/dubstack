@@ -313,7 +313,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				    B -> erlang:list_to_integer(B)
 				end,
 			    SrcIsLocked =
-				case proplists:get_value("x-amz-meta-is-locked", Metadata0) of
+				case utils:to_list(proplists:get_value("x-amz-meta-is-locked", Metadata0)) of
 				    "true" -> true;
 				    _ -> false
 				end,
@@ -461,19 +461,31 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 
 	    lists:map(
 		fun(I) ->
-		    case proplists:is_defined(skipped, I) of
-			false -> ok;
-			_ ->
+		    case proplists:get_value(skipped, I) of
+			locked -> ok;
+			server_error -> ok;
+			undefined ->
 			    ObjectKey = proplists:get_value(new_key, I),
 			    OrigName = proplists:get_value(dst_orig_name, I),
 			    Bytes = proplists:get_value(bytes, I),
 			    GUID = proplists:get_value(guid, I),
 			    EncodedVersion = proplists:get_value(version, I),
 			    UploadTime = proplists:get_value(upload_time, I),
-			    %% Add records to SQLite db
-			    sqlite_server:add_object(DstBucketId, DstPrefix, ObjectKey, OrigName,
-						     Bytes, GUID, EncodedVersion,
-						     UploadTime, User#user.id)
+			    %% Update SQLite db
+			    Obj = #object{
+				key = ObjectKey,
+				orig_name = unicode:characters_to_list(OrigName),
+				bytes = Bytes,
+				guid = GUID,
+				version = EncodedVersion,
+				upload_time = UploadTime,
+				is_deleted = false,
+				author_id = User#user.id,
+				author_name = User#user.name,
+				author_tel = User#user.tel,
+				is_locked = false
+			    },
+			    sqlite_server:add_object(DstBucketId, DstPrefix, Obj)
 		    end
 		end, Copied0),
 	    Copied0

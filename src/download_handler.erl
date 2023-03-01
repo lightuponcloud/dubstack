@@ -92,12 +92,16 @@ validate_request(BucketId, Metadata0) ->
     case proplists:get_value("x-amz-meta-is-deleted", Metadata0) of
 	"true" -> not_found;
 	_ ->
-	    {OldBucketId, RealPrefix} = real_prefix(BucketId, Metadata0),
-	    ContentType = proplists:get_value(content_type, Metadata0),
-	    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
-	    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),
-	    OrigName1 = utils:unhex(OrigName0),
-	    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+	    case proplists:get_value("x-amz-meta-guid", Metadata0) of
+		undefined -> not_found;
+		_ ->
+		    {OldBucketId, RealPrefix} = real_prefix(BucketId, Metadata0),
+		    ContentType = proplists:get_value(content_type, Metadata0),
+		    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
+		    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),
+		    OrigName1 = utils:unhex(OrigName0),
+		    {OldBucketId, RealPrefix, ContentType, OrigName1, erlang:list_to_binary(Bytes)}
+	    end
     end.
 
 %%
@@ -199,8 +203,8 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
     case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
-            	<<"content-type">> => <<"text/html">>
-            }, <<"404: Not found">>, Req0),
+		<<"content-type">> => <<"text/html">>
+	    }, <<"404: Not found">>, Req0),
 	    {ok, Req1, []};
 	RiakResponse0 ->
 	    Contents = proplists:get_value(contents, RiakResponse0),

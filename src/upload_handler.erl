@@ -51,8 +51,12 @@ allowed_methods(Req, State) ->
 %%
 %% Checks if content-range header matches size of uploaded data
 %%
-validate_data_size(0, _StartByte, _EndByte) -> true;  % empty requests are accepted for checks
-validate_data_size(DataSize, StartByte, EndByte) ->
+validate_data_size(0, _StartByte, _EndByte, _TotalBytes) ->
+    true;  % empty requests are accepted for checks
+validate_data_size(_DataSize, _StartByte, EndByte, TotalBytes)
+	when TotalBytes < ?FILE_UPLOAD_CHUNK_SIZE andalso EndByte =/= (TotalBytes - 1) ->
+    {error, 53}; %% User should not be allowed to split small files to multiple chunks
+validate_data_size(DataSize, StartByte, EndByte, _TotalBytes) ->
     case (EndByte - StartByte + 1 =/= DataSize) of
 	true -> {error, 1};
 	false -> true
@@ -258,6 +262,7 @@ validate_content_range(Req) ->
 	    end
     end.
 
+
 add_action_log_record(State) ->
     User = proplists:get_value(user, State),
     BucketId = proplists:get_value(bucket_id, State),
@@ -375,15 +380,16 @@ handle_post(Req0, State) ->
 		    {error, 22}
 		end,
 	    Blob = proplists:get_value(blob, FieldValues),
+	    BlobSize = byte_size(Blob),
 	    Md5 = validate_md5(proplists:get_value(md5, FieldValues)),
 	    StartByte = proplists:get_value(start_byte, State),
 	    EndByte = proplists:get_value(end_byte, State),
+	    TotalBytes = proplists:get_value(total_bytes, State),
 	    DataSizeOk =
 		case Blob of
 		    undefined -> true;
-		    _ -> validate_data_size(byte_size(Blob), StartByte, EndByte)
+		    _ -> validate_data_size(BlobSize, StartByte, EndByte, TotalBytes)
 		end,
-	    TotalBytes = proplists:get_value(total_bytes, State),
 	    Etags = validate_etags(proplists:get_value(etags, FieldValues)),
 	    Width0 = validate_integer_field(proplists:get_value(width, FieldValues)),
 	    Height0 = validate_integer_field(proplists:get_value(height, FieldValues)),
@@ -579,11 +585,12 @@ create_upload_id(undefined, State0) ->
 	    _ ->
 		case ExistingObject#object.is_locked of
 		    true ->
-			[{is_locked, true},
+			[{is_locked, "true"},
 			 {lock_user_id, ExistingObject#object.lock_user_id},
 			 {lock_user_name, ExistingObject#object.lock_user_name},
 			 {lock_user_tel, ExistingObject#object.lock_user_tel},
 			 {lock_modified_utc, ExistingObject#object.lock_modified_utc}];
+		    undefined -> [];
 		    false -> []
 		end
 	end,
@@ -606,7 +613,7 @@ create_upload_id(undefined, State0) ->
 	{author_id, User#user.id},
 	{author_name, User#user.name},
 	{author_tel, User#user.tel},
-	{is_deleted, false},
+	{is_deleted, "false"},
 	{bytes, utils:to_list(TotalBytes)},
 	{width, proplists:get_value(width, State0)},
 	{height, proplists:get_value(height, State0)}
@@ -1052,7 +1059,7 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 	    {author_id, User#user.id},
 	    {author_name, User#user.name},
 	    {author_tel, User#user.tel},
-	    {is_locked, IsLocked0},
+	    {is_locked, utils:to_list(IsLocked0)},
 	    {lock_modified_utc, LockModifiedTime0},
 	    {lock_user_id, LockedUserId0},
 	    {lock_user_name, LockedUserName1},

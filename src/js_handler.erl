@@ -70,8 +70,8 @@ init(Req0, Opts) ->
     SessionCookieName = Settings#general_settings.session_cookie_name,
     #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),
     case login_handler:check_session_id(SessionID0) of
-	false -> bad_request(Req0, 28);
-	{error, _} -> bad_request(Req0, 28);
+	false -> bad_request_ok(Req0, 28);
+	{error, _} -> bad_request_ok(Req0, 28);
 	User ->
 	    %% Since ther's no way to detect browser language preference, Accept-Language should be used instead
 	    LanguageCode = parse_language_tag(cowboy_req:header(<<"accept-language">>, Req0)),

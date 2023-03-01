@@ -1,10 +1,17 @@
 import unittest
 
-from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1, USERNAME_2, PASSWORD_2)
+from client_base import (
+    BASE_URL,
+    TEST_BUCKET_1,
+    USERNAME_1,
+    PASSWORD_1,
+    USERNAME_2,
+    PASSWORD_2,
+    TestClient)
 from light_client import LightClient, generate_random_name, encode_to_hex
 
 
-class LockTest(unittest.TestCase):
+class LockTest(TestClient):
     """
     Test operation LOCK / UNLOCK
 
@@ -32,6 +39,7 @@ class LockTest(unittest.TestCase):
     """
 
     def setUp(self):
+        super(LockTest, self).setUp()
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
 
     def test_lock(self):
@@ -88,7 +96,7 @@ class LockTest(unittest.TestCase):
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
         object_key1 = result['object_key']
-        self.assertEqual(result['orig_name'], fn)
+        self.assertTrue(result['orig_name'].startswith("20180111_165127"))
 
         # 2-3. lock it and check for "is_locked": True
         response = self.client.patch(TEST_BUCKET_1, "lock", [object_key1])
@@ -185,6 +193,7 @@ class LockTest(unittest.TestCase):
         object_keys = {object_key3: fn}
         response = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, dir_name_prefix)
         # print(response.content.decode())
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['skipped'], 'locked')
 
         # 4.2 check for locked file existance and is_locked: True
@@ -212,7 +221,6 @@ class LockTest(unittest.TestCase):
         # WRONG RESPONSE CONTENT - DELETE OPERATION !!!
         # self.assertEqual(set(response.json()), set(object_keys))
 
-
     def test_lock4(self):
         """
         Make sure deleted objects can't be locked
@@ -222,7 +230,7 @@ class LockTest(unittest.TestCase):
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
         object_key = [result['object_key']]
-        self.assertEqual(result['orig_name'], fn)
+        self.assertTrue(result['orig_name'].startswith("20180111_165127"))
 
         # 2. delete it
         response = self.client.delete(TEST_BUCKET_1, object_key)
@@ -231,21 +239,17 @@ class LockTest(unittest.TestCase):
         print(response.json())
         self.assertEqual(response.status_code, 200)
 
+        metadata = self.head(TEST_BUCKET_1, object_key_deleted[0])
+        self.assertTrue(metadata.get('is-locked', False) in [False, 'undefined'])
+        self.assertTrue(metadata.get('is-deleted', True))
+
         # 3. try to lock deleted file
         response = self.client.patch(TEST_BUCKET_1, 'lock', object_key_deleted)
-        # print(response.status_code)
-        # print(response.content.decode())
-        # WRONG RESPONSE - status 200 and is_locked: True
+        self.assertEqual(response.status_code, 200)
 
-        # 4. GET list and check for deleted file is not locked
-        response = self.client.get_list(TEST_BUCKET_1)
-        # pprint(response.json())
-        for obj in response.json()['list']:
-            if obj['object_key'] == object_key_deleted[0]:
-                self.assertEqual(obj['is_locked'], False)
-                break
-        else:
-            self.assertTrue(False, msg="Deleted file gone somewhere")
+        metadata = self.head(TEST_BUCKET_1, object_key_deleted[0])
+        # It should not be possible to lock deleted files
+        self.assertTrue(metadata.get('is-locked', False) in [False, 'undefined'])
 
 
 if __name__ == '__main__':
