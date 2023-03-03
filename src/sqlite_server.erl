@@ -35,7 +35,7 @@
 
 
 -spec(create_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      Name :: string(), UserId :: string() ) -> ok | {error, any()}).
+			      Name :: string(), UserId :: string()) -> ok | {error, any()}).
 create_pseudo_directory(BucketId, Prefix, Name, UserId)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_binary(Name) andalso erlang:is_list(UserId) ->
@@ -83,7 +83,6 @@ rename_object(BucketId, Prefix, SrcKey, DstKey, DstName, User) when erlang:is_li
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(SrcKey)
 	    andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
     SQL = sql_lib:rename_object(BucketId, Prefix, SrcKey, DstKey, DstName),
-io:fwrite("SQL: ~p~n", [SQL]),
     Timestamp = erlang:round(utils:timestamp()/1000),
     UserId = User#user.id,
     gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
@@ -212,14 +211,14 @@ handle_cast({delete_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}
 		    %% Mark directory as deleted
 		    SQL0 = sql_lib:delete_pseudo_directory(Prefix, Name),
 		    case sqlite3:sql_exec(DbName, SQL0) of
-			ok -> {noreply, State0};
-			_ ->
+			ok ->
 			    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
 			    update_db(DbName, TempFn, BucketId, UserId, Version1, SQL0),
 			    sqlite3:close(DbPid),
 			    unlock_db(BucketId),
 			    file:delete(TempFn),
-			    {noreply, State0}
+			    {noreply, State0};
+			_ -> {noreply, State0}
 		    end
 	    end;
 	locked ->

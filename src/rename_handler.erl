@@ -482,8 +482,8 @@ rename(Req0, BucketId, State, IndexContent) ->
 		    {true, Req1, []};
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		{dir_name, DstDirectoryName0} ->
-		    SrcObjectKey2 = lists:sublist(SrcObjectKey1, length(SrcObjectKey1)-1),  %% remove last "/"
-		    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, SrcObjectKey2, DstDirectoryName0, User),
+		    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, filename:basename(SrcObjectKey1),
+			DstDirectoryName0, User),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
 		    {true, Req1, []}
 	    end;

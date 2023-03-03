@@ -1,11 +1,17 @@
 import unittest
 import random
 
-from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1)
+from client_base import (
+    BASE_URL,
+    TEST_BUCKET_1,
+    USERNAME_1,
+    PASSWORD_1,
+    TestClient,
+    configure_boto3)
 from light_client import LightClient, generate_random_name, encode_to_hex
 
 
-class DeleteTest(unittest.TestCase):
+class DeleteTest(TestClient):
     """
     Operation DELETE tests
 
@@ -23,12 +29,13 @@ class DeleteTest(unittest.TestCase):
     def setUp(self):
         self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
         self.client.login(USERNAME_1, PASSWORD_1)
+        self.resource = configure_boto3()
+        self.purge_test_buckets()
 
     def test_delete_none(self):
         """
         negative test case - empty object_keys sent
         """
-
         object_keys = []
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         result = response.json()

@@ -46,12 +46,17 @@ create_table_if_not_exist(DbName) ->
     end.
 
 
--spec(create_pseudo_directory(Prefix :: string() | undefined, Name :: binary()) -> ok | {error, any()}).
-create_pseudo_directory(Prefix, Name)
-	when erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_binary(Name) ->
+-spec(create_pseudo_directory(Prefix0 :: string() | undefined, Name :: binary()) -> ok | {error, any()}).
+create_pseudo_directory(Prefix0, Name)
+	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined andalso erlang:is_binary(Name) ->
+    Prefix1 =
+	case Prefix0 of
+	    undefined -> "";
+	    _ -> Prefix0
+	end,
     Key = utils:hex(Name),
     Timestamp = erlang:round(utils:timestamp()/1000),
-    Data = [{prefix, Prefix},
+    Data = [{prefix, Prefix1},
 	    {key, Key},
 	    {orig_name, unicode:characters_to_list(Name)},
 	    {is_dir, true},
@@ -94,9 +99,9 @@ get_pseudo_directory(Prefix0, OrigName)
 delete_pseudo_directory(Prefix0, Name)
 	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	    andalso erlang:is_binary(Name) ->
-    SQL = ["DELETE FROM items WHERE (orig_name = ", sqlite3_lib:value_to_sql(Name),
-	    " AND is_dir = ", sqlite3_lib:value_to_sql(true), ")"
-	    " OR prefix LIKE \"", erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\""],
+    SQL = ["DELETE FROM items WHERE (orig_name = \"", Name, "\" AND is_dir = ",
+	    sqlite3_lib:value_to_sql(true), ") OR prefix LIKE \"",
+	    erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\""],
     Prefix1 =
 	case Prefix0 of
 	    undefined -> "";

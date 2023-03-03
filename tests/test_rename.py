@@ -1,11 +1,20 @@
 import unittest
 from pprint import pprint
+import time
 
-from client_base import (BASE_URL, TEST_BUCKET_1, USERNAME_1, PASSWORD_1, USERNAME_2, PASSWORD_2)
+from client_base import (
+    BASE_URL,
+    TEST_BUCKET_1,
+    USERNAME_1,
+    PASSWORD_1,
+    USERNAME_2,
+    PASSWORD_2,
+    configure_boto3,
+    TestClient)
 from light_client import LightClient, generate_random_name, encode_to_hex
 
 
-class RenameTest(unittest.TestCase):
+class RenameTest(TestClient):
     """
     #
     # Rename pseudo-directory:
@@ -413,34 +422,20 @@ class RenameTest(unittest.TestCase):
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
         self.assertEqual(result[0]["orig_name"], fn)
         self.assertEqual(result[0]["is_dir"], 0)
-        self.assertEqual(result[0]["is_locked"], 0)
-        self.assertEqual(result[0]["bytes"], 2773205)
-        self.assertTrue(("guid" in result[0]))
-        self.assertTrue(("bytes" in result[0]))
-        self.assertTrue(("version" in result[0]))
-        self.assertTrue(("last_modified_utc" in result[0]))
-        self.assertTrue(("author_id" in result[0]))
-        self.assertTrue(("author_name" in result[0]))
-        self.assertTrue(("author_tel" in result[0]))
-        self.assertTrue(("lock_user_id" in result[0]))
-        self.assertTrue(("lock_user_name" in result[0]))
-        self.assertTrue(("lock_user_tel" in result[0]))
-        self.assertTrue(("lock_modified_utc" in result[0]))
-        self.assertTrue(("md5" in result[0]))
 
-        # 2. Rename it
+        # 2. Rename file
         random_name = generate_random_name()
         res = self.client.rename(TEST_BUCKET_1, object_key, random_name)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['orig_name'], random_name)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["orig_name"], random_name)
@@ -460,12 +455,12 @@ class RenameTest(unittest.TestCase):
         self.assertTrue(("lock_modified_utc" in result[0]))
         self.assertTrue(("md5" in result[0]))
 
-        # 3. Create directory with the same name
+        # 3. Create directory with different name
         random_dir_name = generate_random_name()
         res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
         names = [i["orig_name"] for i in result]
@@ -473,18 +468,48 @@ class RenameTest(unittest.TestCase):
         self.assertEqual(result[0]["is_dir"], 0)
         self.assertEqual(result[0]["is_locked"], 0)
         self.assertEqual(result[0]["bytes"], 2773205)
-        self.assertTrue(("guid" in result[0]))
-        self.assertTrue(("bytes" in result[0]))
-        self.assertTrue(("version" in result[0]))
-        self.assertTrue(("last_modified_utc" in result[0]))
-        self.assertTrue(("author_id" in result[0]))
-        self.assertTrue(("author_name" in result[0]))
-        self.assertTrue(("author_tel" in result[0]))
-        self.assertTrue(("lock_user_id" in result[0]))
-        self.assertTrue(("lock_user_name" in result[0]))
-        self.assertTrue(("lock_user_tel" in result[0]))
-        self.assertTrue(("lock_modified_utc" in result[0]))
-        self.assertTrue(("md5" in result[0]))
+
+        # Create dir with prefix
+        random_prefix = generate_random_name()
+        res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_prefix)
+        self.assertEqual(res.status_code, 204)
+
+        time.sleep(1)  # time necessary for server to update db
+        encoded_prefix = encode_to_hex(random_prefix)
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertTrue(encoded_prefix in ["{}/".format(i['key']) for i in result])
+        self.assertEqual(len(result), 3)
+
+        random_dir_name = generate_random_name()
+        encoded_random_prefix = encode_to_hex(random_prefix)
+        res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name,
+                                                  prefix=encoded_random_prefix)
+        self.assertEqual(res.status_code, 204)
+
+        time.sleep(1)  # time necessary for server to update db
+        encoded_prefix = encode_to_hex(random_prefix)
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 4)
+        self.assertTrue(encode_to_hex(random_dir_name) in ["{}/".format(i['key']) for i in result])
+        self.assertTrue(encoded_random_prefix in [i['prefix'] for i in result])
+
+        # rename nested pseudo-dir
+        random_new_name = generate_random_name()
+        res = self.client.rename(TEST_BUCKET_1, encode_to_hex(random_dir_name), random_new_name,
+                                 prefix=encoded_random_prefix)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['dir_name'], random_new_name)
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 4)
+        dir_index = None
+        for idx, dct in enumerate(result):
+            if dct["orig_name"] == random_new_name:
+                dir_index = idx
+                break
+        self.assertTrue(dir_index is not None)
+        self.assertTrue(result[dir_index]["prefix"] == encoded_random_prefix)
 
 
 if __name__ == '__main__':

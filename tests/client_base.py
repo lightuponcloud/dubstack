@@ -305,13 +305,15 @@ class TestClient(unittest.TestCase):
             "tenant_name": tenant_name
         }
 
-    def create_pseudo_directory(self, name):
+    def create_pseudo_directory(self, name, prefix=None):
         req_headers = {
             "content-type": "application/json",
             "authorization": "Token {}".format(self.token),
         }
+        if prefix is None:
+            prefix = ""
         data = {
-            "prefix": "",
+            "prefix": prefix,
             "directory_name": name
         }
         url = "{}/riak/list/{}/".format(BASE_URL, TEST_BUCKET_1)

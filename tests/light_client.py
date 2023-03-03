@@ -10,6 +10,7 @@ from base64 import b64encode, b64decode
 import json
 import string
 import random
+import codecs
 
 from dvvset import DVVSet
 
@@ -18,8 +19,8 @@ def generate_random_name():
     """
     Returns a random name of weird characters.
     """
-    alphabet = '{}{}ЄєІіЇїҐґ'.format(string.digits, string.ascii_lowercase)
-    return ''.join(random.sample(alphabet, 20))
+    alphabet = "{}{}ЄєІіЇїҐґ".format(string.digits, string.ascii_lowercase)
+    return "".join(random.sample(alphabet, 20))
 
 
 def encode_to_hex(dir_name: str = None, dir_names: list = None):
@@ -34,6 +35,14 @@ def encode_to_hex(dir_name: str = None, dir_names: list = None):
     return False
 
 
+def decode_from_hex(hex_encoded_str):
+    """
+    Decodes hex directory name
+    """
+    decode_hex = codecs.getdecoder("hex_codec")
+    return decode_hex(hex_encoded_str)[0].decode("utf-8")
+
+
 class LightClient:
     """
     LightUpon.cloud client.
@@ -44,7 +53,7 @@ class LightClient:
     FILE_UPLOAD_CHUNK_SIZE = 2000000
 
     def __init__(self, url, username, password):
-        if url.endswith('/'):
+        if url.endswith("/"):
             self.url = url
         else:
             self.url = "{}/".format(url)
@@ -59,10 +68,10 @@ class LightClient:
         creds = {"login": username, "password": password}
         url = "{}riak/login/".format(self.url)
         response = requests.post(url, data=json.dumps(creds),
-                                 headers={'content-type': 'application/json'})
+                                 headers={"content-type": "application/json"})
         data = response.json()
-        self.token = data['token']
-        self.user_id = data['id']
+        self.token = data["token"]
+        self.user_id = data["id"]
 
     def _increment_version(self, last_seen_version, modified_utc):
         """
@@ -91,11 +100,11 @@ class LightClient:
         md5_digest = md5.hexdigest()
         md5_list.append(md5_digest)
         multipart_form_data = {
-            'prefix': prefix,
-            'files[]': (fn, ''),  # first try empty request
-            'md5': md5_digest,
-            'guid': guid,
-            'version': version
+            "prefix": prefix,
+            "files[]": (fn, ""),  # first try empty request
+            "md5": md5_digest,
+            "guid": guid,
+            "version": version
         }
         chunk_size = len(chunk)
         if file_size > self.FILE_UPLOAD_CHUNK_SIZE:
@@ -108,15 +117,15 @@ class LightClient:
             ct_range = "bytes 0-{}/{}".format(file_size - 1, file_size)
             offset = 0
         headers = {
-            'accept': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
-            'content-range': ct_range
+            "accept": "application/json",
+            "authorization": "Token {}".format(self.token),
+            "content-range": ct_range
         }
         if offset + chunk_size == file_size:
             # last chunk
             etags = ",".join(["{},{}".format(i + 1, md5_list[i]) for i in range(len(md5_list))])
             multipart_form_data.update({
-                'etags[]': etags
+                "etags[]": etags
             })
 
         if part_num == 1:
@@ -129,50 +138,50 @@ class LightClient:
         if response.status_code == 206:
             # skip chunk upload, as server has it aleady
             response_json = response.json()
-            upload_id = response_json['upload_id']
-            guid = response_json['guid']
-            end_byte = response_json['end_byte']
+            upload_id = response_json["upload_id"]
+            guid = response_json["guid"]
+            end_byte = response_json["end_byte"]
             part_num += 1
             if offset + chunk_size == file_size:
-                response_json.update({'md5_list': md5_list, 'part_num': part_num, 'end_byte': end_byte})
+                response_json.update({"md5_list": md5_list, "part_num": part_num, "end_byte": end_byte})
                 return response_json
             else:
-                return {'guid': guid, 'upload_id': upload_id, 'end_byte': end_byte,
-                        'md5_list': md5_list, 'part_num': part_num}
+                return {"guid": guid, "upload_id": upload_id, "end_byte": end_byte,
+                        "md5_list": md5_list, "part_num": part_num}
         if response.status_code != 200:
-            return {'error': response.json()}
+            return {"error": response.json()}
         response_json = response.json()
 
-        upload_id = response_json['upload_id']
-        guid = response_json['guid']  # server could change GUID
-        server_md5 = response_json['md5']
+        upload_id = response_json["upload_id"]
+        guid = response_json["guid"]  # server could change GUID
+        server_md5 = response_json["md5"]
         if md5_digest != server_md5:
-            return {'error': 'md5 mismatch'}
+            return {"error": "md5 mismatch"}
 
         # upload an actual data now
         multipart_form_data.update({
-            'files[]': (fn, chunk),
-            'guid': guid  # GUID could change
+            "files[]": (fn, chunk),
+            "guid": guid  # GUID could change
         })
         response = requests.post(r_url, files=multipart_form_data, headers=headers)
         if response.status_code != 200:
-            return {'error': response.json()}
+            return {"error": response.json()}
         response_json = response.json()
-        end_byte = response_json['end_byte']
+        end_byte = response_json["end_byte"]
         if offset + chunk_size == file_size:
             # the last chunk has been processed, expect complete_upload response
-            response_json.update({'md5_list': md5_list, 'part_num': part_num, 'end_byte': end_byte})
+            response_json.update({"md5_list": md5_list, "part_num": part_num, "end_byte": end_byte})
             return response_json
         else:
-            server_md5 = response_json['md5']
+            server_md5 = response_json["md5"]
             if md5_digest != server_md5:
-                return {'error': 'md5 mismatch'}
-            upload_id = response_json['upload_id']
+                return {"error": "md5 mismatch"}
+            upload_id = response_json["upload_id"]
             part_num += 1
-        return {'guid': guid, 'upload_id': upload_id, 'end_byte': end_byte,
-                'md5_list': md5_list, 'part_num': part_num}
+        return {"guid": guid, "upload_id": upload_id, "end_byte": end_byte,
+                "md5_list": md5_list, "part_num": part_num}
 
-    def upload(self, bucket_id, file_name, prefix='', guid='', last_seen_version: str = ''):
+    def upload(self, bucket_id, file_name, prefix="", guid="", last_seen_version: str = ""):
         """
         Uploads file to server by splitting it to chunks and testing if server
         has chunk already, before actual upload.
@@ -190,26 +199,26 @@ class LightClient:
 
         md5_list = []
         result = None
-        with open(file_name, 'rb') as fd:
+        with open(file_name, "rb") as fd:
             _read_chunk = lambda: fd.read(self.FILE_UPLOAD_CHUNK_SIZE)
             part_num = 1
             upload_id = None
-            for chunk in iter(_read_chunk, ''):
-                # avoiding recursion as there might be 1000's of parts
+            for chunk in iter(_read_chunk, ""):
+                # avoiding recursion as there might be 1000"s of parts
                 result = self.upload_part(bucket_id, prefix, file_name, chunk,
                                           file_size, part_num, guid, upload_id, version, md5_list)
-                if result and 'error' in result:
+                if result and "error" in result:
                     break
-                upload_id = result['upload_id']
-                guid = result['guid']
-                part_num = result['part_num']
-                md5_list = result['md5_list']
-                end_byte = result['end_byte']
+                upload_id = result["upload_id"]
+                guid = result["guid"]
+                part_num = result["part_num"]
+                md5_list = result["md5_list"]
+                end_byte = result["end_byte"]
                 if end_byte + 1 == file_size:
                     break
         return result
 
-    def get_list(self, bucket_id, prefix: str = ''):
+    def get_list(self, bucket_id, prefix: str = ""):
         """
         GET /riak/list/[:bucket_id]
         Method uses this API endpoint to get the list of objects. It returns contents of cached index, containing list
@@ -229,8 +238,8 @@ class LightClient:
 
         url = "{}riak/list/{}/?prefix={}".format(self.url, bucket_id, prefix)
         headers = {
-            'accept': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "accept": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         return requests.get(url, headers=headers)
 
@@ -256,14 +265,14 @@ class LightClient:
         """
 
         url = "{}riak/list/{}/".format(self.url, bucket_id)
-        data = {"object_keys": object_keys, 'prefix': prefix}
+        data = {"object_keys": object_keys, "prefix": prefix}
         headers = {
-            'accept': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "accept": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         return requests.delete(url, data=json.dumps(data), headers=headers)
 
-    def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ''):
+    def create_pseudo_directory(self, bucket_id, name: str, prefix: str = ""):
         """
         POST /riak/list/[:bucket_id]
         Uses this API endpoint to create pseudo-directory, that is stored as Hex-encoded value of UTF8 string.
@@ -278,17 +287,17 @@ class LightClient:
         Code : 204 No Content
         """
         headers = {
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
-            'prefix': prefix,
-            'directory_name': name
+            "prefix": prefix,
+            "directory_name": name
         }
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.post(url, json=data, headers=headers)
 
-    def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str = ''):
+    def patch(self, bucket_id: str, operation: str, object_keys: list, prefix: str = ""):
         """
         PATCH /riak/list/[:bucket_id]
         This API andpoint allows to lock, unlock, undelete objects.
@@ -300,8 +309,8 @@ class LightClient:
         """
 
         headers = {
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
             "op": operation,  # "undelete", "lock", "unlock"
@@ -312,8 +321,8 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.patch(url, json=data, headers=headers)
 
-    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = '',
-             dst_prefix: str = ''):
+    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = "",
+             dst_prefix: str = ""):
         """
         POST /riak/move/[:src_bucket_id]/
         Move object or directory.
@@ -334,8 +343,8 @@ class LightClient:
         """
 
         headers = {
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
             "src_object_keys": object_keys,
@@ -346,8 +355,8 @@ class LightClient:
         url = "{}riak/move/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)
 
-    def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = '',
-             dst_prefix: str = ''):
+    def copy(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = "",
+             dst_prefix: str = ""):
         """
         POST /riak/copy/[:src_bucket_id]/
         Copy object or directory.
@@ -371,8 +380,8 @@ class LightClient:
 
         headers = {
 
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
             "src_object_keys": object_keys,
@@ -383,7 +392,7 @@ class LightClient:
         url = "{}riak/copy/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)
 
-    def rename(self, src_bucket_id, src_object_key: str, dst_object_name: str, prefix: str = ''):
+    def rename(self, src_bucket_id, src_object_key: str, dst_object_name: str, prefix: str = ""):
         """
         POST /riak/rename/[:src_bucket_id]/
         Renames object or directory. Changes "orig_name" meta tag when called on object.
@@ -404,8 +413,8 @@ class LightClient:
 
         headers = {
 
-            'content-type': 'application/json',
-            'authorization': 'Token {}'.format(self.token),
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
         }
         data = {
             "src_object_key": src_object_key,
