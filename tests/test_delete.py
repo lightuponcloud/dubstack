@@ -1,5 +1,6 @@
 import unittest
 import random
+import time
 
 from client_base import (
     BASE_URL,
@@ -45,7 +46,6 @@ class DeleteTest(TestClient):
         """
         # Delete files from root: one and many
         """
-
         # upload 1 file
         fn = "20180111_165127.jpg"
         result = self.client.upload(TEST_BUCKET_1, fn)
@@ -68,6 +68,10 @@ class DeleteTest(TestClient):
         # delete uploaded files and final check for "is_deleted": True
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         self.assertTrue(not set(object_keys) ^ set(response.json()))
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 0)
 
         response = self.client.get_list(TEST_BUCKET_1)
         result = response.json()
@@ -97,6 +101,7 @@ class DeleteTest(TestClient):
         # 2.1 delete file from pseudo-directory and check for is_deleted: True
         response = self.client.delete(TEST_BUCKET_1, object_keys=object_key, prefix=dir_name_prefix)
         self.assertEqual(response.json(), object_key)
+
 
         result = self.client.get_list(TEST_BUCKET_1).json()
         for obj in result['list']:
@@ -131,6 +136,10 @@ class DeleteTest(TestClient):
         result = response.json()
         self.assertEqual(result, [dir_name_prefix])
 
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 0)
+
         # create directories
         dir_names = [generate_random_name() for _ in range(3)]
         for name in dir_names:
@@ -148,25 +157,29 @@ class DeleteTest(TestClient):
         """
         # Delete pseudo-directories from pseudo-directory: one and many
         """
-
         # create main pseudo-directory
-        dir_name = generate_random_name()
-        main_dir_name_prefix = encode_to_hex(dir_name)
-        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name)
+        main_dir_name = generate_random_name()
+        main_dir_name_prefix = encode_to_hex(main_dir_name)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, main_dir_name)
         self.assertEqual(response.status_code, 204)
 
         # create 1 pseudo-directory in main pseudo-directory
-        dir_name = generate_random_name()
-        dir_name_prefix = encode_to_hex(dir_name)
-        response = self.client.create_pseudo_directory(TEST_BUCKET_1, dir_name, main_dir_name_prefix)
+        nested_dir_name = generate_random_name()
+        nested_dir_name_prefix = encode_to_hex(nested_dir_name)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, nested_dir_name, main_dir_name_prefix)
         self.assertFalse(bool(response.content), msg=response.content.decode())
         self.assertEqual(response.status_code, 204)
 
         # delete 1 created pseudo-directory from main pseudo-directory
-        object_keys = [dir_name_prefix]
-        response = self.client.delete(TEST_BUCKET_1, object_keys, main_dir_name_prefix)
+        object_keys = [nested_dir_name_prefix]
+
+        response = self.client.delete(TEST_BUCKET_1, object_keys, prefix=main_dir_name_prefix)
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 1)  # only main dir should exist
 
         # create 2-10 pseudo-directories in main pseudo-directory
         dir_names = [generate_random_name() for _ in range(random.randint(2, 10))]
@@ -185,6 +198,10 @@ class DeleteTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 0)  # only main dir should exist
 
 
 if __name__ == '__main__':

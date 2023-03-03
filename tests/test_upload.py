@@ -9,12 +9,30 @@ import requests
 from botocore import exceptions
 
 from dvvset import DVVSet
-from client_base import (TestClient, TEST_BUCKET_1, TEST_BUCKET_2,
-                         FILE_UPLOAD_CHUNK_SIZE, UPLOADS_BUCKET_NAME,
-                         BASE_URL, RIAK_ACTION_LOG_FILENAME)
+from client_base import (
+    BASE_URL,
+    TEST_BUCKET_1,
+    TEST_BUCKET_2,
+    FILE_UPLOAD_CHUNK_SIZE,
+    UPLOADS_BUCKET_NAME,
+    RIAK_ACTION_LOG_FILENAME,
+    USERNAME_1,
+    PASSWORD_1,
+    USERNAME_2,
+    PASSWORD_2,
+    configure_boto3,
+    TestClient)
+from light_client import LightClient, generate_random_name, encode_to_hex
 
 
 class UploadTest(TestClient):
+
+    def setUp(self):
+        self.client = LightClient(BASE_URL, USERNAME_1, PASSWORD_1)
+        self.user_id = self.client.user_id
+        self.token = self.client.token
+        self.resource = configure_boto3()
+        self.purge_test_buckets()
 
     def _upload_request(self, headers, form_data, url=None, modified_utc=None):
         """
@@ -35,7 +53,7 @@ class UploadTest(TestClient):
 
         if "version" not in form_data:
             dvvset = DVVSet()
-            dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+            dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
             version = b64encode(json.dumps(dot).encode())
             form_data.update({
                 "version": version,
@@ -53,7 +71,7 @@ class UploadTest(TestClient):
             })
         req_headers = {
             "accept": "application/json",
-            "authorization": "Token {}".format(self.token),
+            "authorization": "Token {}".format(self.client.token),
         }
         req_headers.update(headers)
         # send request without the binary data first
@@ -69,7 +87,7 @@ class UploadTest(TestClient):
         print("Upload {}".format(int(t2-t1)))
 
         # Test SQLite db contents
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
@@ -102,7 +120,7 @@ class UploadTest(TestClient):
             self.assertEqual(fd.read(), contents)
 
         # Test SQLite db contents
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn.lower())
@@ -391,7 +409,7 @@ class UploadTest(TestClient):
         # increment version
         dot = json.loads(b64decode(response.json()["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
 
         form_data.update({"version": b64encode(json.dumps(new_version).encode())})
@@ -454,7 +472,7 @@ class UploadTest(TestClient):
         # first increment version
         dot = json.loads(b64decode(response.json()["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         form_data.update({"version": b64encode(json.dumps(new_version).encode())})
         response = self._upload_request(headers, form_data)
@@ -475,7 +493,7 @@ class UploadTest(TestClient):
         # increment version
         dot = json.loads(b64decode(response.json()["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         response = self._upload_request(headers, {"guid": existing_guid,
                                                   "version": b64encode(json.dumps(new_version).encode())})
@@ -484,7 +502,7 @@ class UploadTest(TestClient):
 
         dot = json.loads(b64decode(response.json()["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         response = self._upload_request(headers, {"guid": "34bc4542-af5d-40b0-964c-7b1b25c214c2",
                                                   "version": b64encode(json.dumps(new_version).encode())})
@@ -498,7 +516,7 @@ class UploadTest(TestClient):
 
         dot = json.loads(b64decode(response.json()["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, "1515683247"), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         response = self._upload_request(headers, {"guid": "34bc4542-af5d-40b0-964c-7b1b25c214c2",
                                                   "files[]": (conflicted_fn, "something"),
@@ -510,7 +528,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dvvset = DVVSet()
         modified_utc = "1515683246"
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         version = b64encode(json.dumps(dot).encode())
         form_data = {
             "prefix": "",
@@ -617,7 +635,7 @@ class UploadTest(TestClient):
 
         # test version check
         modified_utc = "1515683247"
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         form_data["version"] = b64encode(json.dumps(dot).encode())
         url = "{}/riak/upload/{}/{}/2/".format(BASE_URL, TEST_BUCKET_1, second_upload_id)
         response = self._upload_request(headers, form_data, url=url)
@@ -647,7 +665,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dvvset = DVVSet()
         modified_utc = "1515683246"
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         version = b64encode(json.dumps(dot).encode())
         fn = "20180111_165127.jpg"
         form_data = {
@@ -670,7 +688,7 @@ class UploadTest(TestClient):
         self.assertEqual(bytes.fromhex(meta["orig-filename"]), fn.encode())
         self.assertEqual(meta["guid"], guid)
         self.assertEqual(meta["bucket_id"], TEST_BUCKET_1)
-        self.assertEqual(meta["author-id"], self.user_id)
+        self.assertEqual(meta["author-id"], self.client.user_id)
         self.assertEqual(meta["is-deleted"], "false")
 
     def test_find_chunk(self):
@@ -682,7 +700,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dvvset = DVVSet()
         modified_utc = "1515683246"
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         version = b64encode(json.dumps(dot).encode())
         form_data = {
             "prefix": "",
@@ -720,7 +738,7 @@ class UploadTest(TestClient):
         # now test if two existing chunks are used when parts with the same md5 sums uploaded
         dot = json.loads(b64decode(response_json["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
 
         headers = {"content-range": "bytes 0-1999999/2000001"}
@@ -796,7 +814,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dot = json.loads(b64decode(response_json["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         form_data = {
             "prefix": "",
@@ -850,7 +868,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dvvset = DVVSet()
         modified_utc = "1515683246"
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         version = b64encode(json.dumps(dot).encode())
         form_data = {
             "prefix": "",
@@ -893,7 +911,7 @@ class UploadTest(TestClient):
         headers = {"content-range": "bytes 0-1999999/2000001"}
         dvvset = DVVSet()
         modified_utc = str(int(time.time()))
-        dot = dvvset.create(dvvset.new(modified_utc), self.user_id)
+        dot = dvvset.create(dvvset.new(modified_utc), self.client.user_id)
         version = b64encode(json.dumps(dot).encode())
         form_data = {
             "prefix": "",
@@ -929,7 +947,7 @@ class UploadTest(TestClient):
         # upload a new version of file
         dot = json.loads(b64decode(response_json["version"]))
         context = dvvset.join(dot)
-        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.user_id)
+        new_dot = dvvset.update(dvvset.new_with_history(context, str(int(time.time()))), dot, self.client.user_id)
         new_version = dvvset.sync([dot, new_dot])
         form_data = {
             "prefix": "",
@@ -959,6 +977,20 @@ class UploadTest(TestClient):
         # now make sure old object is removed
         with self.assertRaises(exceptions.ClientError):
             self.download_object(TEST_BUCKET_1, "~object/{}/{}/1_{}".format(old_guid, old_upload_id, old_md5))
+
+    def test_sqlite_update(self):
+
+        dir_name = "test-dir"
+        prefix = dir_name.encode().hex()
+        dir_response = self.create_pseudo_directory(dir_name)
+        self.assertEqual(dir_response.status_code, 204)
+        fn = "20180111_165127.jpg"
+        res = self.client.upload(TEST_BUCKET_1, fn, prefix=prefix)
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 2)
+        self.assertTrue("{}/".format(prefix) in [i["prefix"] for i in result])
+
 
 if __name__ == "__main__":
     unittest.main()

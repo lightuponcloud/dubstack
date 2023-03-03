@@ -81,7 +81,7 @@ class MKdirTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
 
-        time.sleep(2)  # time necessary for server to update db
+        time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
