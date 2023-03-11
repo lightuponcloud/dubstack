@@ -35,12 +35,12 @@
 
 
 -spec(create_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      Name :: string(), UserId :: string()) -> ok | {error, any()}).
-create_pseudo_directory(BucketId, Prefix, Name, UserId)
+			      Name :: string(), User :: #user{}) -> ok | {error, any()}).
+create_pseudo_directory(BucketId, Prefix, Name, User)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
-	    andalso erlang:is_binary(Name) andalso erlang:is_list(UserId) ->
+	    andalso erlang:is_binary(Name) ->
     Timestamp = erlang:round(utils:timestamp()/1000),
-    gen_server:cast(?MODULE, {create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}).
+    gen_server:cast(?MODULE, {create_pseudo_directory, BucketId, Prefix, Name, User, Timestamp}).
 
 
 -spec(delete_pseudo_directory(BucketId :: string(), Prefix :: string(),
@@ -161,7 +161,8 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}, State0) ->
+handle_cast({create_pseudo_directory, BucketId, Prefix, Name, User, Timestamp}, State0) ->
+    UserId = User#user.id,
     %% Acquire lock on db first
     case lock_db(BucketId) of
 	ok ->
@@ -177,7 +178,7 @@ handle_cast({create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}
 			    {noreply, State0};
 			[{columns, _}, {rows,[]}] ->
 			    %% Create one
-			    case sql_lib:create_pseudo_directory(Prefix, Name) of
+			    case sql_lib:create_pseudo_directory(Prefix, Name, User) of
 				{error, Reason} ->
 				    lager:error("[sqlite_server] Failed composing SQL for ~p/~p ~p ~p ~p: ~p",
 						[BucketId, Prefix, Name, UserId, Timestamp, Reason]);

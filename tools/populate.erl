@@ -58,7 +58,7 @@ create_pseudo_directories(DbName, Prefix, IsDeleted) ->
     end.
 
 
-sql_exec(DbName, Prefix0, Obj0, true) -> ok; %% skip deleted files
+sql_exec(_DbName, _Prefix0, _Obj0, true) -> ok; %% skip deleted files
 sql_exec(DbName, Prefix0, Obj0, IsDeleted0) ->
     Key = proplists:get_value(object_key, Obj0),
     OrigName = proplists:get_value(orig_name, Obj0),

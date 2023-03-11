@@ -3,7 +3,7 @@
 %%
 -module(sql_lib).
 
--export([create_table_if_not_exist/1, create_pseudo_directory/2, add_object/2,
+-export([create_table_if_not_exist/1, create_pseudo_directory/3, add_object/2,
 	 lock_object/3, delete_object/2, get_object/2, 
 	 get_pseudo_directory/2, delete_pseudo_directory/2,
 	 rename_object/5, rename_pseudo_directory/4]).
@@ -46,8 +46,9 @@ create_table_if_not_exist(DbName) ->
     end.
 
 
--spec(create_pseudo_directory(Prefix0 :: string() | undefined, Name :: binary()) -> ok | {error, any()}).
-create_pseudo_directory(Prefix0, Name)
+-spec(create_pseudo_directory(Prefix0 :: string() | undefined, Name :: binary(),
+			      User :: #user{}) -> ok | {error, any()}).
+create_pseudo_directory(Prefix0, Name, User)
 	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined andalso erlang:is_binary(Name) ->
     Prefix1 =
 	case Prefix0 of
@@ -56,24 +57,16 @@ create_pseudo_directory(Prefix0, Name)
 	end,
     Key = utils:hex(Name),
     Timestamp = erlang:round(utils:timestamp()/1000),
-    Data = [{prefix, Prefix1},
-	    {key, Key},
-	    {orig_name, unicode:characters_to_list(Name)},
-	    {is_dir, true},
-	    {is_locked, false},
-	    {bytes, 0},
-	    {guid, ""},
-	    {version, ""},
-	    {last_modified_utc, Timestamp},
-	    {author_id, ""},
-	    {author_name, ""},
-	    {author_tel, ""},
-	    {md5, ""}],
-    try sqlite3_lib:write_sql(items, Data) of
-        SQL -> SQL
-    catch
-        _:Exception -> {error, Exception}
-    end.
+    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, is_locked, ",
+     "bytes, last_modified_utc, author_id, author_name, author_tel) ",
+     "VALUES ((SELECT id FROM items WHERE prefix = ", sqlite3_lib:value_to_sql(Prefix1),
+     " AND key = ", sqlite3_lib:value_to_sql(Key), "), ",
+     sqlite3_lib:value_to_sql(Prefix1), ", ", sqlite3_lib:value_to_sql(Key), ", ", 
+     sqlite3_lib:value_to_sql(Name), ", ", sqlite3_lib:value_to_sql(true), ", ",
+     sqlite3_lib:value_to_sql(false), ", ", sqlite3_lib:value_to_sql(0), ", ",
+     sqlite3_lib:value_to_sql(Timestamp), ", ", sqlite3_lib:value_to_sql(User#user.id),
+     ", ", sqlite3_lib:value_to_sql(User#user.name), ", ",
+     sqlite3_lib:value_to_sql(User#user.tel), ");"].
 
 %%
 %% Returns SQL for querying pseudo-directory by its prefix and name.
@@ -134,28 +127,21 @@ add_object(Prefix0, Obj)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    Data = [{prefix, Prefix1},
-	    {key, Obj#object.key},
-	    {orig_name, Obj#object.orig_name},
-	    {is_dir, false},
-	    {is_locked, Obj#object.is_locked},
-	    {bytes, Obj#object.bytes},
-	    {guid, Obj#object.guid},
-	    {version, Obj#object.version},
-	    {last_modified_utc, Obj#object.upload_time},
-	    {author_id, Obj#object.author_id},
-	    {author_name, Obj#object.author_name},
-	    {author_tel, Obj#object.author_tel},
-	    {lock_user_id, Obj#object.lock_user_id},
-	    {lock_user_name, Obj#object.lock_user_name},
-	    {lock_user_tel, Obj#object.lock_user_tel},
-	    {lock_modified_utc, Obj#object.lock_modified_utc},
-	    {md5, Obj#object.md5}],
-    try sqlite3_lib:write_sql(items, Data) of
-        SQL -> SQL
-    catch
-        _:Exception -> {error, Exception}
-    end.
+    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, ",
+     "is_locked, bytes, guid, version, last_modified_utc, author_id, "
+     "author_name, author_tel, lock_user_id, lock_user_name, lock_user_tel, "
+     "lock_modified_utc, md5) VALUES ((SELECT id FROM items WHERE prefix = ",
+     sqlite3_lib:value_to_sql(Prefix1), " AND key = ", sqlite3_lib:value_to_sql(Obj#object.key), "), ",
+     sqlite3_lib:value_to_sql(Prefix1), ", ", sqlite3_lib:value_to_sql(Obj#object.key), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.orig_name), ", ", sqlite3_lib:value_to_sql(false), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.is_locked), ", ", sqlite3_lib:value_to_sql(Obj#object.bytes), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.guid), ", ", sqlite3_lib:value_to_sql(Obj#object.version), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.upload_time), ", ", sqlite3_lib:value_to_sql(Obj#object.author_id), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.author_name), ", ", sqlite3_lib:value_to_sql(Obj#object.author_tel), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.lock_user_id), ", ", sqlite3_lib:value_to_sql(Obj#object.lock_user_name), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.lock_user_tel), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.lock_modified_utc), ", ",
+     sqlite3_lib:value_to_sql(Obj#object.md5), ");"].
 
 %%
 %% Get object key if exists

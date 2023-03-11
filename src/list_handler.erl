@@ -590,7 +590,7 @@ create_pseudo_directory(Req0, State) when erlang:is_list(State) ->
 		    js_handler:too_many(Req0);
                _ ->
                     User = proplists:get_value(user, State),
-		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User#user.id),
+		    sqlite_server:create_pseudo_directory(BucketId, Prefix, DirectoryName0, User),
                     ActionLogRecord0 = #riak_action_log_record{
                        action="mkdir",
                        user_name=User#user.name,
