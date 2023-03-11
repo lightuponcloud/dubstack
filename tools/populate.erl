@@ -70,11 +70,6 @@ sql_exec(DbName, Prefix0, Obj0, IsDeleted0) ->
 	    null -> erlang:round(utils:timestamp()/1000);
 	    T -> T
 	end,
-    IsDeleted1 =
-	case IsDeleted0 of
-	    true -> true;
-	    false -> proplists:get_value(is_deleted, Obj0)
-	end,
     Obj1 = #object{
 	key = Key,
 	orig_name = OrigName,
@@ -82,7 +77,6 @@ sql_exec(DbName, Prefix0, Obj0, IsDeleted0) ->
 	guid = proplists:get_value(guid, Obj0),
 	version = proplists:get_value(version, Obj0),
 	upload_time = proplists:get_value(upload_time, Obj0),
-	is_deleted = IsDeleted1,
 	author_id = UserId,
 	author_name = UserName,
 	author_tel = UserTel,
@@ -231,14 +225,13 @@ main() ->
 	    case utils:ends_with(erlang:list_to_binary(I), IndexName1) of
 		true ->
 		    DirPrefix = utils:dirname(I),
-		    IsDeleted =
+		    IsDeleted0 =
 			case DirPrefix of
 			    undefined -> false;
 			    _ -> is_deleted(erlang:list_to_binary(DirPrefix))
 			end,
-		    io:fwrite("IsDeleted: ~p~n", [IsDeleted]),
 		    %% Add pseudo-directories first
-		    create_pseudo_directories(DbName, DirPrefix, IsDeleted),
+		    create_pseudo_directories(DbName, DirPrefix, IsDeleted0),
 		    case riak_api:get_object(BucketId, I) of
 			{error, _Reason} -> ok;
 			not_found -> ok;
@@ -247,7 +240,12 @@ main() ->
 			    List1 = proplists:get_value(list, Index),
 			    lists:foreach(
 				fun(J) ->
-				    sql_exec(DbName, utils:dirname(I), J, IsDeleted)
+				    IsDeleted1 =
+					case IsDeleted0 of
+					    true -> true;
+					    false -> proplists:get_value(is_deleted, J)
+					end,
+				    sql_exec(DbName, utils:dirname(I), J, IsDeleted1)
 				end, List1)
 		    end;
 		false -> ok
