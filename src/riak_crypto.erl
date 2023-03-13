@@ -1,6 +1,7 @@
 -module(riak_crypto).
 
--export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0, random_string/0, md5/1]).
+-export([sign_v4/7, hash_password/1, check_password/3, uuid4/0, seed/0,
+	 random_string/0, random_string/1, md5/1]).
 
 -include("riak.hrl").
 
@@ -175,7 +176,9 @@ uuid4() ->
 -spec random_string() -> string().
 
 random_string() ->
-    Length = 20,
+    random_string(20).
+
+random_string(Length) ->
     AllowedChars = "0123456789abcdefghijklmnopqrstuvwxyz",
     lists:foldl(
 	fun(_, Acc) ->

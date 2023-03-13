@@ -166,7 +166,7 @@ handle_cast({create_pseudo_directory, BucketId, Prefix, Name, User, Timestamp}, 
     %% Acquire lock on db first
     case lock_db(BucketId) of
 	ok ->
-	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
+	    DbName = erlang:list_to_atom(lists:flatten(["sql_", riak_crypto:random_string(5)])),
 	    case open_db(BucketId, UserId, DbName, Timestamp) of
 		{error, _Reason} -> {noreply, State0};
 		{ok, TempFn, DbPid, Version0} ->

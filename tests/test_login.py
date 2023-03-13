@@ -2,14 +2,14 @@ import unittest
 import json
 import requests
 
-from client_base import TestClient, BASE_URL
+from client_base import TestClient, BASE_URL, USERNAME_1, PASSWORD_1
 
 
 class AuthTest(TestClient):
 
     def test_login_success(self):
         url = "{}/riak/login/".format(BASE_URL)
-        data = {"login": "vb@xentime.com", "password": "password"}
+        data = {"login": USERNAME_1, "password": PASSWORD_1}
         response = self.post_json(url, data)
         keys = response.keys()
         self.assertEqual(set(keys), set(["id", "name", "tenant_id",
@@ -18,7 +18,7 @@ class AuthTest(TestClient):
 
     def test_login_fails(self):
         url = "{}/riak/login/".format(BASE_URL)
-        data = {"login": "vb@xentime.com", "password": "pwd"}
+        data = {"login": USERNAME_1, "password": "incorrect"}
         response = self.post_json(url, data, status=403)
         self.assertEqual(response, {"error":3})
 

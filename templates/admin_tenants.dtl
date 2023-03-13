@@ -7,6 +7,34 @@
 <script src="{{ static_root }}ancillary.js"></script>
 
 <script language="JavaScript">
+
+// function(xhr, status, msg){
+//	    $("#submit_change").attr("disabled",false);
+//	    $('#id_errors').append($.parseJSON(xhr.responseText));
+// });
+
+function response_handler(data, status, jqXHR){
+ $("#submit_change").attr("disabled",false);
+ if(data.status.toString()[0] == '2'){
+  $('#id-div-tenants').append('<a class="boxInner '+(enabled==true?'enabled':'disabled')+'" href="{{ root_path }}admin/'+data.id+'/users/">'+name+'</a>');
+ }else{
+  if(data.responseText.indexOf("errors")!=-1){
+    var errors = JSON.parse(data.responseText).errors;
+    if(typeof errors == 'string'){
+      $('#id_errors').append(errors+'<br/>');
+    } else {
+      if(errors.hasOwnProperty("groups")){
+        $('#id_groups_errors').append(errors['groups']+'<br/>');
+      }else if(errors.hasOwnProperty('name')){
+        $('#id_name_error').append(errors['name']+'<br/>');
+      }
+    }
+    return;
+  }
+ }
+ $("#dialog").dialog('close');
+}
+
 function submit_tenant(e){
  var name="";
  var enabled;
@@ -72,28 +100,8 @@ function submit_tenant(e){
 	'groups': groups,
 	'enabled': enabled,
     };
-    request('{{ root_path }}admin/tenants/', 'POST', form_data, '{{ token }}', function(data, status, jqXHR){
-	    $("#submit_change").attr("disabled",false);
-	    if(data&&data.hasOwnProperty('errors')){
-		if(typeof data['errors'] == 'string'){
-		    $('#id_errors').append(data['errors']+'<br/>');
-		} else {
-		  if(data['errors'].hasOwnProperty('name')){
-		    $('#id_name_error').append(data['errors']['name']+'<br/>');
-		  }
-		  if(data['errors'].hasOwnProperty('groups')){
-		    $('#id_groups_errors').append(data['errors']['groups']+'<br/>');
-		  }
-		  return;
-		}
-	    } else {
-		$('#id-div-tenants').append('<a class="boxInner '+(enabled==true?'enabled':'disabled')+'" href="{{ root_path }}admin/'+data.id+'/users/">'+name+'</a>');
-	    }
-	    $("#dialog").dialog('close');
-	}, function(xhr, status, msg){
-	    $("#submit_change").attr("disabled",false);
-	    $('#id_errors').append($.parseJSON(xhr.responseText));
-	});
+    request('{{ root_path }}admin/tenants/', 'POST', form_data, '{{ token }}', response_handler, response_handler);
+
     return false;
  });
 }

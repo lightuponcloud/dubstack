@@ -88,7 +88,7 @@ lightbox.init();
         <div class="header_links">
             <div class="main-content header_links_container clearfix">
                 <span class="logout"><a href="{{ root_path }}logout/" id="logout_link">Logout</a></span>
-                <span><label class="header-links-username">Logged in as {% ifequal staff "true" %}<b>{{ name }}</b>{% else %}{{ name }}{% endifequal %}, {{ tenant_name }}</label></span>
+                <span><label class="header-links-username">Logged in as {% if staff %}<b>{{ name }}</b>{% else %}{{ name }}{% endif %}, {{ tenant_name }}</label></span>
             </div>
         </div>
         <div id="header_content">
@@ -114,10 +114,10 @@ lightbox.init();
 		    <li class="nav_li menu_files_li">
 			<a id="the_files_link" href="{{ root_path }}"{% if bucket_id %} title="Files in '{{ bucket_id }}'"{% endif %}>Files</a>
 		    </li>
-		    {% ifequal staff "true" %}
+		    {% if staff %}
 			<li class="nav_li menu_administration_li"><a id="administration_link" href="{{ root_path }}admin/tenants/" title="Administration">Administration</a></li>
 			<!--li class="nav_li menu_reports_li"><a id="reports_link" href="#" title="Statistics">Statistics</a></li-->
-		    {% endifequal %}
+		    {% endif %}
         	</ul>
 		<ul class="contact_link mobile topmenu_right topmenu_right nav navbar-nav navbar-right">
 		    <li>

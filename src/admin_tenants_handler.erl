@@ -203,7 +203,7 @@ to_html(Req0, State) ->
 %%
 forbidden(Req0, _State) ->
     Settings = #general_settings{},
-    State1 = 
+    State1 =
 	case utils:get_token(Req0) of
 	    undefined ->
 		SessionCookieName = Settings#general_settings.session_cookie_name,
@@ -230,7 +230,7 @@ forbidden(Req0, _State) ->
 			    User1 -> [{session_id, SessionID0}, {user, User1}]
 			end
 		end;
-	    Token -> 
+	    Token ->
 		%% Extracts token from request headers and looks it up in "security" bucket
 		case login_handler:check_token(Token) of
 		    not_found -> not_found;

@@ -83,17 +83,19 @@ delete_pseudo_directory(BucketId, Prefix, CopiedObjects, UserId) ->
 	end, CopiedObjects),
     case HasSkipped of
 	[] ->
-	    PrefixedIndexKey = utils:prefixed_object_key(erlang:binary_to_list(Prefix), ?RIAK_INDEX_FILENAME),
+	    PrefixedIndexKey = utils:prefixed_object_key(Prefix, ?RIAK_INDEX_FILENAME),
 	    case riak_api:delete_object(BucketId, PrefixedIndexKey) of
 		{error, Reason} ->
 		    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 				[BucketId, PrefixedIndexKey, Reason]);
 		{ok, _} -> ok
 	    end,
-	    PrefixedActionLogKey = utils:prefixed_object_key(erlang:binary_to_list(Prefix), ?RIAK_ACTION_LOG_FILENAME),
+	    PrefixedActionLogKey = utils:prefixed_object_key(Prefix, ?RIAK_ACTION_LOG_FILENAME),
 	    riak_api:delete_object(BucketId, PrefixedActionLogKey),
 	    %% Mark deleted in SQLite db
-	    sqlite_server:delete_pseudo_directory(BucketId, filename:dirname(Prefix), filename:basename(Prefix), UserId);
+	    DirName = utils:unhex(erlang:list_to_binary(filename:basename(Prefix))),
+	    sqlite_server:delete_pseudo_directory(BucketId, utils:dirname(Prefix),
+						  DirName, UserId);
 	_ -> ok %% Do not delete index yet
     end.
 
@@ -170,7 +172,7 @@ move(Req0, State) ->
 			[] ->
 			    %% Empty directory was moved
 			    IndexPrefix = utils:prefixed_object_key(SrcPrefix0, utils:hex(element(1, I))),
-			    delete_pseudo_directory(SrcBucketId, erlang:list_to_binary(IndexPrefix), [], User#user.id);
+			    delete_pseudo_directory(SrcBucketId, IndexPrefix, [], User#user.id);
 			_ ->
 			    UniqPrefixList = lists:usort([proplists:get_value(src_prefix, J) || J <- Copied2]),
 			    %% Find prefixes which have all objects copied, and delete them
@@ -224,16 +226,9 @@ move(Req0, State) ->
 		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end,
 	    Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
-	    Req1 = case length(Result) of
-		0 ->
-		    cowboy_req:reply(304, #{
-			<<"content-type">> => <<"application/json">>
-		    }, <<"[]">>, Req0);
-		_ ->
-		    cowboy_req:reply(200, #{
-			<<"content-type">> => <<"application/json">>
-		    }, jsx:encode(Result), Req0)
-	    end,
+	    Req1 = cowboy_req:reply(200, #{
+		<<"content-type">> => <<"application/json">>
+	    }, jsx:encode(Result), Req0),
 	    {stop, Req1, []}
     end.
 
