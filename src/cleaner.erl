@@ -85,7 +85,7 @@ handle_info(csrf_tokens_cleanup, _State) ->
     lists:foreach(
 	fun(PrefixedToken) ->
 	    UUID = filename:basename(PrefixedToken),
-	    case login_handler:check_csrf_token(UUID) of
+	    case login_handler:check_csrf_token(erlang:list_to_binary(UUID)) of
 		expired -> riak_api:delete_object(?SECURITY_BUCKET_NAME, PrefixedToken);
 		_ -> ok
 	    end
