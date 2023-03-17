@@ -147,11 +147,30 @@ class DeleteTest(TestClient):
             assert response.status_code == 204
 
         # delete directories
-        object_keys = [x.encode().hex() + "/" for x in dir_names]
+        object_keys = encode_to_hex(dir_names=dir_names)
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         assert response.status_code == 200
         result = response.json()
         self.assertEqual(set(result), set(object_keys))
+
+        # deleting hierarchy of directories
+        first_name = generate_random_name()
+        response = self.client.create_pseudo_directory(TEST_BUCKET_1, first_name)
+        assert response.status_code == 204
+        for i in range(4):
+            name = generate_random_name()
+            response = self.client.create_pseudo_directory(TEST_BUCKET_1, name,
+                prefix=encode_to_hex(dir_name=first_name))
+            assert response.status_code == 204
+
+        response = self.client.delete(TEST_BUCKET_1, [encode_to_hex(dir_name=first_name)])
+        assert response.status_code == 200
+        result = response.json()
+        self.assertEqual(set(result), set([encode_to_hex(dir_name=first_name)]))
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 0)
 
     def test_delete_pseudodirectories_from_pseudodirectory(self):
         """

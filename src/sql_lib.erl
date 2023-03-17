@@ -92,15 +92,15 @@ get_pseudo_directory(Prefix0, OrigName)
 delete_pseudo_directory(Prefix0, Name)
 	when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	    andalso erlang:is_binary(Name) ->
-    SQL = ["DELETE FROM items WHERE (orig_name = \"", Name, "\" AND is_dir = ",
-	    sqlite3_lib:value_to_sql(true), ") OR prefix LIKE \"",
-	    erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\""],
     Prefix1 =
 	case Prefix0 of
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
+    ["DELETE FROM items WHERE (orig_name = \"", Name, "\" AND is_dir = ",
+     sqlite3_lib:value_to_sql(true), 
+     " AND prefix = ", sqlite3_lib:value_to_sql(Prefix1), ") OR prefix LIKE \"",
+     erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\"", ";"].
 
 
 -spec(rename_pseudo_directory(BucketId :: string(), Prefix0 :: string(), SrcKey :: string(),
