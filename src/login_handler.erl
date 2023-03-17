@@ -123,11 +123,19 @@ check_csrf_token(UUID4) when erlang:is_binary(UUID4) ->
 		    false;
 		not_found -> false;
 		TokenObject ->
-		    XMLDocument = utils:to_list(proplists:get_value(content, TokenObject)),
-		    {RootElement, _} = xmerl_scan:string(XMLDocument),
-		    ExpirationTime0 = erlcloud_xml:get_text("/auth/token/expires", RootElement),
-		    ExpirationTime1 = utils:to_integer(ExpirationTime0),
-		    utils:timestamp() - ExpirationTime1 < 0
+		    %% Check for error in response first
+		    XMLDocument0 = utils:to_list(proplists:get_value(content, TokenObject)),
+		    {RootElement0, _} = xmerl_scan:string(XMLDocument0),
+		    case string:str(XMLDocument0, "<Error><Code>") of
+			0 ->
+			    {RootElement, _} = xmerl_scan:string(XMLDocument0),
+			    ExpirationTime0 = erlcloud_xml:get_text("/auth/token/expires", RootElement),
+			    ExpirationTime1 = utils:to_integer(ExpirationTime0),
+			    utils:timestamp() - ExpirationTime1 < 0;
+			_ ->
+			    ErrorCode = erlcloud_xml:get_text("/Error/Code", RootElement0),
+			    {error, ErrorCode}
+		    end
 	    end
     end.
 
@@ -160,7 +168,7 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 			    UserId = erlcloud_xml:get_text("/auth/token/user_id", RootElement0),
 			    TenantId = erlcloud_xml:get_text("/auth/token/tenant_id", RootElement0),
 
-			    %% Update the expiration time
+			    %% Extend the expiration time
 			    ExpirationTime2 = utils:timestamp() + ?SESSION_EXPIRATION_TIME,
 			    NewToken = {token, [
 				{expires, [io_lib:format("~p", [ExpirationTime2])]},
@@ -182,7 +190,6 @@ check_token(UUID4) when erlang:is_list(UUID4) ->
 		    ErrorCode = erlcloud_xml:get_text("/Error/Code", RootElement0),
 		    {error, ErrorCode}
 	    end
-
     end.
 
 %%

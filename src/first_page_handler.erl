@@ -68,6 +68,7 @@ validate_post(Req0) ->
 	    %% Check CSRF token from body of POST request
 	    CSRFToken0 = proplists:get_value(<<"csrf_token">>, KeyValues),
 	    case login_handler:check_csrf_token(CSRFToken0) of
+		{error, _} -> false;
 		false -> false;
 		true -> {
 			    proplists:get_value(<<"login">>, KeyValues),

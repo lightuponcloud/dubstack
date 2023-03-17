@@ -57,6 +57,7 @@ start(_Type, _Args) ->
 	}}),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],
     sqlite_server:start_link(),  %% Processes queries to per-bucket SQLite DBs using locks
+    cleaner:start_link(),
     middleware_sup:start_link().
 
 stop(_State) -> ok.
