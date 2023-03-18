@@ -1,14 +1,9 @@
 -module(riak_api).
 
--export([create_bucket/1, create_bucket/2,
-	 delete_bucket/1,
-	 head_bucket/1,
-	 list_objects/1, list_objects/2,
-	 copy_object/4, copy_object/5,
-	 delete_object/2, head_object/2,
-	 get_object/2, get_object/3,
+-export([list_buckets/0, create_bucket/1, create_bucket/2, delete_bucket/1, head_bucket/1,
+	 list_objects/1, list_objects/2, get_object/2, get_object/3, delete_object/2, head_object/2,
+	 put_object/4, put_object/5, copy_object/4, copy_object/5,
 	 get_object_metadata/2, get_object_metadata/3,
-	 put_object/4, put_object/5,
 	 start_multipart/2, start_multipart/4,
 	 upload_part/5,
 	 complete_multipart/4,
@@ -75,6 +70,30 @@ copy_object(DestBucketId, DestKeyName, SrcBucketId, SrcKeyName, Options) ->
 	{ok, {_Status, Headers, _Body}} ->
 	    [{content_length, proplists:get_value("content-length", Headers, "0")}];
 	{error, {Reason,_,_,_,_}} -> {error, Reason}
+    end.
+
+
+-spec list_buckets() -> proplist().
+
+list_buckets() ->
+    Options = [],
+    Params = [{"delimiter", proplists:get_value(delimiter, Options, "/")},
+              {"marker", proplists:get_value(marker, Options)},
+              {"max-keys", proplists:get_value(max_keys, Options, ?LIST_OBJECTS_MAX_KEYS)},
+              {"prefix", proplists:get_value(prefix, Options)}],
+    Config = #riak_api_config{},
+    case s3_xml_request(get, "", "/", "", Params, <<>>, [], Config) of
+	{ok, Doc} ->
+file:write_file("/tmp/dump", term_to_binary(Doc)),
+	    Attributes = [{prefix, "Bucket", text},
+                  {marker, "Marker", text},
+                  {next_marker, "NextMarker", text},
+                  {delimiter, "Delimiter", text},
+                  {max_keys, "MaxKeys", integer},
+                  {is_truncated, "IsTruncated", boolean},
+                  {contents, "Contents", fun extract_contents/1}],
+	    erlcloud_xml:decode(Attributes, Doc);
+	not_found -> not_found
     end.
 
 -spec create_bucket(string()) -> ok.

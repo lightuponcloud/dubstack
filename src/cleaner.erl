@@ -69,7 +69,7 @@ handle_cast(_Request, State) ->
 %% @end
 %%--------------------------------------------------------------------
 
-handle_info(tokens_cleanup, _State) ->
+handle_info(tokens_cleanup, State) ->
     Tokens = get_tokens_list(?TOKEN_PREFIX, [], undefined),
     lists:foreach(
 	fun(PrefixedToken) ->
@@ -78,9 +78,9 @@ handle_info(tokens_cleanup, _State) ->
 		_ -> ok
 	    end
 	end, Tokens),
-    {noreply, []};
+    {noreply, State};
 
-handle_info(csrf_tokens_cleanup, _State) ->
+handle_info(csrf_tokens_cleanup, State) ->
     Tokens = get_tokens_list(?CSRF_TOKEN_PREFIX, [], undefined),
     lists:foreach(
 	fun(PrefixedToken) ->
@@ -90,7 +90,13 @@ handle_info(csrf_tokens_cleanup, _State) ->
 		_ -> ok
 	    end
 	end, Tokens),
-    {noreply, []};
+    {noreply, State};
+
+handle_info(deleted_files_cleanup, State) ->
+    %List0 = riak_api:recursively_list_pseudo_dir(BucketId, undefined),
+    %IndexName1 = erlang:list_to_binary(?RIAK_INDEX_FILENAME),
+    {noreply, State};
+
 
 handle_info(_Info, State) ->
     {noreply, State}.

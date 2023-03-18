@@ -46,13 +46,20 @@ prepare_object_record(Record0, DeletedObjects) ->
     IsDeleted =
 	case proplists:get_value(erlang:list_to_binary(ObjectKey1), DeletedObjects) of
 	    undefined ->
-		DeletedFlag = proplists:get_value("x-amz-meta-is-deleted", Metadata, "false"),
-		erlang:list_to_atom(DeletedFlag);
+		DeletedFlag0 = proplists:get_value("x-amz-meta-is-deleted", Metadata, "false"),
+		case erlang:list_to_atom(DeletedFlag0) of
+		    undefined -> false;
+		    DeletedFlag1 -> DeletedFlag1
+		end;
 	    true -> true;
 	    _ -> true
 	end,
     LockedFlag = proplists:get_value("x-amz-meta-is-locked", Metadata, "false"),
-    IsLocked = erlang:list_to_atom(LockedFlag),
+    IsLocked =
+	case erlang:list_to_atom(LockedFlag) of
+	    undefined -> false;
+	    Locked -> Locked
+	end,
     LockUserId =
 	case proplists:get_value("x-amz-meta-lock-user-id", Metadata) of
 	    undefined -> null;
