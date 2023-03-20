@@ -103,6 +103,7 @@ delete_object(BucketId, Prefix, Key, UserId)
 	    andalso erlang:is_list(Key) andalso erlang:is_list(UserId) ->
     Timestamp = erlang:round(utils:timestamp()/1000),
     SQL = sql_lib:delete_object(Prefix, Key),
+io:fwrite("Delete SQL: ~p~n", [SQL]),
     gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
 
 

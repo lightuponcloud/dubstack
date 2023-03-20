@@ -74,11 +74,17 @@ to_json(Req0, State) ->
 		end;
 	    false -> false
 	end,
+    T0 = utils:timestamp(),
     case riak_api:head_bucket(BucketId) of
 	not_found ->
 	    %% Bucket is valid, but it do not exist yet
 	    riak_api:create_bucket(BucketId),
-	    {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
+	    T1 = utils:timestamp(),
+	    Req1 = cowboy_req:reply(200, #{
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+	    }, jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0),
+	    {ok, Req1, []};
 	_ ->
 	    Prefix1 = prefix_lowercase(Prefix0),
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
@@ -86,7 +92,12 @@ to_json(Req0, State) ->
 		{error, Reason} ->
 		    lager:warning("[list_handler] get_object error ~p/~p: ~p",
 				[BucketId, PrefixedIndexFilename, Reason]),
-		    {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
+		    T1 = utils:timestamp(),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+		    }, jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0),
+		    {ok, Req1, []};
 		not_found -> {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
@@ -100,11 +111,12 @@ to_json(Req0, State) ->
 				{Dirs0, List1};
 			    true -> {proplists:get_value(dirs, List0), proplists:get_value(list, List0)}
 			end,
-		    {jsx:encode([
-			{list, Objects},
-			{dirs, Dirs},
-			{groups, Groups}
-		    ]), Req0, []}
+		    T1 = utils:timestamp(),
+		    Req1 = cowboy_req:reply(200, #{
+			<<"content-type">> => <<"application/json">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+		    }, jsx:encode([{list, Objects}, {dirs, Dirs}, {groups, Groups}]), Req0),
+		    {ok, Req1, []}
 	    end
     end.
 

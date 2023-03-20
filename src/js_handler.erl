@@ -4,7 +4,7 @@
 -module(js_handler).
 
 -export([init/2, bad_request/2, bad_request_ok/2, forbidden/3, forbidden/4,
-	 unauthorized/3, not_found/1, not_found_ok/1, too_many/1, not_modified/1,
+	 unauthorized/3, not_found/1, not_found_ok/1, too_many/1, too_many/2, not_modified/1,
 	 redirect_to_login/1, redirect_to_login/2, incorrect_configuration/2]).
 
 -include("general.hrl").
@@ -133,8 +133,12 @@ incorrect_configuration(Req0, MsgCode) when erlang:is_list(MsgCode) ->
     {stop, Req1, []}.
 
 too_many(Req0) ->
+    too_many(Req0, 0).
+
+too_many(Req0, ElapsedTime) ->
     Req1 = cowboy_req:reply(429, #{
-	<<"content-type">> => <<"application/json">>
+	<<"content-type">> => <<"application/json">>,
+	<<"elapsed-time">> => io_lib:format("~.2f", [ElapsedTime])
     }, jsx:encode([{error, 33}]), Req0),
     {stop, Req1, []}.
 

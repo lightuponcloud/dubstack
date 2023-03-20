@@ -106,6 +106,7 @@ move(Req0, State) ->
     DstBucketId = proplists:get_value(dst_bucket_id, State),
     DstPrefix0 = proplists:get_value(dst_prefix, State),
     User = proplists:get_value(user, State),
+    T0 = utils:timestamp(),
     DstIndexContent = indexing:get_index(DstBucketId, DstPrefix0),
     Copied0 = lists:map(
 	fun(RequestedKey) ->
@@ -189,7 +190,8 @@ move(Req0, State) ->
 	lock ->
 	    lager:warning("[list_handler] Can't update index during moving object, as lock exist: ~p/~p",
 		       [SrcBucketId, SrcPrefix0]),
-	    js_handler:too_many(Req0);
+	    T1 = utils:timestamp(),
+	    js_handler:too_many(Req0, (T1-T0)/1000);
 	_ ->
 	    %%
 	    %% Add action log record
@@ -226,8 +228,10 @@ move(Req0, State) ->
 		    action_log:add_record(SrcBucketId, SrcPrefix0, ActionLogRecord2)
 	    end,
 	    Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
+	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(200, #{
-		<<"content-type">> => <<"application/json">>
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode(Result), Req0),
 	    {stop, Req1, []}
     end.

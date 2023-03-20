@@ -49,6 +49,7 @@ to_scale(Req0, State) ->
 		end
 	end,
     CropFlag = proplists:get_value(crop, State),
+    T0 = utils:timestamp(),
     case riak_api:head_object(BucketId, PrefixedObjectKey) of
 	{error, Reason} ->
 	    lager:error("[img_scale_handler] head_object failed ~p/~p: ~p",
@@ -86,14 +87,14 @@ to_scale(Req0, State) ->
 		    %% In case image object size is bigger than the limit, return empty response.
 		    {<<>>, Req0, []};
 		false ->
-		    scale_response(Req0, RealBucketId, RealGUID, RealUploadId, Width, Height, CropFlag)
+		    scale_response(Req0, RealBucketId, RealGUID, RealUploadId, Width, Height, CropFlag, T0)
 	    end
     end.
 
 %%
 %% Download image from Riak CS
 %%
-serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag) ->
+serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0) ->
     BinaryData =
 	case riak_api:get_object(BucketId, GUID, UploadId) of
 	    not_found ->
@@ -138,7 +139,11 @@ serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height
 				[BucketId, PrefixedGUID, CachedKey, Reason3]);
 		_ -> ok
 	    end,
-	    {Reply0, Req0, []}
+	    T1 = utils:timestamp(),
+	    Req1 = cowboy_req:reply(200, #{
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+	    }, Reply0, Req0),
+	    {ok, Req1, []}
     end.
 
 %%
@@ -147,7 +152,7 @@ serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height
 %% Cached images are stored as
 %% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
 %%
-scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
+scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag, T0) ->
     %% First check if cached image exists already.
     PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
     CachedKey = UploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
@@ -157,10 +162,10 @@ scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag) ->
             %% Miss
 	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
 			[BucketId, PrefixedCachedKey, Reason]),
-	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag);
+	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0);
 	not_found ->
             %% Miss
-	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag);
+	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0);
 	RiakResponse ->
             %% Return cached image
 	    {proplists:get_value(content, RiakResponse), Req0, []}

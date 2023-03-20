@@ -200,6 +200,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 		(EB div ?FILE_UPLOAD_CHUNK_SIZE) + 1;
 	    _ -> (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1
 	end,
+    T0 = utils:timestamp(), %% measure time of request
     case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of
 	not_found ->
 	    Req1 = cowboy_req:reply(404, #{
@@ -240,17 +241,20 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 			    1 -> erlang:integer_to_binary(StartByte);
 			    _ -> erlang:integer_to_binary(StartByte rem ?FILE_UPLOAD_CHUNK_SIZE)
 			end,
+		    T1 = utils:timestamp(),
 		    Headers0 = #{
 			<<"content-type">> => ContentType,
 			<<"content-disposition">> => ContentDisposition,
 			<<"content-length">> => Bytes,
-			<<"range">> => << "bytes=", PartStartByte/binary, "-" >>
+			<<"range">> => << "bytes=", PartStartByte/binary, "-" >>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    },
 		    Req3 = cowboy_req:stream_reply(200, Headers0, Req0),
 		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
 			not_found ->
 			    Req4 = cowboy_req:reply(404, #{
-				<<"content-type">> => <<"text/html">>
+				<<"content-type">> => <<"text/html">>,
+				<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 			    }, <<"404: Not found">>, Req0),
 			    {ok, Req4, []};
 			{ok, RequestId} ->
@@ -266,6 +270,7 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 
 
 init(Req0, _Opts) ->
+    T0 = utils:timestamp(), %% measure time of request
     cowboy_req:cast({set_options, #{idle_timeout => infinity}}, Req0),
     PathInfo = cowboy_req:path_info(Req0),
     BucketId =
@@ -276,13 +281,17 @@ init(Req0, _Opts) ->
 	end,
     case check_privileges(Req0, BucketId) of
 	{error, Number} ->
+	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(403, #{
-		<<"content-type">> => <<"application/json">>
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
 	{config_error, Code} ->
+	    T1 = utils:timestamp(),
 	    Req1 = cowboy_req:reply(500, #{
-		<<"content-type">> => <<"application/json">>
+		<<"content-type">> => <<"application/json">>,
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode([{error, erlang:list_to_binary(Code)}]), Req0),
 	    {ok, Req1, []};
 	User ->
@@ -291,13 +300,17 @@ init(Req0, _Opts) ->
 	    PrefixedObjectKey = erlang:binary_to_list(Path1),
 	    case validate_request(BucketId, User, PrefixedObjectKey) of
 		not_found ->
+		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(404, #{
-			<<"content-type">> => <<"application/json">>
+			<<"content-type">> => <<"application/json">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, Req0),
 		    {ok, Req1, []};
 		{error, Number} ->
+		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:reply(400, #{
-			<<"content-type">> => <<"application/json">>
+			<<"content-type">> => <<"application/json">>,
+			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, jsx:encode([{error, Number}]), Req0),
 		    {ok, Req1, []};
 		{OldBucketId, RealPrefix, ContentType, OrigName, Bytes} ->
