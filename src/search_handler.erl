@@ -90,13 +90,11 @@ to_json(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
     ParsedQs = cowboy_req:parse_qs(Req0),
     case proplists:get_value(<<"q">>, ParsedQs) of
-	undefined ->
-	    {[], Req0, State};
+	undefined -> {[], Req0, State};
 	Term ->
 	    RiakResponse =
 		case proplists:get_value(<<"prefix">>, ParsedQs) of
-		    undefined ->
-			search(BucketId, Term);
+		    undefined -> search(BucketId, Term);
 		    Prefix0 ->
 			case list_handler:validate_prefix(BucketId, Prefix0) of
 			    {error, _} -> [];

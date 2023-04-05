@@ -134,35 +134,39 @@ validate_copy_parameters(State0) ->
     SrcPrefix1 = list_handler:validate_prefix(SrcBucketId, SrcPrefix0),
     DstPrefix1 = list_handler:validate_prefix(DstBucketId, DstPrefix0),
 
-    SrcObjectKeys1 = validate_src_object_keys(SrcPrefix1, DstPrefix1, SrcObjectKeys0),
-    Error = lists:keyfind(error, 1, [SrcPrefix1, DstPrefix1, SrcObjectKeys1]),
+    Error = lists:keyfind(error, 1, [SrcPrefix1, DstPrefix1]),
     case Error of
-	{error, Number} -> {error, Number};
+	{error, Number0} -> {error, Number0};
 	_ ->
-	    %% The destination directory might be subdirectory of the source directory.
-	    SrcObjectKeys2 = lists:filter(
-		fun(N) ->
-		    SrcPrefix2 =
-			case SrcPrefix1 of
-			    undefined -> undefined;
-			    _ -> erlang:list_to_binary(SrcPrefix1)
-			end,
-		    PN0 = utils:prefixed_object_key(SrcPrefix2, element(1, N)),
-		    case utils:starts_with(DstPrefix1, PN0) of
-			false -> true;
-			true -> false
+	    SrcObjectKeys1 = validate_src_object_keys(SrcPrefix1, DstPrefix1, SrcObjectKeys0),
+	    case SrcObjectKeys1 of
+		{error, Number1} -> {error, Number1};
+		_ ->
+		    %% The destination directory might be subdirectory of the source directory.
+		    SrcObjectKeys2 = lists:filter(
+			fun(N) ->
+			    SrcPrefix2 =
+				case SrcPrefix1 of
+				    undefined -> undefined;
+				    _ -> erlang:list_to_binary(SrcPrefix1)
+				end,
+			    PN0 = utils:prefixed_object_key(SrcPrefix2, element(1, N)),
+			    case utils:starts_with(DstPrefix1, PN0) of
+				false -> true;
+				true -> false
+			    end
+			end, SrcObjectKeys1),
+		    case length(SrcObjectKeys2) =:= 0 orelse (DstPrefix1 =:= SrcPrefix1 andalso length(SrcObjectKeys0) > 1) of
+			true -> {error, 13};
+			false ->
+			    User = proplists:get_value(user, State0),
+			    [{src_bucket_id, SrcBucketId},
+			     {dst_bucket_id, DstBucketId},
+			     {src_prefix, SrcPrefix1},
+			     {dst_prefix, DstPrefix1},
+			     {src_object_keys, SrcObjectKeys2},
+			     {user, User}]
 		    end
-		end, SrcObjectKeys1),
-	    case length(SrcObjectKeys2) =:= 0 orelse (DstPrefix1 =:= SrcPrefix1 andalso length(SrcObjectKeys0) > 1) of
-		true -> {error, 13};
-		false ->
-		    User = proplists:get_value(user, State0),
-		    [{src_bucket_id, SrcBucketId},
-		     {dst_bucket_id, DstBucketId},
-		     {src_prefix, SrcPrefix1},
-		     {dst_prefix, DstPrefix1},
-		     {src_object_keys, SrcObjectKeys2},
-		     {user, User}]
 	    end
     end.
 
@@ -332,7 +336,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 			     {src_locked, SrcIsLocked},  %% this flag is used in move operation
 			     {src_lock_user_id, SrcLockUserId},
 			     {guid, erlang:list_to_binary(NewGUID)},
-			     {version, Version}];
+			     {version, erlang:list_to_binary(Version)}];
 			_ ->
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix0},
@@ -588,19 +592,10 @@ copy(Req0, State) ->
     end,
     Result = lists:foldl(fun(X, Acc) -> X ++ Acc end, [], [element(3, I) || I <- Copied0]),
     T1 = utils:timestamp(),
-    Req1 =
-	case length(Result) of
-	    0 -> 
-		cowboy_req:reply(304, #{
-		    <<"content-type">> => <<"application/json">>,
-		    <<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-		}, <<"[]">>, Req0);
-	    _ ->
-		cowboy_req:reply(200, #{
-		    <<"content-type">> => <<"application/json">>,
-		    <<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-		}, jsx:encode(Result), Req0)
-    end,
+    Req1 = cowboy_req:reply(200, #{
+	<<"content-type">> => <<"application/json">>,
+	<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+    }, jsx:encode(Result), Req0),
     {stop, Req1, []}.
 
 %%

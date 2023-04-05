@@ -114,6 +114,7 @@ check_privileges(Req0, BucketId) ->
     %% Extracts token from request headers and looks it up in "security" bucket
     case utils:get_token(Req0) of
 	undefined ->
+	    %% Check browser's session cookie value
 	    Settings = #general_settings{},
 	    SessionCookieName = Settings#general_settings.session_cookie_name,
 	    #{SessionCookieName := SessionID0} = cowboy_req:match_cookies([{SessionCookieName, [], undefined}], Req0),

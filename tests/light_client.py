@@ -241,7 +241,8 @@ class LightClient:
             "accept": "application/json",
             "authorization": "Token {}".format(self.token),
         }
-        return requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers)
+        return response
 
     def delete(self, bucket_id, object_keys: list, prefix: str = None):
         """

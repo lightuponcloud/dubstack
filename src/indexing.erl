@@ -703,7 +703,7 @@ add_dvv(BucketId, GUID, UploadId, Version, UserId, UserName)
 	ok ->
 	    %% Get an existing list of version vectors first.
 	    List0 = get_object_index(BucketId, GUID),
-    	    case proplists:is_defined(UploadId, List0) of
+	    case proplists:is_defined(UploadId, List0) of
 		true -> {UploadId, proplists:get_value(UploadId, List0)};
 		false ->
 		    [VVTimestamp] = dvvset:values(Version),

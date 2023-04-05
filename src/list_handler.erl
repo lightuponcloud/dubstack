@@ -8,6 +8,7 @@
 %%	Allows to change state of object:
 %%		-- undelete
 %%		-- lock / unlock
+%%		-- set access token for file sharing
 %%
 %% POST
 %%	Create directory
@@ -84,7 +85,7 @@ to_json(Req0, State) ->
 		<<"content-type">> => <<"application/json">>,
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 	    }, jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0),
-	    {ok, Req1, []};
+	    {stop, Req1, []};
 	_ ->
 	    Prefix1 = prefix_lowercase(Prefix0),
 	    PrefixedIndexFilename = utils:prefixed_object_key(Prefix1, ?RIAK_INDEX_FILENAME),
@@ -97,7 +98,7 @@ to_json(Req0, State) ->
 			<<"content-type">> => <<"application/json">>,
 			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0),
-		    {ok, Req1, []};
+		    {stop, Req1, []};
 		not_found -> {jsx:encode([{list, []}, {dirs, []}, {groups, Groups}]), Req0, []};
 		RiakResponse ->
 		    List0 = erlang:binary_to_term(proplists:get_value(content, RiakResponse)),
@@ -116,7 +117,7 @@ to_json(Req0, State) ->
 			<<"content-type">> => <<"application/json">>,
 			<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
 		    }, jsx:encode([{list, Objects}, {dirs, Dirs}, {groups, Groups}]), Req0),
-		    {ok, Req1, []}
+		    {stop, Req1, []}
 	    end
     end.
 
@@ -262,6 +263,7 @@ validate_patch(Body, State) ->
 			<<"lock">> -> {Prefix1, ObjectsList1, lock};
 			<<"unlock">> -> {Prefix1, ObjectsList1, unlock};
 			<<"undelete">> -> {Prefix1, ObjectsList1, undelete};
+			<<"access-token">> -> {Prefix1, ObjectsList1, access_token};
 			_ -> {error, 41}
 		    end
 	    end
@@ -340,7 +342,21 @@ patch_operation(Req0, undelete, BucketId, Prefix, _User, ObjectsList) ->
 		       [BucketId, Prefix]),
 	    js_handler:too_many(Req0);
 	_ -> {true, Req0, []}
+    end;
+patch_operation(Req0, access_token, BucketId, Prefix, _User, ObjectsList) ->
+    ModifiedKeys0 = [set_access_token(BucketId, Prefix, K) || K <- ObjectsList],
+    ModifiedKeys1 = [erlang:binary_to_list(proplists:get_value(object_key, I))
+		     || I <- ModifiedKeys0, I =/= not_found],
+    case indexing:update(BucketId, Prefix, [{modified_keys, ModifiedKeys1}]) of
+	lock ->
+	    lager:warning("[list_handler] Can't update index during undeleting object, as index lock exists: ~p/~p",
+		       [BucketId, Prefix]),
+	    js_handler:too_many(Req0);
+	_ -> {true, Req0, []}
     end.
+
+set_access_token(_BucketId, Prefix, K) ->
+    utils:prefixed_object_key(Prefix, K).
 
 %% TODO: test this
 undelete(BucketId, Prefix, ObjectKey) ->
@@ -422,11 +438,11 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 				true ->
 				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
 							[{acl, public_read}, {meta, Meta}]),
-				    sqlite_server:lock_object(BucketId, Prefix, LockObjectKey, true, User#user.id);
+				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true, User#user.id);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
 				    riak_api:delete_object(BucketId, PrefixedLockObjectKey),
-				    sqlite_server:lock_object(BucketId, Prefix, LockObjectKey, false, User#user.id)
+				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, false, User#user.id)
 			    end,
 			    LockUserTel =
 				case User#user.tel of

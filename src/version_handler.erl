@@ -93,9 +93,8 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
     Req1 = cowboy_req:stream_reply(200, Headers0, Req0),
     case riak_api:get_object(BucketId0, ?DB_VERSION_KEY, stream) of
 	not_found ->
-	    Req2 = cowboy_req:reply(404, #{
-		<<"content-type">> => <<"application/json">>
-	    }, Req0),
+	    %% The bucket could have disappeared between checks (unlikely)
+	    Req2 = cowboy_req:set_resp_body(<<>>, Req1),
 	    {ok, Req2, []};
 	{ok, RequestId} ->
 	    receive
@@ -107,6 +106,17 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
     end.
 
 
+first_version(Req0, UserId) ->
+    Timestamp = erlang:round(utils:timestamp()/1000),
+    Version0 = indexing:increment_version(undefined, Timestamp, UserId),
+    Version1 = base64:encode(jsx:encode(Version0)),
+    Req1 = cowboy_req:reply(200, #{
+	<<"DVV">> => Version1,
+	<<"content-type">> => <<"application/json">>
+    }, <<>>, Req0),
+    {ok, Req1, []}.
+
+
 %%
 %% HEAD HTTP request returns DVV in JSON format
 %%
@@ -114,12 +124,12 @@ stream_db(Req0, BucketId0, Bytes, StartByte0) ->
 %%
 %% POST request uploads a new version of SQLite DB.
 %%
-response(Req0, <<"HEAD">>, BucketId) ->
+response(Req0, <<"HEAD">>, BucketId, UserId) ->
     case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
 	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
-	    js_handler:not_found_ok(Req0);
-	not_found -> js_handler:not_found_ok(Req0);
+	    first_version(Req0, UserId);
+	not_found -> first_version(Req0, UserId);
 	Meta ->
 	    DbMeta = list_handler:parse_object_record(Meta, []),
 	    Version = proplists:get_value("version", DbMeta),
@@ -130,12 +140,15 @@ response(Req0, <<"HEAD">>, BucketId) ->
 	    {ok, Req1, []}
     end;
 
-response(Req0, <<"GET">>, BucketId) ->
+response(Req0, <<"GET">>, BucketId, _UserId) ->
     case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
 	{error, Reason} ->
-	    lager:error("[version_handler] head_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
-	    js_handler:not_found_ok(Req0);
-	not_found -> js_handler:not_found_ok(Req0);
+	    lager:error("[version_handler] get_object failed ~p/~p: ~p", [BucketId, ?DB_VERSION_KEY, Reason]),
+	    Req1 = cowboy_req:set_resp_body(<<>>, Req0),
+	    {ok, Req1, []};
+	not_found ->
+	    Req1 = cowboy_req:set_resp_body(<<>>, Req0),
+	    {ok, Req1, []};
 	Meta ->
 	    Bytes =
 		case proplists:get_value("x-amz-meta-bytes", Meta) of
@@ -149,7 +162,7 @@ response(Req0, <<"GET">>, BucketId) ->
 	    end
     end;
 
-response(Req0, _Method, _BucketId) ->
+response(Req0, _Method, _BucketId, _UserId) ->
     js_handler:bad_request_ok(Req0, 17).
 
 init(Req0, _Opts) ->
@@ -165,7 +178,12 @@ init(Req0, _Opts) ->
 		<<"content-type">> => <<"application/json">>
 	    }, jsx:encode([{error, Number}]), Req0),
 	    {ok, Req1, []};
-	_User ->
+	User ->
 	    Method = cowboy_req:method(Req0),
-	    response(Req0, Method, BucketId)
+	    UserId =
+		case User of
+		    undefined -> undefined;
+		    _ -> User#user.id
+		end,
+	    response(Req0, Method, BucketId, UserId)
     end.
