@@ -1,3 +1,4 @@
+import time
 import unittest
 
 from client_base import (
@@ -62,13 +63,22 @@ class LockTest(TestClient):
         self.assertEqual(result[0]['is_locked'], True)
         self.assertEqual(response.status_code, 200)
 
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(result[0]['is_locked'], 1)
+
         # 4. try to change lock from different user
         self.client.login(USERNAME_2, PASSWORD_2)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key])
         result = response.json()
         # print(response.status_code)
         # print(response.content.decode())
+        # Lock remains active, as unlock was performed by different user
         self.assertEqual(result[0]['is_locked'], True)
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(result[0]['is_locked'], 1)
 
         # 5. Check for the same value of lock remained as in step #2-3
         response = self.client.get_list(TEST_BUCKET_1)
@@ -77,15 +87,23 @@ class LockTest(TestClient):
             if obj['object_key'] == object_key:
                 self.assertEqual(obj['is_locked'], True)
 
-        # 6. Clean: delete uploaded file
+        # 6. Unlock file by lock owner
         self.client.login(USERNAME_1, PASSWORD_1)
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key])
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]['is_locked'], False)
-        # print(response.content.decode())
-        self.assertEqual(response.status_code, 200)
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(result[0]['is_locked'], 0)
+
+        # Delete file
         response = self.client.delete(TEST_BUCKET_1, [object_key])
-        # print(response.json())
         self.assertEqual(response.status_code, 200)
+
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(result, [])
 
     def test_lock_and_newversion(self):
         """
@@ -132,6 +150,7 @@ class LockTest(TestClient):
         response = self.client.patch(TEST_BUCKET_1, "unlock", [object_key1])
         self.assertEqual(response.json()[0]['is_locked'], False)
         self.assertEqual(response.status_code, 200)
+
         response = self.client.delete(TEST_BUCKET_1, [object_key2])
         self.assertEqual(response.status_code, 200)
 

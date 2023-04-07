@@ -460,6 +460,11 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 			    {bucket_id, SrcBucketId},
 			    {prefix, CurrentPrefix},
 			    {copied_names, [I || I <- Copied0, proplists:is_defined(skipped, I) =:= false]}]}]),
+
+	    %% Create pseudo-directory in SQLite
+	    NewDirectoryName = utils:unhex(erlang:list_to_binary(filename:basename(NewDstPrefix))),
+	    sqlite_server:create_pseudo_directory(DstBucketId, utils:dirname(NewDstPrefix), NewDirectoryName, User),
+
 	    %% Update parent directory
 	    indexing:update(DstBucketId, utils:dirname(NewDstPrefix)),
 
