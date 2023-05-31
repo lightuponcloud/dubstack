@@ -483,7 +483,7 @@ rename(Req0, BucketId, State, IndexContent) ->
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		{dir_name, DstDirectoryName0} ->
 		    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, filename:basename(SrcObjectKey1),
-			DstDirectoryName0, User),
+			DstDirectoryName0),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
 		    {true, Req1, []}
 	    end;
@@ -494,7 +494,7 @@ rename(Req0, BucketId, State, IndexContent) ->
 		not_found -> js_handler:not_found(Req0);
 		NewObj ->
 		    DstKey = proplists:get_value(key, NewObj),
-		    sqlite_server:rename_object(BucketId, Prefix0, SrcObjectKey1, DstKey, DstObjectName0, User),
+		    sqlite_server:rename_object(BucketId, Prefix0, SrcObjectKey1, DstKey, DstObjectName0),
 		    Req1 = cowboy_req:set_resp_body(
 			jsx:encode([{orig_name, proplists:get_value(orig_name, NewObj)}]), Req0),
 		    {true, Req1, []}

@@ -438,11 +438,11 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 				true ->
 				    riak_api:put_object(BucketId, Prefix, LockObjectKey, <<>>,
 							[{acl, public_read}, {meta, Meta}]),
-				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true, User#user.id);
+				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, true);
 				false ->
 				    PrefixedLockObjectKey = utils:prefixed_object_key(Prefix, LockObjectKey),
 				    riak_api:delete_object(BucketId, PrefixedLockObjectKey),
-				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, false, User#user.id)
+				    sqlite_server:lock_object(BucketId, Prefix, ObjectKey, false)
 			    end,
 			    LockUserTel =
 				case User#user.tel of
@@ -799,7 +799,7 @@ delete_objects(BucketId, Prefix, ObjectKeys0, ActionLogRecord0, Timestamp, UserI
 	    lock;
 	_ ->
 	    %% Update SQLite db
-	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K)), UserId)
+	    [sqlite_server:delete_object(BucketId, Prefix, erlang:binary_to_list(element(1, K)))
 	     || K <- ObjectKeys1],
 
 	    %% Leave record in action log and update object records with is_deleted flag

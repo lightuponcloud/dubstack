@@ -64,7 +64,7 @@ delete_pseudo_directory(BucketId, Prefix, CopiedObjects, UserId) ->
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 							[BucketId, PrefixedObjectKey1, Reason]);
-					{ok, _} -> ok
+					{ok, _} -> sql_server:delete_object(BucketId, SrcPrefix, OldKey)
 				    end,
 				    riak_api:delete_object(BucketId, PrefixedObjectKey1 ++ ?RIAK_LOCK_SUFFIX)
 			    end;
@@ -73,11 +73,9 @@ delete_pseudo_directory(BucketId, Prefix, CopiedObjects, UserId) ->
 				{error, Reason} ->
 				    lager:error("[move_handler] Can't delete object ~p/~p: ~p",
 						[BucketId, PrefixedObjectKey1, Reason]);
-				{ok, _} -> ok
+				{ok, _} -> sqlite_server:delete_object(BucketId, SrcPrefix, OldKey)
 			    end
 		    end,
-		    %% Mark deleted in SQLite db
-		    sqlite_server:delete_object(BucketId, SrcPrefix, OldKey, UserId),
 		    false
 	    end
 	end, CopiedObjects),
@@ -147,7 +145,7 @@ move(Req0, State) ->
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 							[SrcBucketId, PrefixedObjectKey1, Reason]);
-					{ok, _} -> ok
+					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, OldKey0)
 				    end;
 				true ->
 				    LockUserId = proplists:get_value(src_lock_user_id, CopiedOne),
@@ -158,11 +156,9 @@ move(Req0, State) ->
 						{error, Reason} ->
 						    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 								[SrcBucketId, PrefixedObjectKey1, Reason]);
-						{ok, _} -> ok
+						{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, OldKey0)
 					    end,
-					    riak_api:delete_object(SrcBucketId, PrefixedObjectKey1 ++ ?RIAK_LOCK_SUFFIX),
-					    %% Mark deleted in SQLite db
-					    sqlite_server:delete_object(SrcBucketId, SrcPrefix1, OldKey0, User#user.id)
+					    riak_api:delete_object(SrcBucketId, PrefixedObjectKey1 ++ ?RIAK_LOCK_SUFFIX)
 				    end
 			    end
 		    end;
@@ -197,6 +193,8 @@ move(Req0, State) ->
 	    %% Add action log record
 	    %%
 	    {CopiedDirectories, CopiedObjects} = copy_handler:prepare_action_log(Copied0),
+io:fwrite("CopiedDirectories: ~p~n", [CopiedDirectories]),
+io:fwrite("CopiedObjects: ~p~n", [CopiedObjects]),
 	    ActionLogRecord0 = #riak_action_log_record{
 		action="move",
 		user_name=User#user.name,

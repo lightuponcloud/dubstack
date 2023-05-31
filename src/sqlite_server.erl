@@ -10,9 +10,9 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, create_pseudo_directory/4, delete_pseudo_directory/4,
-	 lock_object/5, add_object/3, delete_object/4, rename_object/6,
-	 rename_pseudo_directory/5]).
+-export([start_link/0, create_pseudo_directory/4, task_create_pseudo_directory/4,
+	 delete_pseudo_directory/4, lock_object/4, add_object/3, delete_object/3,
+	 rename_object/5, rename_pseudo_directory/4]).
 
 -export([integrity_check/2]).
 
@@ -29,81 +29,65 @@
 -include("entities.hrl").
 
 -define(SERVER, ?MODULE).
+-define(SQLITE_DB_UPDATE_INTERVAL, 5000).  %% 5 seconds -- db updated every 5 seconds if there were changes
+
 %% sql_queue -- List of queued SQL statements (those that could not have been executed because of lock )
-%% timers -- list of timers, stored in case they need to be cancelled
--record(state, {sql_queue = [], timers = []}).
+%% lock_timers -- list of timers, that are used for retry update of locked DBs
+%%                ( stored in case they need to be cancelled )
+-record(state, {sql_queue = [], lock_timers = [], update_db_timer = []}).
 
 
 -spec(create_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      Name :: string(), User :: #user{}) -> ok | {error, any()}).
+			      Name :: string(), User :: #user{}) -> ok).
 create_pseudo_directory(BucketId, Prefix, Name, User)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_binary(Name) ->
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    gen_server:cast(?MODULE, {create_pseudo_directory, BucketId, Prefix, Name, User, Timestamp}).
+    gen_server:cast(?MODULE, {add_task, BucketId, ?MODULE, task_create_pseudo_directory, [Prefix, Name, User]}).
 
 
+%%
+%% Mark directory as deleted in SQLite db
+%%
 -spec(delete_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      Name :: binary(), UserId :: string() ) -> ok | {error, any()}).
+			      Name :: binary(), UserId :: string() ) -> ok).
 delete_pseudo_directory(BucketId, Prefix, Name, UserId)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_binary(Name) andalso erlang:is_list(UserId) ->
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    gen_server:cast(?MODULE, {delete_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}).
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, delete_pseudo_directory, [Prefix, Name]}).
 
 
 -spec(rename_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      SrcKey :: string(), DstName :: binary(), User :: #user{}) -> ok | {error, any()}).
-rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName, User)
+			      SrcKey :: string(), DstName :: binary()) -> ok).
+rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
-    SQL = sql_lib:rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName),
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    UserId = User#user.id,
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_pseudo_directory, [Prefix, SrcKey, DstName]}).
 
 
--spec(add_object(BucketId :: string(), Prefix :: string(), Obj :: #object{}) -> ok | {error, any()}).
+-spec(add_object(BucketId :: string(), Prefix :: string(), Obj :: #object{}) -> ok).
 add_object(BucketId, Prefix, Obj) when erlang:is_list(BucketId) andalso
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined ->
-    case sql_lib:add_object(Prefix, Obj) of
-	{error, Error} ->
-	    lager:error("[sqlite_server] Error composing SQL for adding object: ~p/~p: ~p",
-			[Prefix, Obj#object.key, Error]);
-	SQL ->
-	    Timestamp = erlang:round(utils:timestamp()/1000),
-	    UserId = Obj#object.author_id,
-	    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp})
-    end.
-
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, add_object, [Prefix, Obj]}).
 
 -spec(rename_object(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
-		    DstKey :: string(), DstName :: binary(), User :: #user{}) -> ok | {error, any()}).
-rename_object(BucketId, Prefix, SrcKey, DstKey, DstName, User) when erlang:is_list(BucketId) andalso
+		    DstKey :: string(), DstName :: binary()) -> ok).
+rename_object(BucketId, Prefix, SrcKey, DstKey, DstName) when erlang:is_list(BucketId) andalso
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(SrcKey)
 	    andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
-    SQL = sql_lib:rename_object(BucketId, Prefix, SrcKey, DstKey, DstName),
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    UserId = User#user.id,
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_object, [Prefix, SrcKey, DstKey, DstName]}).
 
 
 -spec(lock_object(BucketId :: string(), Prefix :: string(), Key :: string(),
-		  Value :: boolean(), UserId :: string()) -> ok | {error, any()}).
-lock_object(BucketId, Prefix, Key, Value, UserId) ->
-    SQL = sql_lib:lock_object(Prefix, Key, Value),
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
+		  Value :: boolean()) -> ok).
+lock_object(BucketId, Prefix, Key, Value) ->
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, lock_object, [Prefix, Key, Value]}).
 
 
--spec(delete_object(BucketId :: string(), Prefix :: string(),
-		    Key :: string(), UserId :: string() ) -> ok | {error, any()}).
-delete_object(BucketId, Prefix, Key, UserId)
+-spec(delete_object(BucketId :: string(), Prefix :: string(), Key :: string()) -> ok).
+delete_object(BucketId, Prefix, Key)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
-	    andalso erlang:is_list(Key) andalso erlang:is_list(UserId) ->
-    Timestamp = erlang:round(utils:timestamp()/1000),
-    SQL = sql_lib:delete_object(Prefix, Key),
-    gen_server:cast(?MODULE, {exec_sql, BucketId, UserId, SQL, Timestamp}).
+	    andalso erlang:is_list(Key) ->
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, delete_object, [Prefix, Key]}).
 
 
 %%--------------------------------------------------------------------
@@ -131,7 +115,10 @@ start_link() ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) -> {ok, #state{}}.
+init([]) ->
+    {ok, Tref0} = timer:send_after(?SQLITE_DB_UPDATE_INTERVAL, update_db),
+    {ok, #state{update_db_timer = Tref0}}.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -161,97 +148,49 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({create_pseudo_directory, BucketId, Prefix, Name, User, Timestamp}, State0) ->
-    UserId = User#user.id,
-    %% Acquire lock on db first
-    case lock_db(BucketId) of
-	ok ->
-	    DbName = erlang:list_to_atom(lists:flatten(["sql_", riak_crypto:random_string(5)])),
-	    case open_db(BucketId, UserId, DbName, Timestamp) of
-		{error, _Reason} -> {noreply, State0};
-		{ok, TempFn, DbPid, Version0} ->
-		    %% Check if pseudo-directory exists first
-		    SQL0 = sql_lib:get_pseudo_directory(Prefix, Name),
-		    case sqlite3:sql_exec(DbName, SQL0) of
-			[{columns, _}, {rows,[_OrigName]}] ->
-			    %% Pseudo-directory is in DB already
-			    {noreply, State0};
-			[{columns, _}, {rows,[]}] ->
-			    %% Create one
-			    case sql_lib:create_pseudo_directory(Prefix, Name, User) of
-				{error, Reason} ->
-				    lager:error("[sqlite_server] Failed composing SQL for ~p/~p ~p ~p ~p: ~p",
-						[BucketId, Prefix, Name, UserId, Timestamp, Reason]);
-				SQL1 ->
-				    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
-				    update_db(DbName, TempFn, BucketId, UserId, Version1, SQL1),
-				    sqlite3:close(DbPid),
-				    unlock_db(BucketId),
-				    file:delete(TempFn),
-				    {noreply, State0}
-			    end
-		    end
-	    end;
-	locked ->
-	    %% Retry later if locked
-	    Timer = erlang:send_after(1000, self(), {handle_cast, [
-		{create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}]}),
-	    Timers = State0#state.timers,
-	    {noreply, State0#state{timers = Timers ++ [[{bucket_id, BucketId}, {timer, Timer}]]}}
-    end;
+handle_cast({add_task, BucketId, Module, Func, Args}, #state{sql_queue = SqlQueue0} = State0) ->
+    %% Adds record for periodic task processor
+    SqlQueue1 =
+	case proplists:is_defined(BucketId, SqlQueue0) of
+	    false ->
+		%% Add to queue
+		BQ0 = [{BucketId, [{Module, Func, Args}]}],
+		SqlQueue0 ++ BQ0;
+	    true ->
+		%% Change bucket queue
+		lists:map(
+		    fun(I) ->
+			case element(1, I) of
+			    BucketId ->
+				BQ1 = element(2, I),
+				{BucketId, BQ1 ++ [{Module, Func, Args}]};
+			    _ -> I
+			end
+		    end, SqlQueue0)
+	end,
+io:fwrite("SqlQueue0: ~p~n", [SqlQueue0]),
+io:fwrite("SqlQueue1: ~p~n", [SqlQueue1]),
+    {noreply, State0#state{sql_queue = SqlQueue1}}.
 
 
-handle_cast({delete_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}, State0) ->
-    %% Acquire lock on db first
-    case lock_db(BucketId) of
-	ok ->
-	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
-	    case open_db(BucketId, UserId, DbName, Timestamp) of
-		{error, _Reason} -> {noreply, State0};
-		{ok, TempFn, DbPid, Version0} ->
-		    %% Mark directory as deleted
-		    SQL0 = sql_lib:delete_pseudo_directory(Prefix, Name),
-		    case sqlite3:sql_exec(DbName, SQL0) of
-			ok ->
-			    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
-			    update_db(DbName, TempFn, BucketId, UserId, Version1, SQL0),
-			    sqlite3:close(DbPid),
-			    unlock_db(BucketId),
-			    file:delete(TempFn),
-			    {noreply, State0};
-			_ -> {noreply, State0}
-		    end
-	    end;
-	locked ->
-	    %% Retry later if locked
-	    Timer = erlang:send_after(1000, self(), {handle_cast, [
-		{create_pseudo_directory, BucketId, Prefix, Name, UserId, Timestamp}]}),
-	    Timers = State0#state.timers,
-	    {noreply, State0#state{timers = Timers ++ [[{bucket_id, BucketId}, {timer, Timer}]]}}
-    end;
-
-
-handle_cast({exec_sql, BucketId, UserId, SQL, Timestamp}, State0) ->
-    %% Acquire lock on db first
-    case lock_db(BucketId) of
-	ok ->
-	    DbName = erlang:list_to_atom(riak_crypto:random_string()),
-	    case open_db(BucketId, UserId, DbName, Timestamp) of
-		{error, _Reason} -> {noreply, State0};
-		{ok, TempFn, DbPid, Version0} ->
-		    Version1 = indexing:increment_version(Version0, Timestamp, UserId),
-		    update_db(DbName, TempFn, BucketId, UserId, Version1, SQL),
-		    sqlite3:close(DbPid),
-		    unlock_db(BucketId),
-		    file:delete(TempFn),
-		    {noreply, State0}
-	    end;
-	locked ->
-	    %% Retry later if locked
-	    Timer = erlang:send_after(1000, self(), {handle_cast, [
-		{exec_sql, BucketId, UserId, SQL, Timestamp}]}),
-	    Timers = State0#state.timers,
-	    {noreply, State0#state{timers = Timers ++ [[{bucket_id, BucketId}, {timer, Timer}]]}}
+%%
+%% Adds pseudo-directory in SQLite db, if it do not exist yet
+%%
+task_create_pseudo_directory(Prefix, Name, User, DbName) ->
+    %% Check if pseudo-directory exists first
+    SQL0 = sql_lib:get_pseudo_directory(Prefix, Name),
+    case sqlite3:sql_exec(DbName, SQL0) of
+	[{columns, _}, {rows,[_OrigName]}] ->
+	    %% Pseudo-directory is in DB already
+	    [];
+	[{columns, _}, {rows,[]}] ->
+	    %% Create one
+	    case sql_lib:create_pseudo_directory(Prefix, Name, User) of
+		{error, Reason} ->
+		    lager:error("[sqlite_server] Failed composing SQL for ~p ~p: ~p",
+				[Prefix, Name, Reason]);
+		SQL1 -> SQL1
+	    end
     end.
 
 
@@ -265,14 +204,83 @@ handle_cast({exec_sql, BucketId, UserId, SQL, Timestamp}, State0) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({update_db, FuncArgs}, State0) ->
-    Func = element(1, FuncArgs),
-    Args = element(2, FuncArgs),
-    Result = Func(Args, State0),
-    {noreply, element(2, Result)};
+handle_info(update_db, #state{sql_queue = SqlQueue0} = State) ->
+    %% Go over per-bucket queues of tasks, download SQLite db files,
+    %% execute SQL statements and upload DBs again
+    SqlQueue1 =
+	lists:map(
+	    fun(I) ->
+		BucketId = element(1, I),
+		BucketQueue0 = element(2, I),
+		BucketQueue1 =
+		    case length(BucketQueue0) of
+			0 -> [];  %% do nothing, try later
+			_ ->
+			    %% Acquire lock on db first
+			    case lock_db(BucketId) of
+				ok -> update_db(BucketId, BucketQueue0);
+				locked ->
+				    %% Skip it. The next check is in 3 seconds
+				    BucketQueue0
+			    end
+		    end,
+		{BucketId, BucketQueue1}
+	    end, SqlQueue0),
+io:fwrite("update_db SqlQueue1: ~p~n", [SqlQueue1]),
+    {ok, Tref0} = timer:send_after(?SQLITE_DB_UPDATE_INTERVAL, update_db),
+    {noreply, State#state{update_db_timer = Tref0, sql_queue = SqlQueue1}};
 
 handle_info(_Info, State) ->
     {noreply, State}.
+
+update_db(BucketId, BucketQueue0) ->
+    DbName = erlang:list_to_atom(riak_crypto:random_string()),
+    case open_db(BucketId, DbName) of
+	{error, _Reason} -> BucketQueue0;  %% leave queue as is
+	{ok, TempFn, DbPid, Version0} ->
+	    BucketQueue1 = lists:map(
+		fun(J) ->
+		    Module = element(1, J),
+		    Func = element(2, J),
+		    Args =
+			case {Module, Func} of
+			    {?MODULE, task_create_pseudo_directory} -> element(3, J) ++ [DbName];  %% add to args
+			    _ -> element(3, J)
+			end,
+		    case erlang:function_exported(Module, Func, length(Args)) of
+			true ->
+			    SQL = apply(Module, Func, Args),
+			    case SQL of
+				[] -> [];
+				_ ->
+				    case sqlite3:sql_exec(DbName, SQL) of
+					{error, Reason} ->
+					    ?ERROR("[sqlite_server] SQL error: ~p", [Reason]),
+					    {Module, Func, Args};  %% adding it back to queue
+					_Result -> []
+				    end
+			    end;
+			false ->
+			    ?ERROR("[sqlite_server] SQL error: ~p:~p not exported", [Module, Func]),
+			    []  %% removing from queue
+		    end
+		end, BucketQueue0),
+	    %% Read SQLitedb as file and write it to Riak CS
+	    sqlite3:close(DbPid),
+	    Timestamp = erlang:round(utils:timestamp()/1000),
+	    Version1 = indexing:increment_version(Version0, Timestamp, []),
+	    {ok, Blob} = file:read_file(TempFn),
+	    RiakOptions = [{acl, public_read}, {meta, [
+		{"version", base64:encode(jsx:encode(Version1))},
+		{"bytes", byte_size(Blob)}]}],
+	    riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions),
+	    %% Remove lock object
+	    %% remove temporary db file
+	    riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME),
+	    file:delete(TempFn),
+	    lists:flatten(BucketQueue1)
+    end.
+
 
 %%--------------------------------------------------------------------
 %% @private
@@ -285,13 +293,13 @@ handle_info(_Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, #state{timers = Timers} = _State) ->
-    %% Cancel timers
+terminate(_Reason, #state{lock_timers = LockTimers} = _State) ->
+    %% Cancel lock timers
     lists:all(
 	fun(I) ->
-	    Timer = proplists:get_value(timer, I),
-	    erlang:cancel_timer(Timer)
-	end, Timers),
+	    LockTimer = proplists:get_value(timer, I),
+	    erlang:cancel_timer(LockTimer)
+	end, LockTimers),
     ok.
 
 %%--------------------------------------------------------------------
@@ -330,7 +338,7 @@ integrity_check(DbName, TempFn) ->
 %%
 %% Read DB from Riak CS.
 %%
-open_db(BucketId, UserId, DbName, Timestamp) ->
+open_db(BucketId, DbName) ->
     TempFn0 = os:cmd("/bin/mktemp --suffix=.db"),
     TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
     case riak_api:head_object(BucketId, ?DB_VERSION_KEY) of
@@ -340,7 +348,8 @@ open_db(BucketId, UserId, DbName, Timestamp) ->
 	    case sql_lib:create_table_if_not_exist(DbName) of
 		ok ->
 		    %% Create a new version
-		    Version0 = indexing:increment_version(undefined, Timestamp, UserId),
+		    Timestamp = erlang:round(utils:timestamp()/1000),
+		    Version0 = indexing:increment_version(undefined, Timestamp, []),
 		    {ok, TempFn1, Pid0, Version0};
 		{error, Reason0} ->
 		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason0]),
@@ -356,22 +365,6 @@ open_db(BucketId, UserId, DbName, Timestamp) ->
 	    Version2 = jsx:decode(base64:decode(Version1)),
 	    {ok, TempFn1, Pid1, Version2}
     end.
-
-%%
-%% Write db to Riak CS
-%%
-update_db(DbName, TempFn, BucketId, UserId, Version, SQL) ->
-    case sqlite3:sql_exec(DbName, SQL) of
-	{error, Reason} -> ?ERROR("[sqlite_server] SQL error: ~p", [Reason]);
-	_ ->
-	    {ok, Blob} = file:read_file(TempFn),
-	    RiakOptions = [{acl, public_read}, {meta, [
-		{"version", base64:encode(jsx:encode(Version))},
-		{"user_id", UserId},
-		{"bytes", byte_size(Blob)}]}],
-	    riak_api:put_object(BucketId, undefined, ?DB_VERSION_KEY, Blob, RiakOptions)
-    end.
-
 
 %%
 %% Create lock object in Riak CS
@@ -416,10 +409,3 @@ lock_db(BucketId) ->
 		false -> locked
 	    end
     end.
-
-%%
-%% Remove lock object
-%$ remove temporary db file
-%%
-unlock_db(BucketId) ->
-    riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME).
