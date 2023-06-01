@@ -134,6 +134,9 @@ validate_copy_parameters(State0) ->
     SrcPrefix1 = list_handler:validate_prefix(SrcBucketId, SrcPrefix0),
     DstPrefix1 = list_handler:validate_prefix(DstBucketId, DstPrefix0),
 
+io:fwrite("SrcPrefix1: ~p~n", [SrcPrefix1]),
+io:fwrite("DstPrefix1: ~p~n", [DstPrefix1]),
+
     Error = lists:keyfind(error, 1, [SrcPrefix1, DstPrefix1]),
     case Error of
 	{error, Number0} -> {error, Number0};
@@ -324,6 +327,23 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 			    Version = proplists:get_value("version", ObjectMeta0),
 			    UploadTime = proplists:get_value("upload-time", ObjectMeta0),
 			    SrcLockUserId = proplists:get_value("x-amz-meta-lock-user-id", Metadata0),
+
+			    %% Update SQLite db
+			    Obj = #object{
+				key = erlang:list_to_binary(ObjectKey0),
+				orig_name = unicode:characters_to_list(OrigName2),
+				bytes = Bytes,
+				guid = erlang:list_to_binary(NewGUID),
+				version = erlang:list_to_binary(Version),
+				upload_time = UploadTime,
+				is_deleted = false,
+				author_id = User#user.id,
+				author_name = User#user.name,
+				author_tel = User#user.tel,
+				is_locked = false
+			    },
+			    sqlite_server:add_object(DstBucketId, erlang:binary_to_list(DstPrefix1), Obj),
+
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix1},
 			     {old_key, erlang:list_to_binary(OldKey)},
@@ -454,7 +474,7 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 			       element(3, I), NewDstIndexContent, User) || I <- NewPaths,
 			utils:is_hidden_object([{key, element(1, I)}]) =/= true andalso
 			utils:dirname(element(1, I)) =:= CurrentPrefix],
-	    %% Update indices for pseudo-sub-directories, as some of objects were renamed.
+	    %% Update indices for pseudo-sub-directories, as some objects were renamed.
 	    %% Rename map should be updated in index file.
 	    indexing:update(DstBucketId, NewDstPrefix, [{copy_from, [
 			    {bucket_id, SrcBucketId},
@@ -462,41 +482,15 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 			    {copied_names, [I || I <- Copied0, proplists:is_defined(skipped, I) =:= false]}]}]),
 
 	    %% Create pseudo-directory in SQLite
-	    NewDirectoryName = utils:unhex(erlang:list_to_binary(filename:basename(NewDstPrefix))),
-	    sqlite_server:create_pseudo_directory(DstBucketId, utils:dirname(NewDstPrefix), NewDirectoryName, User),
-
+	    case NewDstPrefix of
+		undefined -> ok;
+		_ ->
+		    NewDirectoryName = utils:unhex(erlang:list_to_binary(filename:basename(NewDstPrefix))),
+		    sqlite_server:create_pseudo_directory(DstBucketId, utils:dirname(NewDstPrefix),
+							  NewDirectoryName, User)
+	    end,
 	    %% Update parent directory
 	    indexing:update(DstBucketId, utils:dirname(NewDstPrefix)),
-
-	    lists:map(
-		fun(I) ->
-		    case proplists:get_value(skipped, I) of
-			locked -> ok;
-			server_error -> ok;
-			undefined ->
-			    ObjectKey = proplists:get_value(new_key, I),
-			    OrigName = proplists:get_value(dst_orig_name, I),
-			    Bytes = proplists:get_value(bytes, I),
-			    GUID = proplists:get_value(guid, I),
-			    EncodedVersion = proplists:get_value(version, I),
-			    UploadTime = proplists:get_value(upload_time, I),
-			    %% Update SQLite db
-			    Obj = #object{
-				key = ObjectKey,
-				orig_name = unicode:characters_to_list(OrigName),
-				bytes = Bytes,
-				guid = GUID,
-				version = EncodedVersion,
-				upload_time = UploadTime,
-				is_deleted = false,
-				author_id = User#user.id,
-				author_name = User#user.name,
-				author_tel = User#user.tel,
-				is_locked = false
-			    },
-			    sqlite_server:add_object(DstBucketId, DstPrefix, Obj)
-		    end
-		end, Copied0),
 	    Copied0
 	end, SrcIndexPaths),
     %% Make one flat list from all requested objects and pseudo-directories

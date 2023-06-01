@@ -43,7 +43,7 @@ class MKdirTest(TestClient):
         self.assertEqual(response.status_code, 204)
 
         # Check SQLite db
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         decoded_key = decode_from_hex(result[0]["key"])
@@ -72,7 +72,7 @@ class MKdirTest(TestClient):
         self.assertEqual(response.json(), {"error": 10})  # "10": "Directory exists already."
 
         # Make sure no additional records created in db
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
 
@@ -81,7 +81,7 @@ class MKdirTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, dir_name_prefix)
         self.assertEqual(response.json(), dir_name_prefix)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 

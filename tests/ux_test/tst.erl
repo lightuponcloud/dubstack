@@ -55,7 +55,7 @@ func(Parser, Type, Value) ->
 -spec to_lower(char()) -> char(); 
         (skip_check) -> fun().
 
-to_lower(V) -> 
+char_to_lower(V) -> 
     char_to_lower(V).
 
 
@@ -63,7 +63,7 @@ to_lower(V) ->
 -spec to_lower(string()) -> string().
 
 to_lower(Str) ->
-    Fun = ux_char:to_lower(skip_check),
+    Fun = char_to_lower(skip_check),
     lists:map(Fun, Str).
 
 tst() ->

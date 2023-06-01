@@ -422,7 +422,7 @@ class RenameTest(TestClient):
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["key"], fn)
@@ -435,7 +435,7 @@ class RenameTest(TestClient):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['orig_name'], random_name)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["orig_name"], random_name)
@@ -460,7 +460,7 @@ class RenameTest(TestClient):
         res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_dir_name)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 2)
         names = [i["orig_name"] for i in result]
@@ -474,7 +474,7 @@ class RenameTest(TestClient):
         res = self.client.create_pseudo_directory(TEST_BUCKET_1, random_prefix)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         encoded_prefix = encode_to_hex(random_prefix)
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertTrue(encoded_prefix in ["{}/".format(i['key']) for i in result])
@@ -486,7 +486,7 @@ class RenameTest(TestClient):
                                                   prefix=encoded_random_prefix)
         self.assertEqual(res.status_code, 204)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         encoded_prefix = encode_to_hex(random_prefix)
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 4)
@@ -500,7 +500,7 @@ class RenameTest(TestClient):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()['dir_name'], random_new_name)
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 4)
         dir_index = None

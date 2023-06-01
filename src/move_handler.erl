@@ -134,7 +134,11 @@ move(Req0, State) ->
 		    case proplists:is_defined(skipped, CopiedOne) of
 			true -> ok; %% don't delete
 			false ->
-			    SrcPrefix1 = proplists:get_value(src_prefix, CopiedOne),
+			    SrcPrefix1 =
+				case proplists:get_value(src_prefix, CopiedOne) of
+				    null -> undefined;
+				    P -> P
+				end,
 			    OldKey0 = proplists:get_value(old_key, CopiedOne),
 			    PrefixedObjectKey0 = utils:prefixed_object_key(SrcPrefix1, OldKey0),
 			    PrefixedObjectKey1 = erlang:binary_to_list(PrefixedObjectKey0),
@@ -145,7 +149,7 @@ move(Req0, State) ->
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 							[SrcBucketId, PrefixedObjectKey1, Reason]);
-					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, OldKey0)
+					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 				    end;
 				true ->
 				    LockUserId = proplists:get_value(src_lock_user_id, CopiedOne),
@@ -156,7 +160,7 @@ move(Req0, State) ->
 						{error, Reason} ->
 						    lager:error("[move_handler] Can't delete ~p/~p: ~p",
 								[SrcBucketId, PrefixedObjectKey1, Reason]);
-						{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, OldKey0)
+						{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 					    end,
 					    riak_api:delete_object(SrcBucketId, PrefixedObjectKey1 ++ ?RIAK_LOCK_SUFFIX)
 				    end
@@ -193,8 +197,6 @@ move(Req0, State) ->
 	    %% Add action log record
 	    %%
 	    {CopiedDirectories, CopiedObjects} = copy_handler:prepare_action_log(Copied0),
-io:fwrite("CopiedDirectories: ~p~n", [CopiedDirectories]),
-io:fwrite("CopiedObjects: ~p~n", [CopiedObjects]),
 	    ActionLogRecord0 = #riak_action_log_record{
 		action="move",
 		user_name=User#user.name,

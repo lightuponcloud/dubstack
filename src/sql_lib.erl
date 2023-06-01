@@ -6,7 +6,7 @@
 -export([create_table_if_not_exist/1, create_pseudo_directory/3, add_object/2,
 	 lock_object/3, delete_object/2, get_object/2, 
 	 get_pseudo_directory/2, delete_pseudo_directory/2,
-	 rename_object/5, rename_pseudo_directory/3]).
+	 rename_object/4, rename_pseudo_directory/3]).
 
 -include("entities.hrl").
 
@@ -159,10 +159,10 @@ get_object(Prefix0, OrigName)
     SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
 
 
--spec(rename_object(BucketId :: string(), Prefix0 :: string(), SrcKey :: string(),
+-spec(rename_object(Prefix0 :: string(), SrcKey :: string(),
 		    DstKey :: string(), DstName :: binary()) -> ok | list()).
-rename_object(BucketId, Prefix0, SrcKey, DstKey, DstName)
-    when erlang:is_list(BucketId) andalso erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
+rename_object(Prefix0, SrcKey, DstKey, DstName)
+    when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	andalso erlang:is_list(SrcKey) andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
     SQL = ["UPDATE items SET key = ", sqlite3_lib:value_to_sql(DstKey),
 	   ", orig_name = ", sqlite3_lib:value_to_sql(DstName),

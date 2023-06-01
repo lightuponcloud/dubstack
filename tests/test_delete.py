@@ -69,7 +69,7 @@ class DeleteTest(TestClient):
         response = self.client.delete(TEST_BUCKET_1, object_keys)
         self.assertTrue(not set(object_keys) ^ set(response.json()))
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
@@ -136,7 +136,7 @@ class DeleteTest(TestClient):
         result = response.json()
         self.assertEqual(result, [dir_name_prefix])
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
@@ -168,7 +168,7 @@ class DeleteTest(TestClient):
         result = response.json()
         self.assertEqual(set(result), set([encode_to_hex(dir_name=first_name)]))
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
 
@@ -196,7 +196,7 @@ class DeleteTest(TestClient):
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 1)  # only main dir should exist
 
@@ -218,7 +218,7 @@ class DeleteTest(TestClient):
         assert response.status_code == 200
         self.assertEqual(set(response.json()), set(object_keys))
 
-        time.sleep(1)  # time necessary for server to update db
+        time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)  # only main dir should exist
 

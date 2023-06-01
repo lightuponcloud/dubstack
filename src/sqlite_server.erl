@@ -29,7 +29,7 @@
 -include("entities.hrl").
 
 -define(SERVER, ?MODULE).
--define(SQLITE_DB_UPDATE_INTERVAL, 5000).  %% 5 seconds -- db updated every 5 seconds if there were changes
+-define(SQLITE_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
 
 %% sql_queue -- List of queued SQL statements (those that could not have been executed because of lock )
 %% lock_timers -- list of timers, that are used for retry update of locked DBs
@@ -69,12 +69,14 @@ add_object(BucketId, Prefix, Obj) when erlang:is_list(BucketId) andalso
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined ->
     gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, add_object, [Prefix, Obj]}).
 
+
 -spec(rename_object(BucketId :: string(), Prefix :: string(), SrcKey :: string(),
 		    DstKey :: string(), DstName :: binary()) -> ok).
 rename_object(BucketId, Prefix, SrcKey, DstKey, DstName) when erlang:is_list(BucketId) andalso
 	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(SrcKey)
 	    andalso erlang:is_list(DstKey) andalso erlang:is_binary(DstName) ->
-    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_object, [Prefix, SrcKey, DstKey, DstName]}).
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_object,
+		    [Prefix, SrcKey, DstKey, DstName]}).
 
 
 -spec(lock_object(BucketId :: string(), Prefix :: string(), Key :: string(),
@@ -168,8 +170,6 @@ handle_cast({add_task, BucketId, Module, Func, Args}, #state{sql_queue = SqlQueu
 			end
 		    end, SqlQueue0)
 	end,
-io:fwrite("SqlQueue0: ~p~n", [SqlQueue0]),
-io:fwrite("SqlQueue1: ~p~n", [SqlQueue1]),
     {noreply, State0#state{sql_queue = SqlQueue1}}.
 
 
@@ -226,7 +226,6 @@ handle_info(update_db, #state{sql_queue = SqlQueue0} = State) ->
 		    end,
 		{BucketId, BucketQueue1}
 	    end, SqlQueue0),
-io:fwrite("update_db SqlQueue1: ~p~n", [SqlQueue1]),
     {ok, Tref0} = timer:send_after(?SQLITE_DB_UPDATE_INTERVAL, update_db),
     {noreply, State#state{update_db_timer = Tref0, sql_queue = SqlQueue1}};
 
@@ -261,7 +260,8 @@ update_db(BucketId, BucketQueue0) ->
 				    end
 			    end;
 			false ->
-			    ?ERROR("[sqlite_server] SQL error: ~p:~p not exported", [Module, Func]),
+			    ?ERROR("[sqlite_server] not exported: ~p:~p/~p~p",
+				   [Module, Func, length(Args), Args]),
 			    []  %% removing from queue
 		    end
 		end, BucketQueue0),

@@ -322,7 +322,7 @@ class LightClient:
         url = "{}riak/list/{}/".format(self.url, bucket_id)
         return requests.patch(url, json=data, headers=headers)
 
-    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: list, src_prefix: str = "",
+    def move(self, src_bucket_id: str, dst_bucket_id: str, object_keys: dict, src_prefix: str = "",
              dst_prefix: str = ""):
         """
         POST /riak/move/[:src_bucket_id]/
@@ -380,7 +380,6 @@ class LightClient:
         """
 
         headers = {
-
             "content-type": "application/json",
             "authorization": "Token {}".format(self.token),
         }
