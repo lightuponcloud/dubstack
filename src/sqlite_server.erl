@@ -4,7 +4,6 @@
 %% The DB contains tree of filesystem on client side.
 %% Server and client databases can be compared by client app.
 %%
-%%
 -module(sqlite_server).
 
 -behaviour(gen_server).
@@ -28,7 +27,6 @@
 -include("riak.hrl").
 -include("entities.hrl").
 
--define(SERVER, ?MODULE).
 -define(SQLITE_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
 
 %% sql_queue -- List of queued SQL statements (those that could not have been executed because of lock )

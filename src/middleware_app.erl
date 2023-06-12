@@ -55,9 +55,10 @@ start(_Type, _Args) ->
 	#{env => #{
 	    dispatch => Dispatch
 	}}),
-    [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],
-    sqlite_server:start_link(),  %% Processes queries to per-bucket SQLite DBs using locks
-    cleaner:start_link(),
+    [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],  %% scales images
+    sqlite_server:start_link(),  %% Puts changes to SQLite DB
+    copy_server:start_link(),    %% Performs time-consuming copy/move operations
+    cleaner:start_link(),        %% Removes expired tokens
     middleware_sup:start_link().
 
 stop(_State) -> ok.
