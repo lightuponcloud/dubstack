@@ -339,6 +339,11 @@ new_user(Req0, User0) ->
 			    {id, [G#group.id]},
 			    {name, [G#group.name]}
 			]} || G <- User0#user.groups],
+	    Tel =
+		case User0#user.tel of
+		    undefined -> "";
+		    T -> T
+		end,
 	    User1 = {record, [
 			{id, [User0#user.id]},
 			{name, [User0#user.name]},
@@ -348,7 +353,7 @@ new_user(Req0, User0) ->
 			{password, [utils:to_list(User0#user.password)]},
 			{salt, [utils:to_list(User0#user.salt)]},
 			{login, [User0#user.login]},
-			{tel, [User0#user.tel]},
+			{tel, [Tel]},
 			{enabled, [utils:to_list(User0#user.enabled)]},
 			{staff, [utils:to_list(User0#user.staff)]},
 			{date_updated, Timestamp},
@@ -391,6 +396,11 @@ edit_user(Req0, User) ->
     Timestamp = io_lib:format("~p", [utils:timestamp()]),
     Groups = [{group, [{id, [G#group.id]},
 		       {name, [G#group.name]}]} || G <- User#user.groups],
+    Tel =
+	case User#user.tel of
+	    undefined -> "";
+	    T -> T
+	end,
     EditedUser =
 	{record, [
 	    {id, [User#user.id]},
@@ -401,7 +411,7 @@ edit_user(Req0, User) ->
 	    {password, [utils:to_list(User#user.password)]},
 	    {salt, [utils:to_list(User#user.salt)]},
 	    {login, [User#user.login]},
-	    {tel, [User#user.tel]},
+	    {tel, [Tel]},
 	    {enabled, [utils:to_list(User#user.enabled)]},
 	    {staff, [utils:to_list(User#user.staff)]},
 	    {date_updated, Timestamp},

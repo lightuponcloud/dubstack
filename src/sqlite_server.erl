@@ -348,9 +348,11 @@ open_db(BucketId, DbName) ->
 		    %% Create a new version
 		    Timestamp = erlang:round(utils:timestamp()/1000),
 		    Version0 = indexing:increment_version(undefined, Timestamp, []),
+		    file:delete(TempFn1),
 		    {ok, TempFn1, Pid0, Version0};
 		{error, Reason0} ->
 		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason0]),
+		    file:delete(TempFn1),
 		    {error, Reason0}
 	    end;
 	Metadata ->
@@ -361,6 +363,7 @@ open_db(BucketId, DbName) ->
 	    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
 	    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
 	    Version2 = jsx:decode(base64:decode(Version1)),
+	    file:delete(TempFn1),
 	    {ok, TempFn1, Pid1, Version2}
     end.
 

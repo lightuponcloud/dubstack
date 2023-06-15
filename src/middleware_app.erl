@@ -42,9 +42,8 @@ start(_Type, _Args) ->
 	    {"/riak/js/", js_handler, []},
 	    {"/riak/js/[:bucket_id]/", js_handler, []},
 	    {"/riak/", first_page_handler, []},
+	    {"/riak/websocket", ws_handler, []},
 	    {"/riak/[:bucket_id]/", first_page_handler, []}
-	    %% The following line should be uncommented if you like Cowboy to serve static files
-	    %% {"/riak-media/[...]", cowboy_static, {priv_dir, middleware, ""}}
 	]}
     ]),
     Settings = utils:read_config(middleware),
@@ -55,6 +54,7 @@ start(_Type, _Args) ->
 	#{env => #{
 	    dispatch => Dispatch
 	}}),
+    {ok, _} = pg:start(?SCOPE_PG),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],  %% scales images
     sqlite_server:start_link(),  %% Puts changes to SQLite DB
     copy_server:start_link(),    %% Performs time-consuming copy/move operations
