@@ -276,6 +276,12 @@ update_db(BucketId, BucketQueue0) ->
 	    %% remove temporary db file
 	    riak_api:delete_object(BucketId, ?DB_VERSION_LOCK_FILENAME),
 	    file:delete(TempFn),
+
+	    %% Send notification to bucket subscribers
+	    AtomicId = erlang:binary_to_list(riak_crypto:uuid4()),
+	    Msg = jsx:encode([{version, Version1}, {bucket_id, BucketId}, {timestamp, Timestamp}]),
+	    events_server_sup:send_message(BucketId, AtomicId, Msg),
+
 	    lists:flatten(BucketQueue1)
     end.
 

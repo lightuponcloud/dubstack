@@ -10,7 +10,7 @@
 %% API
 
 -export([start_link/0, start/0, stop/0]).
--export([new_subscriber/4, logout_subscriber/1, send_message/4,
+-export([new_subscriber/4, logout_subscriber/1, send_message/3,
 	 user_active/1, confirm_reception/3, get_subscribers/0]).
 
 %% Behaviour callbacks.
@@ -95,12 +95,17 @@ user_active(UserId, [Pid | T], Acc) ->
 %%
 %% Send message to user's session asyncronously.
 %%
--spec send_message(BucketId :: string(), UserId :: string(), AtomicId :: string(), Msg :: binary()) -> ok.
+-spec send_message(BucketId :: string(), AtomicId :: string(), Msg :: binary()) -> ok.
 
-send_message(BucketId, UserId, AtomicId, Msg)
-	when erlang:is_list(BucketId) andalso erlang:is_list(UserId) andalso erlang:is_list(AtomicId) ->
+send_message(BucketId, AtomicId, Msg) when erlang:is_list(BucketId) andalso erlang:is_list(AtomicId) ->
     Pids = pg:get_members(?SCOPE_PG, ?WS_PG),
-    [gen_server:cast(Pid, {message, BucketId, UserId, AtomicId, Msg}) || Pid <- Pids].
+    Subscribers = get_subscribers(),
+    lists:foreach(
+	fun(I) ->
+	    UserId = element(1, I),
+	    [gen_server:cast(Pid, {message, BucketId, UserId, AtomicId, Msg}) || Pid <- Pids]
+	end, Subscribers),
+    ok.
 
 
 -spec confirm_reception(AtomicId :: string(), UserId :: string(), SessionId :: string()) -> ok.

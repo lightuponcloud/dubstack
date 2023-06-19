@@ -46,20 +46,18 @@ parse_message(<<"CONFIRM ", AtomicId/binary>>, State) ->
 	    end
     end;
 parse_message(<<"Authorization ", Token0/binary>>, State) ->
-	    Token1 = utils:to_list(Token0),
-    io:fwrite("Token1: ~p~n", [Token1]),
-	    case login_handler:check_token(Token1) of
-		not_found ->
-		    ?INFO("[ws_handler] authentication failed for token ~p: not_found", [Token1]),
-		    {ok, State};
-		expired ->
-		    ?INFO("[ws_handler] authentication failed for token ~p: expired", [Token1]),
-		    {ok, State};
-		User0 ->
-		    io:fwrite("User id: ~p~n", [User0#user.id]),
-		    ?INFO("[ws_handler] authentication passed"),
-		    {ok, [{user_id, User0#user.id}, {session_id, Token1}]}
-	    end;
+    Token1 = utils:to_list(Token0),
+    case login_handler:check_token(Token1) of
+	not_found ->
+	    ?INFO("[ws_handler] authentication failed for token ~p: not_found", [Token1]),
+	    {ok, State};
+	expired ->
+	    ?INFO("[ws_handler] authentication failed for token ~p: expired", [Token1]),
+	    {ok, State};
+	User0 ->
+	    ?INFO("[ws_handler] authentication passed"),
+	    {ok, [{user_id, User0#user.id}, {session_id, Token1}]}
+    end;
 parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, State) ->
     case proplists:get_value(user_id, State) of
 	undefined -> {ok, State};  %% not logged in
@@ -92,7 +90,7 @@ websocket_info(_, State) ->
 
 terminate(Reason, PartialReq, State) ->
     %% terminating, going to deregister from _sup
-case proplists:get_value(user_id, State) of
+    case proplists:get_value(user_id, State) of
 	undefined ->
 	    ?INFO("[ws_handler] terminating, reason: ~p, req: ~p", [Reason, PartialReq]);
 	UserId ->
