@@ -233,7 +233,10 @@ handle_info(_Info, State) ->
 update_db(BucketId, BucketQueue0) ->
     DbName = erlang:list_to_atom(riak_crypto:random_string()),
     case open_db(BucketId, DbName) of
-	{error, _Reason} -> BucketQueue0;  %% leave queue as is
+	{error, TempFn, _Reason} ->
+	    %% leave queue as is
+	    file:delete(TempFn),
+	    BucketQueue0;
 	{ok, TempFn, DbPid, Version0} ->
 	    BucketQueue1 = lists:map(
 		fun(J) ->
@@ -354,12 +357,10 @@ open_db(BucketId, DbName) ->
 		    %% Create a new version
 		    Timestamp = erlang:round(utils:timestamp()/1000),
 		    Version0 = indexing:increment_version(undefined, Timestamp, []),
-		    file:delete(TempFn1),
 		    {ok, TempFn1, Pid0, Version0};
 		{error, Reason0} ->
 		    ?ERROR("[sqlite_server] Failed to create table: ~p~n", [Reason0]),
-		    file:delete(TempFn1),
-		    {error, Reason0}
+		    {error, TempFn1, Reason0}
 	    end;
 	Metadata ->
 	    %% Read db, then call exec_sql
@@ -369,7 +370,6 @@ open_db(BucketId, DbName) ->
 	    {ok, Pid1} = sqlite3:open(DbName, [{file, TempFn1}]),
 	    Version1 = proplists:get_value("x-amz-meta-version", Metadata),
 	    Version2 = jsx:decode(base64:decode(Version1)),
-	    file:delete(TempFn1),
 	    {ok, TempFn1, Pid1, Version2}
     end.
 

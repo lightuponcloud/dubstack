@@ -463,8 +463,8 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				author_name = User#user.name,
 				author_tel = User#user.tel,
 				is_locked = false
-			    },
-			    sqlite_server:add_object(DstBucketId, erlang:binary_to_list(DstPrefix1), Obj),
+			    },	
+			    sqlite_server:add_object(DstBucketId, DstPrefix0, Obj),
 
 			    [{src_prefix, SrcPrefix},
 			     {dst_prefix, DstPrefix1},
