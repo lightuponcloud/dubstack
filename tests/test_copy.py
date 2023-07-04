@@ -71,6 +71,25 @@ class CopyTest(TestClient):
         assert ('', object_key) in keys
         assert (hex_dir_name, object_key) in keys
 
+    def test_copy_file_tenant_bucket(self):
+        """
+        Test if delete works in tenant's bucket (no group).
+        """
+        # 1. Upload a file and create a directory
+        dir_name = generate_random_name()
+        hex_dir_name = encode_to_hex(dir_name)
+        dir_name_prefix = encode_to_hex(dir_name)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_3, dir_name)
+
+        fn = "20180111_165127.jpg"
+        res = self.client.upload(TEST_BUCKET_3, fn)
+        object_key = res['object_key']
+        orig_name = res["orig_name"]
+
+        response = self.client.copy(TEST_BUCKET_3, TEST_BUCKET_3,
+            {object_key: object_key}, "", hex_dir_name)
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

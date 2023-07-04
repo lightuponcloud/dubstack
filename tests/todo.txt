@@ -1,0 +1,1 @@
+1. make sure users from different tenants can't read / write other buckets

@@ -158,7 +158,9 @@ forbidden(Req0, User) ->
 		end,
 	    case UserBelongsToGroup of
 		false ->
-		    case utils:is_public_bucket_id(BucketId) of
+		    IsRestricted = utils:is_restricted_bucket_id(BucketId),
+		    IsPublic = utils:is_public_bucket_id(BucketId),
+		    case IsRestricted orelse IsPublic of
 			true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
 			false ->
 			    PUser = admin_users_handler:user_to_proplist(User),
@@ -515,6 +517,7 @@ validate_prefix(undefined, _Prefix) -> undefined;
 validate_prefix(null, _Prefix) -> undefined;
 validate_prefix(_BucketId, undefined) -> undefined;
 validate_prefix(_BucketId, null) -> undefined;
+validate_prefix(_BucketId, <<>>) -> undefined;
 validate_prefix(BucketId, Prefix0) when erlang:is_list(BucketId),
 	erlang:is_binary(Prefix0) orelse Prefix0 =:= undefined ->
     case validate_prefix(Prefix0) of

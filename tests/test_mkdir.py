@@ -4,6 +4,7 @@ import time
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
+    TEST_BUCKET_3,
     USERNAME_1,
     PASSWORD_1,
     TestClient,
@@ -84,6 +85,15 @@ class MKdirTest(TestClient):
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
         self.assertEqual(len(result), 0)
+
+    def test_mkdir_tenant_bucket(self):
+        """
+        Test creating directory in tenant's bucket.
+        """
+        # 1 Create pseudo-directory with random name
+        dir_name = generate_random_name()
+        response = self.client.create_pseudo_directory(TEST_BUCKET_3, dir_name)
+        self.assertEqual(response.status_code, 204)
 
 
 if __name__ == '__main__':

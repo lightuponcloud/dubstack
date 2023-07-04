@@ -412,7 +412,6 @@ class LightClient:
         """
 
         headers = {
-
             "content-type": "application/json",
             "authorization": "Token {}".format(self.token),
         }
@@ -423,3 +422,12 @@ class LightClient:
         }
         url = "{}riak/rename/{}/".format(self.url, src_bucket_id)
         return requests.post(url, json=data, headers=headers)
+
+    def get_version(self, bucket_id):
+        headers = {
+            "content-type": "application/json",
+            "authorization": "Token {}".format(self.token),
+        }
+        url = "{}riak/version/{}/".format(self.url, bucket_id)
+        response = requests.head(url, headers=headers)
+        return response

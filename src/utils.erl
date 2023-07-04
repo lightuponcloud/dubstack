@@ -4,8 +4,8 @@
 -module(utils).
 
 %% Validations
--export([is_valid_bucket_id/2, is_public_bucket_id/1, is_valid_object_key/1,
-	 is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
+-export([is_valid_bucket_id/2, is_public_bucket_id/1, is_restricted_bucket_id/1,
+	 is_valid_object_key/1, is_bucket_belongs_to_group/3, is_bucket_belongs_to_tenant/2,
 	 is_true/1, is_false/1, has_duplicates/1, ends_with/2, starts_with/2,
 	 even/1, validate_utf8/2, is_valid_hex_prefix/1, is_hidden_object/1,
 	 is_hidden_prefix/1, get_token/1]).
@@ -315,6 +315,7 @@ is_valid_bucket_id(BucketId, undefined) when erlang:is_list(BucketId) ->
 	true ->
 	    BucketSuffix = lists:last(Bits),
 	    (BucketSuffix =:= ?PRIVATE_BUCKET_SUFFIX
+	     orelse BucketSuffix =:= ?RESTRICTED_BUCKET_SUFFIX
 	     orelse BucketSuffix =:= ?PUBLIC_BUCKET_SUFFIX
 	    ) andalso lists:prefix([?RIAK_BACKEND_PREFIX], Bits) =:= true;
 	false -> false
@@ -346,6 +347,12 @@ is_public_bucket_id(BucketId) when erlang:is_list(BucketId) ->
 	_ -> false
     end.
 
+is_restricted_bucket_id(BucketId) when erlang:is_list(BucketId) ->
+    Bits = string:tokens(BucketId, "-"),
+    case lists:last(Bits) of
+	?RESTRICTED_BUCKET_SUFFIX -> true;
+	_ -> false
+    end.
 
 even(X) when X >= 0 -> (X band 1) == 0.
 

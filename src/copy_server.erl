@@ -181,17 +181,20 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 		    case proplists:is_defined(skipped, CopiedOne) of
 			true -> ok; %% don't delete
 			false ->
-			    SrcPrefix1 = proplists:get_value(src_prefix, CopiedOne),
+			    SrcPrefix1 =
+				case proplists:get_value(src_prefix, CopiedOne) of
+				    undefined -> undefined;
+				    P -> erlang:binary_to_list(P)
+				end,
 			    OldKey0 = proplists:get_value(old_key, CopiedOne),
-			    PrefixedObjectKey0 = utils:prefixed_object_key(SrcPrefix1, OldKey0),
-			    PrefixedObjectKey1 = erlang:binary_to_list(PrefixedObjectKey0),
+			    PrefixedObjectKey = utils:prefixed_object_key(SrcPrefix1, erlang:binary_to_list(OldKey0)),
 			    %% Delete source object only if not locked by another user
 			    case proplists:get_value(src_locked, CopiedOne) of
 				false ->
-				    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey1) of
+				    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 					{error, Reason} ->
 					    lager:error("[move_handler] Can't delete ~p/~p: ~p",
-							[SrcBucketId, PrefixedObjectKey1, Reason]);
+							[SrcBucketId, PrefixedObjectKey, Reason]);
 					{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 				    end;
 				true ->
@@ -199,13 +202,13 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 				    case LockUserId =:= User#user.id of
 					false -> ok;  %% don't delete source object
 					true ->
-					    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey1) of
+					    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 						{error, Reason} ->
 						    lager:error("[move_handler] Can't delete ~p/~p: ~p",
-								[SrcBucketId, PrefixedObjectKey1, Reason]);
+								[SrcBucketId, PrefixedObjectKey, Reason]);
 						{ok, _} -> sqlite_server:delete_object(SrcBucketId, SrcPrefix1, unicode:characters_to_list(OldKey0))
 					    end,
-					    riak_api:delete_object(SrcBucketId, PrefixedObjectKey1 ++ ?RIAK_LOCK_SUFFIX)
+					    riak_api:delete_object(SrcBucketId, PrefixedObjectKey ++ ?RIAK_LOCK_SUFFIX)
 				    end
 			    end
 		    end;
@@ -463,7 +466,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				author_name = User#user.name,
 				author_tel = User#user.tel,
 				is_locked = false
-			    },	
+			    },
 			    sqlite_server:add_object(DstBucketId, DstPrefix0, Obj),
 
 			    [{src_prefix, SrcPrefix},

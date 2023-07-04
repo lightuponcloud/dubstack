@@ -26,10 +26,13 @@ init(Req0, _Opts) ->
 	{error, Code} -> js_handler:incorrect_configuration(Req0, Code);
 	User ->
 	    TenantId = User#user.tenant_id,
-	    Bits = [?RIAK_BACKEND_PREFIX, TenantId, ?PUBLIC_BUCKET_SUFFIX],
-	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits, "-", [])),
+	    Bits0 = [?RIAK_BACKEND_PREFIX, TenantId, ?PUBLIC_BUCKET_SUFFIX],
+	    PublicBucketId = lists:flatten(utils:join_list_with_separator(Bits0, "-", [])),
+	    Bits1 = [?RIAK_BACKEND_PREFIX, TenantId, ?RESTRICTED_BUCKET_SUFFIX],
+	    TenantBucketId = lists:flatten(utils:join_list_with_separator(Bits1, "-", [])),
 	    State = admin_users_handler:user_to_proplist(User)
-		++ [{token, SessionID1}, {public_bucket_id, PublicBucketId}],
+		++ [{token, SessionID1}, {public_bucket_id, PublicBucketId},
+		    {tenant_bucket_id, TenantBucketId}],
 	    first_page(Req0, Settings, State)
     end.
 

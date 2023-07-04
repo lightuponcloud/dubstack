@@ -370,7 +370,7 @@ handle_post(Req0, State0) ->
 forbidden(Req0, _State) ->
     case utils:get_token(Req0) of
 	undefined -> js_handler:forbidden(Req0, 28, stop);
-	Token -> 
+	Token ->
 	    %% Extracts token from request headers and looks it up in "security" bucket
 	    case login_handler:check_token(Token) of
 		not_found -> js_handler:forbidden(Req0, 28, stop);

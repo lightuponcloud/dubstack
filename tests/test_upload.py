@@ -13,6 +13,7 @@ from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
     TEST_BUCKET_2,
+    TEST_BUCKET_3,
     FILE_UPLOAD_CHUNK_SIZE,
     UPLOADS_BUCKET_NAME,
     RIAK_ACTION_LOG_FILENAME,
@@ -122,24 +123,48 @@ class UploadTest(TestClient):
         # Test SQLite db contents
         time.sleep(1)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["key"], fn.lower())
-        self.assertEqual(result[0]["orig_name"], fn)
-        self.assertEqual(result[0]["is_dir"], 0)
-        self.assertEqual(result[0]["is_locked"], 0)
-        self.assertEqual(result[0]["bytes"], os.stat(fn).st_size)
-        self.assertTrue(("guid" in result[0]))
-        self.assertTrue(("bytes" in result[0]))
-        self.assertTrue(("version" in result[0]))
-        self.assertTrue(("last_modified_utc" in result[0]))
-        self.assertTrue(("author_id" in result[0]))
-        self.assertTrue(("author_name" in result[0]))
-        self.assertTrue(("author_tel" in result[0]))
-        self.assertTrue(("lock_user_id" in result[0]))
-        self.assertTrue(("lock_user_name" in result[0]))
-        self.assertTrue(("lock_user_tel" in result[0]))
-        self.assertTrue(("lock_modified_utc" in result[0]))
-        self.assertTrue(("md5" in result[0]))
+        for i in range(len(result)):
+            if result[i]['key'] == fn.lower():
+                break
+        self.assertEqual(result[i]["key"], fn.lower())
+        self.assertEqual(result[i]["orig_name"], fn)
+        self.assertEqual(result[i]["is_dir"], 0)
+        self.assertEqual(result[i]["is_locked"], 0)
+        self.assertEqual(result[i]["bytes"], os.stat(fn).st_size)
+        self.assertTrue(("guid" in result[i]))
+        self.assertTrue(("bytes" in result[i]))
+        self.assertTrue(("version" in result[i]))
+        self.assertTrue(("last_modified_utc" in result[i]))
+        self.assertTrue(("author_id" in result[i]))
+        self.assertTrue(("author_name" in result[i]))
+        self.assertTrue(("author_tel" in result[i]))
+        self.assertTrue(("lock_user_id" in result[i]))
+        self.assertTrue(("lock_user_name" in result[i]))
+        self.assertTrue(("lock_user_tel" in result[i]))
+        self.assertTrue(("lock_modified_utc" in result[i]))
+        self.assertTrue(("md5" in result[i]))
+
+    def test_small_upload_tenant_success(self):
+        """
+        Test whether it is possible to upload file to tenant's bucket, without group.
+        """
+        url = "{}/riak/upload/{}/".format(BASE_URL, TEST_BUCKET_3)
+        fn = "README.md"
+        t1 = time.time()
+        result = self.upload_file(url, fn)
+        t2 = time.time()
+        print("Upload {}".format(int(t2-t1)))
+        with open(fn, "rb") as fd:
+            contents = self.download_file(TEST_BUCKET_3, "readme.md")
+            self.assertEqual(fd.read(), contents)
+
+        # Test SQLite db contents
+        time.sleep(1)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_3, "SELECT * FROM items")
+        for i in range(len(result)):
+            if result[i]['key'] == fn.lower():
+                break
+        self.assertEqual(result[i]["key"], fn.lower())
 
     def test_validate_data_size(self):
         headers = {"content-range": "bytes 0-1/1"}
@@ -979,7 +1004,6 @@ class UploadTest(TestClient):
             self.download_object(TEST_BUCKET_1, "~object/{}/{}/1_{}".format(old_guid, old_upload_id, old_md5))
 
     def test_sqlite_update(self):
-
         dir_name = "test-dir"
         prefix = dir_name.encode().hex()
         dir_response = self.create_pseudo_directory(dir_name)

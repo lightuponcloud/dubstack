@@ -4,6 +4,7 @@ import unittest
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
+    TEST_BUCKET_3,
     USERNAME_1,
     PASSWORD_1,
     USERNAME_2,
@@ -213,7 +214,7 @@ class LockTest(TestClient):
         response = self.client.copy(TEST_BUCKET_1, TEST_BUCKET_1, object_keys, dir_name_prefix)
         # print(response.content.decode())
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['skipped'], 'locked')
+        self.assertEqual(response.json(), {'status': 'ok'})
 
         # 4.2 check for locked file existance and is_locked: True
         response = self.client.get_list(TEST_BUCKET_1)
@@ -269,6 +270,22 @@ class LockTest(TestClient):
         metadata = self.head(TEST_BUCKET_1, object_key_deleted[0])
         # It should not be possible to lock deleted files
         self.assertTrue(metadata.get('is-locked', False) in [False, 'undefined'])
+
+    def test_lock_tenant_bucket(self):
+        """
+        Make sure lock works in bucket of tenant (without group)
+        """
+        # 1. upload 1 file
+        fn = "20180111_165127.jpg"
+        result = self.client.upload(TEST_BUCKET_3, fn)
+        object_key = result['object_key']
+
+        # 2-3. lock it and check for "is_locked": True
+        response = self.client.patch(TEST_BUCKET_3, "lock", [object_key])
+        result = response.json()
+        # print(response.content.decode())
+        self.assertEqual(result[0]['is_locked'], True)
+        self.assertEqual(response.status_code, 200)
 
 
 if __name__ == '__main__':

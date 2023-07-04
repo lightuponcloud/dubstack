@@ -261,8 +261,10 @@ forbidden(Req0, State) ->
     case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
 	{error, Number} -> js_handler:forbidden(Req0, Number, stop);
 	false ->
+	    IsRestricted = utils:is_restricted_bucket_id(BucketId),
+	    IsPublic = utils:is_public_bucket_id(BucketId),
 	    UserBelongsToGroup =
-		case User =:= undefined orelse utils:is_public_bucket_id(BucketId) of
+		case User =:= undefined orelse IsRestricted orelse IsPublic of
 		    true -> undefined;
 		    false -> lists:any(
 			    fun(Group) -> utils:is_bucket_belongs_to_group(BucketId, TenantId, Group#group.id) end,
