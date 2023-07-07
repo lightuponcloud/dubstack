@@ -10,6 +10,7 @@
 -include("general.hrl").
 -include("riak.hrl").
 -include("entities.hrl").
+-include("media.hrl").
 
 init(Req, Opts) ->
     {cowboy_rest, Req, Opts}.
@@ -56,55 +57,108 @@ to_scale(Req0, State) ->
 			[BucketId, PrefixedObjectKey, Reason]),
 	    {<<>>, Req0, []};
 	not_found -> {<<>>, Req0, []};
-	RiakResponse0 ->
+	Metadata0 ->
 	    TotalBytes =
-		case proplists:get_value("x-amz-meta-bytes", RiakResponse0) of
+		case proplists:get_value("x-amz-meta-bytes", Metadata0) of
 		    undefined -> undefined;
 		    V -> utils:to_integer(V)
-		end,
-	    GUID = proplists:get_value("x-amz-meta-guid", RiakResponse0),
-	    UploadId = proplists:get_value("x-amz-meta-upload-id", RiakResponse0),
-	    %% Old GUID, old bucket id and upload id are needed for 
-	    %% determining URI of the original object, before it was copied
-	    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", RiakResponse0),
-	    OldBucketId =
-		case proplists:get_value("x-amz-meta-copy-from-bucket-id", RiakResponse0) of
-		    undefined -> BucketId;
-		    B -> B
-		end,
-	    OldUploadId =
-		case proplists:get_value("x-amz-meta-copy-from-upload-id", RiakResponse0) of
-		    undefined -> UploadId;
-		    UID -> UID
-		end,
-	    {RealBucketId, RealGUID, RealUploadId} =
-		case OldGUID =/= undefined andalso OldGUID =/= GUID of
-		    true -> {OldBucketId, OldGUID, OldUploadId};
-		    false -> {BucketId, GUID, UploadId}
 		end,
 	    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
 		true ->
 		    %% In case image object size is bigger than the limit, return empty response.
 		    {<<>>, Req0, []};
 		false ->
-		    scale_response(Req0, RealBucketId, RealGUID, RealUploadId, Width, Height, CropFlag, T0)
+		    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, T0)
 	    end
     end.
 
 %%
-%% Download image from Riak CS
+%% Receives stream from httpc and passes it to cowboy
 %%
-serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0) ->
-    BinaryData =
-	case riak_api:get_object(BucketId, GUID, UploadId) of
-	    not_found ->
-		lager:error("[img_scale_handler] error ~p/~p: image not found", [BucketId, GUID]),
-		throw("[img_scale_handler] error: image not found");
-	    {error, Reason0} ->
-		lager:error("[img_scale_handler] error downloading image ~p/~p: ~p", [BucketId, GUID, Reason0]),
-		throw("[img_scale_handler] error downloading image");
-	    Data -> Data
-	end,
+receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, Acc) ->
+    httpc:stream_next(Pid0),
+    receive
+	{http, {RequestId0, stream, BinBodyPart}} ->
+	    case (byte_size(Acc) + byte_size(BinBodyPart)) >= ?MAXIMUM_IMAGE_SIZE_BYTES of
+		true ->
+		    httpc:cancel_request(RequestId0),
+		    << Acc/binary, BinBodyPart/binary >>;
+		false ->
+		    receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0,
+					  << Acc/binary, BinBodyPart/binary >>)
+	    end;
+	{http, {RequestId0, stream_end, _Headers0}} ->
+	    case NextObjectKeys0 of
+		[] -> Acc;
+		[CurrentObjectKey|NextObjectKeys1] ->
+		    %% stream next chunk
+		    case riak_api:get_object(BucketId, CurrentObjectKey, stream) of
+			not_found ->
+			    lager:error("[img_scale_handler] part not found: ~p/~p", [BucketId, CurrentObjectKey]),
+			    <<>>;
+			{ok, RequestId1} ->
+			    receive
+				{http, {RequestId1, stream_start, _Headers1, Pid1}} ->
+				    receive_streamed_body(RequestId1, Pid1, BucketId, NextObjectKeys1, Acc);
+				{http, Msg} -> lager:error("[img_scale_handler] stream error: ~p", [Msg])
+			    end
+		    end
+	    end;
+	{http, Msg} ->
+	    lager:error("[img_scale_handler] cant receive stream body: ~p", [Msg]),
+	    <<>>
+    end.
+
+%%
+%% Download image or first couple of megabytes of video from object storage to pepare preview
+%% In case of image: I assume it cannot be bigger than MAXIMUM_IMAGE_SIZE_BYTES.
+%%
+get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
+    MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
+    PartNumStart = (StartByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    PartNumEnd = (EndByte div ?FILE_UPLOAD_CHUNK_SIZE) + 1,
+    case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, Prefix ++ "/"}]) of
+	not_found -> <<>>;
+	RiakResponse0 ->
+	    Contents = proplists:get_value(contents, RiakResponse0),
+	    %% We take into account 'range' header, by taking all parts from specified one
+	    List0 = lists:filtermap(
+		fun(K) ->
+		    ObjectKey1 = proplists:get_value(key, K),
+		    Tokens = lists:last(string:tokens(ObjectKey1, "/")),
+		    [N,_] = string:tokens(Tokens, "_"),
+		    case utils:to_integer(N) of
+			I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey1};
+			_ -> false
+		    end
+		end, Contents),
+	    List1 = lists:sort(
+		fun(K1, K2) ->
+		    T1 = lists:last(string:tokens(K1, "/")),
+		    [N1,_] = string:tokens(T1, "_"),
+		    T2 = lists:last(string:tokens(K2, "/")),
+		    [N2,_] = string:tokens(T2, "_"),
+		    utils:to_integer(N1) < utils:to_integer(N2)
+		end, List0),
+	    case List1 of
+		 [] -> <<>>;
+		 [PrefixedObjectKey | NextKeys] ->
+		    case riak_api:get_object(BucketId, PrefixedObjectKey, stream) of
+			not_found -> <<>>;
+			{ok, RequestId} ->
+			    receive
+				{http, {RequestId, stream_start, _Headers, Pid}} ->
+				    receive_streamed_body(RequestId, Pid, BucketId, NextKeys, <<>>);
+				{http, Msg} ->
+				    lager:error("[img_scale_handler] error starting stream: ~p", [Msg]),
+				    <<>>
+			    end
+		    end
+	    end
+    end.
+
+serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, T0) ->
+    BinaryData = get_binary_data(BucketId, Prefix, 0, ?MAXIMUM_IMAGE_SIZE_BYTES),
     Watermark =
 	case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
 	    {error, Reason1} ->
@@ -132,11 +186,11 @@ serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height
 	{error, Reason2} -> js_handler:bad_request(Req0, Reason2);
 	_ ->
 	    Options = [{acl, public_read}],
-	    Response = riak_api:put_object(BucketId, PrefixedGUID, CachedKey, Reply0, Options),
+	    Response = riak_api:put_object(BucketId, utils:dirname(Prefix), CachedKey, Reply0, Options),
 	    case Response of
 		{error, Reason3} ->
 		    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
-				[BucketId, PrefixedGUID, CachedKey, Reason3]);
+				[BucketId, utils:dirname(Prefix), CachedKey, Reason3]);
 		_ -> ok
 	    end,
 	    T1 = utils:timestamp(),
@@ -152,25 +206,48 @@ serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height
 %% Cached images are stored as
 %% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
 %%
-scale_response(Req0, BucketId, GUID, UploadId, Width, Height, CropFlag, T0) ->
+scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, T0) ->
+    GUID = proplists:get_value("x-amz-meta-guid", Metadata),
+    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
+    %% Old GUID, old bucket id and upload id are needed for 
+    %% determining URI of the original object, before it was copied
+    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata),
+    OldBucketId =
+	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata) of
+	    undefined -> BucketId;
+	    B -> B
+	end,
+    OldUploadId =
+	case proplists:get_value("x-amz-meta-copy-from-upload-id", Metadata) of
+	    undefined -> UploadId;
+	    UID -> UID
+	end,
+    {RealBucketId, RealGUID, RealUploadId, RealPrefix0} =
+	case OldGUID =/= undefined andalso OldGUID =/= GUID of
+	    true ->
+		RealPrefix1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
+		{OldBucketId, OldGUID, OldUploadId, utils:prefixed_object_key(RealPrefix1, OldUploadId)};
+	    false ->
+		PrefixedGUID0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+		{BucketId, GUID, UploadId, utils:prefixed_object_key(PrefixedGUID0, UploadId)}
+	end,
     %% First check if cached image exists already.
-    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-    CachedKey = UploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
-    PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID, CachedKey),
-    case riak_api:get_object(BucketId, PrefixedCachedKey) of
+    PrefixedGUID1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, RealGUID),
+    CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
+    PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID1, CachedKey),
+    case riak_api:get_object(RealBucketId, PrefixedCachedKey) of
 	{error, Reason} ->
             %% Miss
 	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
-			[BucketId, PrefixedCachedKey, Reason]),
-	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0);
+			[RealBucketId, PrefixedCachedKey, Reason]),
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, T0);
 	not_found ->
             %% Miss
-	    serve_img(Req0, BucketId, GUID, PrefixedGUID, UploadId, CachedKey, Width, Height, CropFlag, T0);
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, T0);
 	RiakResponse ->
             %% Return cached image
 	    {proplists:get_value(content, RiakResponse), Req0, []}
     end.
-
 
 %%
 %% Checks if provided token is correct ( Token is optional here ).

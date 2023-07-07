@@ -4,7 +4,7 @@
 -module(img).
 -behaviour(gen_server).
 
--export([start_link/1, scale/1, get_size/1]).
+-export([start_link/1, scale/1, get_size/1, ffmpeg/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3]).
@@ -17,10 +17,21 @@
 		os_pid :: undefined | pos_integer(),
 		num :: pos_integer()}).
 
+%%
+%% Starts N servers for image/video thumbnails
+%%
 start_link(PortNumber) ->
     Name = list_to_atom(
 	lists:flatten(io_lib:format("img_sup_~p", [PortNumber]))),
     gen_server:start_link({local, Name}, ?MODULE, [PortNumber], []).
+
+
+ffmpeg(ObjectKey, BinaryData) when erlang:is_binary(BinaryData) ->
+    PortNumber = rand:uniform(?IMAGE_WORKERS)-1,
+    Name = list_to_atom(
+	lists:flatten(io_lib:format("img_sup_~p", [PortNumber]))),
+    gen_server:call(Name, {ffmpeg, ObjectKey, BinaryData}).
+
 
 init([PortNumber]) ->
     {Port, OSPid} = start_port(PortNumber),
@@ -126,6 +137,61 @@ start_port(PortNumber) ->
 	    erlang:send_after(1000, self(), start_port),
 	    {undefined, undefined}
     end.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling call messages
+%%
+%% @spec handle_call(Request, From, State) ->
+%%                                   {reply, Reply, State} |
+%%                                   {reply, Reply, State, Timeout} |
+%%                                   {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, Reply, State} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_call({ffmpeg, ObjectKey, BinaryData}, _From, State) ->
+    %% Create temporary file, write data there
+    Ext = filename:extension(ObjectKey),
+    TempFn0 = os:cmd(io_lib:format("/bin/mktemp --suffix=~p", [Ext])),
+    TempFn1 = re:replace(TempFn0, "[\r\n]", "", [global, {return, list}]),
+    file:write_file(TempFn1, BinaryData),
+
+    %% Retrieve the number of seconds in video and convert them to "HH:MM:SS"
+    ProbeCmd = io_lib:format("/usr/bin/ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 ~p",
+	[TempFn1]),
+    TotalSeconds0 = os:cmd(ProbeCmd),
+    TotalSeconds1 = re:replace(TotalSeconds0, "[\r\n]", "", [global, {return, list}]),
+    TotalSeconds2 =
+	try utils:to_integer(TotalSeconds1) of
+	    Value -> rand:uniform(Value)-1
+	catch error:bad_arg ->
+	    0
+	end,
+    Hours = floor(TotalSeconds2 / 3600),
+    Minutes = floor((TotalSeconds2 rem 3600) / 60),
+    Seconds = ((TotalSeconds2 rem 3600) rem 60),
+
+    %% Take screenshot from video
+    TempFn2 = os:cmd("/bin/mktemp --suffix=.png"),
+    TempFn3 = re:replace(TempFn2, "[\r\n]", "", [global, {return, list}]),
+    FfmpegCmd = io_lib:format("/usr/bin/ffmpeg -i ~s -ss ~p:~p:~p -q:v 2 -frames:v 1 -y ~s",
+	[TempFn1, Hours, Minutes, Seconds, TempFn3]),
+    os:cmd(FfmpegCmd),
+    Output =
+	case filelib:is_regular(TempFn3) of
+	    true ->
+		{ok, Out} = file:read_file(TempFn3),
+		Out;
+	false ->
+	    lager:error("[img] failed to make video thumbnail for ~p, no file ~p", [ObjectKey, TempFn3]),
+	    <<>>
+    end,
+    file:delete(TempFn1),  %% delete video
+    file:delete(TempFn3),  %% delete image
+    {reply, Output, State};
 
 handle_call(_Request, _From, State) ->
     {noreply, State}.

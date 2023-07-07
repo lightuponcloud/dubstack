@@ -138,7 +138,7 @@ too_many(Req0) ->
 too_many(Req0, ElapsedTime) ->
     Req1 = cowboy_req:reply(429, #{
 	<<"content-type">> => <<"application/json">>,
-	<<"elapsed-time">> => io_lib:format("~.2f", [ElapsedTime])
+	<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(ElapsedTime)])
     }, jsx:encode([{error, 33}]), Req0),
     {stop, Req1, []}.
 
