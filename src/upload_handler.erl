@@ -10,7 +10,7 @@
 	 content_types_provided/2, is_authorized/2, forbidden/2]).
 
 -export([to_json/2, extract_rfc2231_filename/1, validate_version/1, validate_md5/1,
-	 acc_multipart/2]).
+	 acc_multipart/2, stream_body/2, validate_integer_field/1]).
 
 -include("riak.hrl").
 -include("entities.hrl").
@@ -40,7 +40,7 @@ content_types_provided(Req, State) ->
 %% Serializes response to json
 %%
 to_json(Req0, State) ->
-    {jsx:encode(State), Req0, State}.
+    {<<>>, Req0, State}.
 
 %%
 %% Called first
