@@ -41,11 +41,18 @@ class UploadTest(TestClient):
         result = self.upload_file(url, fn)
 
         url = "{}/riak/thumbnail/{}/".format(BASE_URL, TEST_BUCKET_1)
-        fn = "025587.jpg"
+        fn = "246x0w.png"
         object_key = "20180111_165127.jpg"
         t1 = time.time()
         result = self.upload_thumbnail(url, fn, object_key, form_data={"width": 2560, "height":1600})
-        import pdb;pdb.set_trace()
+
+        # check if correct thumbnail returned
+        response = requests.get("{}?object_key={}".format(url, object_key),
+            headers=self.get_default_headers())
+        self.assertEqual(response.status_code, 200)
+
+        response_md5 = hashlib.md5(response.content).hexdigest()
+        self.assertEqual(response_md5, 'da4167ccf8313947448fbf97999c9f9f')
 
         t2 = time.time()
         print("Upload thumbnail {}".format(int(t2-t1)))

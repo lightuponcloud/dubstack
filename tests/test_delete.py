@@ -58,7 +58,7 @@ class DeleteTest(TestClient):
         self.assertEqual(result, [fn])
 
         # upload many files
-        fn = ["025587.jpg", "README.md", "requirements.txt"]
+        fn = ["246x0w.png", "README.md", "requirements.txt"]
         object_keys = []
         for file in fn:
             result = self.client.upload(TEST_BUCKET_1, file)
@@ -109,7 +109,7 @@ class DeleteTest(TestClient):
                 self.assertTrue(obj['is_deleted'])
 
         # 3 upload many files to main pseudo-directory
-        fn = ["025587.jpg", "README.md", "requirements.txt"]
+        fn = ["246x0w.png", "README.md", "requirements.txt"]
         object_keys = []
         for file in fn:
             result = self.client.upload(TEST_BUCKET_1, file, dir_name_prefix)

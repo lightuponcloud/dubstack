@@ -238,6 +238,46 @@ class TestClient(unittest.TestCase):
                     part_num += 1
         return result
 
+    def upload_thumbnail(self, url, fn, object_key, prefix="", form_data=None, **kwargs):
+        """
+        Uploads thumbnail to server
+
+        ``url`` -- The base upload API endpoint
+        ``object_key`` -- object key to upload thumbnail for
+        ``fn`` -- thumbnail filename
+        ``prefix`` -- an object"s prefix on server
+        """
+        data = {}
+        stat = os.stat(fn)
+        modified_utc = str(int(stat.st_mtime))
+        size = stat.st_size
+
+        result = None
+        with open(fn, "rb") as fd:
+            data = fd.read()
+            md5 = hashlib.md5(data)
+            md5_digest = md5.hexdigest()
+            multipart_form_data = {
+                "files[]": (fn, data),
+                "md5": md5_digest,
+                "prefix": prefix,
+                "object_key": object_key
+            }
+            if form_data:
+                multipart_form_data.update(form_data)
+
+            headers = {
+                "accept": "application/json",
+                "authorization": "Token {}".format(self.token)
+            }
+            response = requests.post(url, files=multipart_form_data, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            response_json = response.json()
+            server_md5 = response_json["md5"]
+            self.assertEqual(md5_digest, server_md5)
+            result = response_json
+        return result
+
     def download_object(self, bucketId, objectKey):
         """
         This method downloads aby object from the object storage.

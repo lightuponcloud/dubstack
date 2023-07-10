@@ -331,38 +331,6 @@ rename_pseudo_directory(BucketId, Prefix0, PrefixedSrcDirectoryName, DstDirector
     end.
 
 %%
-%% Returns error, if object is locked.
-%% Otherwise returns metadata.
-%%
-get_object_meta(IsLocked, LockUserId, User, BucketId, Prefix0, SrcObjectKey0) ->
-    RenameAllowed =
-	case IsLocked of
-	    true ->
-		case LockUserId =/= undefined andalso User#user.id =/= LockUserId of
-		    true -> false;
-		    false -> true
-		end;
-	    false -> true
-	end,
-    case RenameAllowed of
-	false -> {error, 43};
-	true ->
-	    PrefixedSrcObjectKey = utils:prefixed_object_key(Prefix0, SrcObjectKey0),
-	    case riak_api:head_object(BucketId, PrefixedSrcObjectKey) of
-		{error, Reason} ->
-		    lager:error("[rename_handler] head_object failed ~p/~p: ~p",
-				[BucketId, PrefixedSrcObjectKey, Reason]),
-		    not_found;
-		not_found -> not_found;
-		Metadata0 ->
-		    case proplists:get_value("x-amz-meta-is-deleted", Metadata0) of
-			"true" -> not_found;
-			_ -> Metadata0
-		    end
-	    end
-    end.
-
-%%
 %% Copies object using new name, deletes old object.
 %%
 rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexContent, ActionLogRecord0) ->
@@ -374,85 +342,75 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
 
     {ObjectKey0, OrigName0, _IsNewVersion, ExistingObject0, _IsConflict} = riak_api:pick_object_key(
 	    BucketId, Prefix0, DstObjectName0, undefined, UserName, IndexContent),
-    %% Check if target object exists and if it locked.
+    %% Check if target object exists
     %% If not, check if source object is locked.
-    {IsLocked, LockUserId} =
-	case ExistingObject0 of
-	    undefined ->
-		%% Check if source object is locked
-		PrefixedSrcLockKey0 = utils:prefixed_object_key(Prefix0, SrcObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
-		case riak_api:head_object(BucketId, PrefixedSrcLockKey0) of
-		    {error, Reason0} ->
-			lager:error("[rename_handler] head_object failed ~p/~p: ~p",
-				    [BucketId, PrefixedSrcLockKey0, Reason0]),
-			{false, undefined};
-		    not_found -> {false, undefined};
-		    LockMeta -> {true, proplists:get_value("x-amz-meta-lock-user-id", LockMeta)}
-		end;
-	    _ -> {ExistingObject0#object.is_locked, ExistingObject0#object.lock_user_id}
-	end,
-    case get_object_meta(IsLocked, LockUserId, User, BucketId, Prefix0, SrcObjectKey0) of
-	{error, Number} -> {error, Number};
-	not_found -> not_found;
-	Metadata0 ->
-	    Meta = list_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
-	    case riak_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>,
-				     [{acl, public_read}, {meta, Meta}]) of
-		ok ->
-		    case ObjectKey0 =:= SrcObjectKey0 of
-			true -> ok;  %% Don't delete object, as it has replaced another one
-			false ->
-			    %% Delete a regular object
-			    case riak_api:delete_object(BucketId, PrefixedSrcObjectKey) of
-				{error, Reason1} ->
-				    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
-						[BucketId, PrefixedSrcObjectKey, Reason1]);
-				{ok, _} -> ok
-			    end
-		    end,
-		    %% Rename lock file name
-		    case IsLocked of
-			true ->
-			    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?RIAK_LOCK_SUFFIX,
-			    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
-			    case riak_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
-				{error, _} -> ok;
-				_ ->
-				    case riak_api:delete_object(BucketId, PrefixedDstLockKey) of
-					{error, Reason2} ->
+    case ExistingObject0 of
+	undefined ->
+	    case list_handler:is_locked_for_user(BucketId, Prefix0, SrcObjectKey0, User#user.id) of
+		{error, not_found} -> not_found;
+		{error, Number} -> {error, Number};
+		{true, _} -> {error, 43};
+		{false, Metadata0} ->
+		    Meta = list_handler:parse_object_record(Metadata0, [{orig_name, utils:hex(OrigName0)}]),
+		    case riak_api:put_object(BucketId, Prefix0, ObjectKey0, <<>>,
+					     [{acl, public_read}, {meta, Meta}]) of
+			{error, Reason3} ->
+			    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
+					[BucketId, Prefix0, ObjectKey0, Reason3]),
+			    {error, 5};
+			ok ->
+			    case ObjectKey0 =:= SrcObjectKey0 of
+				true -> ok;  %% Don't delete object
+				false ->
+				    %% Delete a source object object
+				    case riak_api:delete_object(BucketId, PrefixedSrcObjectKey) of
+					{error, Reason1} ->
 					    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
-							[BucketId, PrefixedDstLockKey, Reason2]);
-					{ok, _} -> ok
+							[BucketId, PrefixedSrcObjectKey, Reason1]);
+					{ok, _} ->
+					    sqlite_server:delete_object(BucketId, Prefix0, SrcObjectKey0),
+					    ok
+				    end,
+				    %% Rename lock object key, if exsits, as the name changed
+				    PrefixedSrcLockKey1 = PrefixedSrcObjectKey ++ ?RIAK_LOCK_SUFFIX,
+				    PrefixedDstLockKey = utils:prefixed_object_key(Prefix0, ObjectKey0 ++ ?RIAK_LOCK_SUFFIX),
+				    case riak_api:copy_object(BucketId, PrefixedSrcLockKey1, BucketId, PrefixedDstLockKey) of
+					{error, _} -> ok;
+					_ ->
+					    case riak_api:delete_object(BucketId, PrefixedSrcLockKey1) of
+						{error, Reason2} ->
+						    lager:error("[rename_handler] Can't delete object ~p/~p: ~p",
+								[BucketId, PrefixedSrcLockKey1, Reason2]);
+						{ok, _} -> ok
+					    end
 				    end
-			    end;
-			false -> ok
-		    end,
-		    %% Find original object name for action log record
-		    ObjectRecord = lists:nth(1,
-			[I || I <- proplists:get_value(list, IndexContent),
-			 proplists:get_value(object_key, I) =:= erlang:list_to_binary(SrcObjectKey0)]),
-		    PreviousOrigName = unicode:characters_to_list(proplists:get_value(orig_name, ObjectRecord)),
+			    end,
+			    %% Find original object name for action log record
+			    ObjectRecord = lists:nth(1,
+				[I || I <- proplists:get_value(list, IndexContent),
+				 proplists:get_value(object_key, I) =:= erlang:list_to_binary(SrcObjectKey0)]),
+			    PreviousOrigName = unicode:characters_to_list(proplists:get_value(orig_name, ObjectRecord)),
 
-		    %% Update objects index
-		    case indexing:update(BucketId, Prefix0, [{modified_keys, [ObjectKey0]}]) of
-			lock ->
-			    lager:warning("[rename_handler] Can't wrename object, as lock exists: ~p/~p",
-				       [BucketId, Prefix0]),
-			    lock;
-			_ ->
-			    %% Create action log record
-			    OrigName2 = unicode:characters_to_list(OrigName0),
-			    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
-						      [OrigName2], ["\""]]),
-			    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
-			    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
-			    [{orig_name, unicode:characters_to_binary(OrigName2)}, {key, ObjectKey0}]
-		    end;
-		{error, Reason3} ->
-		    lager:error("[rename_handler] Can't put object ~p/~p/~p: ~p",
-			[BucketId, Prefix0, ObjectKey0, Reason3]),
-		    {error, 5}
-	    end
+			    %% Update objects index
+			    case indexing:update(BucketId, Prefix0, [{modified_keys, [ObjectKey0]}]) of
+				lock ->
+				    lager:warning("[rename_handler] Can't update index, as lock exists: ~p/~p",
+						  [BucketId, Prefix0]),
+				    lock;
+				_ ->
+				    %% Create action log record
+				    OrigName2 = unicode:characters_to_list(OrigName0),
+				    Summary1 = lists:flatten([["Renamed \""], [PreviousOrigName], ["\" to \""],
+							     [OrigName2], ["\""]]),
+				    ActionLogRecord2 = ActionLogRecord0#riak_action_log_record{details=Summary1},
+				    action_log:add_record(BucketId, Prefix0, ActionLogRecord2),
+				    Metadata1 = list_handler:parse_object_record(Metadata0, [
+					{orig_name, unicode:characters_to_binary(OrigName2)}]),
+				    {ObjectKey0, Metadata1}
+			    end
+		    end
+	    end;
+	_ -> {error, 35}  %% Failed to rename object, as target one exists
     end.
 
 rename(Req0, BucketId, State, IndexContent) ->
@@ -492,11 +450,35 @@ rename(Req0, BucketId, State, IndexContent) ->
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		lock -> js_handler:too_many(Req0);
 		not_found -> js_handler:not_found(Req0);
-		NewObj ->
-		    DstKey = proplists:get_value(key, NewObj),
-		    sqlite_server:rename_object(BucketId, Prefix0, SrcObjectKey1, DstKey, DstObjectName0),
+		{NewObjKey, NewObj} ->
+		    OrigName = proplists:get_value("orig-filename", NewObj),
+		    UploadTime = utils:to_integer(proplists:get_value("upload-time", NewObj)),
+		    IsLocked =
+			case proplists:get_value(is_locked, NewObj) of
+			    undefined -> false;
+			    L -> L
+			end,
+		    TotalBytes = utils:to_integer(proplists:get_value("bytes", NewObj)),
+		    Obj = #object{
+			key = NewObjKey,
+			orig_name = OrigName,
+			bytes = TotalBytes,
+			guid = proplists:get_value("guid", NewObj),
+			version = proplists:get_value("version", NewObj),
+			upload_time = UploadTime,
+			is_deleted = false,
+			author_id = proplists:get_value("author-id", NewObj),
+			author_name = proplists:get_value("author-name", NewObj),
+			author_tel = proplists:get_value("author-tel", NewObj),
+			is_locked = IsLocked,
+			lock_user_id = proplists:get_value(lock_user_id, NewObj),
+			lock_user_name = proplists:get_value(lock_user_name, NewObj),
+			lock_user_tel = proplists:get_value(lock_user_tel, NewObj),
+			lock_modified_utc = proplists:get_value(lock_modified_utc, NewObj)
+		    },
+		    sqlite_server:add_object(BucketId, Prefix0, Obj),
 		    Req1 = cowboy_req:set_resp_body(
-			jsx:encode([{orig_name, proplists:get_value(orig_name, NewObj)}]), Req0),
+			jsx:encode([{orig_name, OrigName}]), Req0),
 		    {true, Req1, []}
 	    end
     end.

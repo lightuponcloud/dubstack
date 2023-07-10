@@ -293,7 +293,7 @@ class RenameTest(TestClient):
         """
 
         # 1. Upload a file
-        fn = '025587.jpg'
+        fn = '246x0w.png'
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
@@ -323,7 +323,7 @@ class RenameTest(TestClient):
         """
 
         # 1. Upload 2 files
-        fn1 = '025587.jpg'
+        fn1 = '246x0w.png'
         res = self.client.upload(TEST_BUCKET_1, fn1)
         obj_key1 = res['object_key']
         fn2 = 'requirements.txt'
@@ -350,7 +350,7 @@ class RenameTest(TestClient):
         # 4. file should not disappear
         """
         # 1. Upload file
-        fn = '025587.jpg'
+        fn = '246x0w.png'
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key = res['object_key']
 
@@ -393,7 +393,7 @@ class RenameTest(TestClient):
         # 3. previous object, with different orig name, should not be replaced
         """
         # 1 Upload a file
-        fn = "025587.jpg"
+        fn = "246x0w.png"
         res = self.client.upload(TEST_BUCKET_1, fn)
         object_key1 = res["object_key"]
         orig_name1 = res["orig_name"]
@@ -510,6 +510,7 @@ class RenameTest(TestClient):
                 break
         self.assertTrue(dir_index is not None)
         self.assertTrue(result[dir_index]["prefix"] == encoded_random_prefix)
+        self.assertTrue("{}/".format(result[dir_index]['key']), encode_to_hex(random_new_name))
 
 
 if __name__ == '__main__':

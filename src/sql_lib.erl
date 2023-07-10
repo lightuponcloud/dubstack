@@ -107,7 +107,9 @@ delete_pseudo_directory(Prefix0, Name)
 rename_pseudo_directory(Prefix0, SrcKey, DstName)
     when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
 	andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
+    DstKey = utils:hex(DstName),
     SQL = ["UPDATE items SET orig_name = ", sqlite3_lib:value_to_sql(DstName),
+	   ", key = ", sqlite3_lib:value_to_sql(DstKey),
 	   " WHERE key = ", sqlite3_lib:value_to_sql(SrcKey)],
     Prefix1 =
 	case Prefix0 of

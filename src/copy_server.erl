@@ -199,8 +199,9 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 				    end;
 				true ->
 				    LockUserId = proplists:get_value(src_lock_user_id, CopiedOne),
+io:fwrite("LockUserId: ~p~n User#user.id: ~p~n", [LockUserId, User#user.id]),
 				    case LockUserId =:= User#user.id of
-					false -> ok;  %% don't delete source object
+					false -> ok;  %% don't delete source object ( another user locked object )
 					true ->
 					    case riak_api:delete_object(SrcBucketId, PrefixedObjectKey) of
 						{error, Reason} ->

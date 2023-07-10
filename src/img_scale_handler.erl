@@ -89,7 +89,7 @@ to_scale(Req0, State) ->
 	    <<"0">> -> false;
 	    _ -> true
 	end,
-    case lists:keyfind(error, 1, [Prefix]) of
+    case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
 	{error, Number} -> js_handler:bad_request(Req0, Number);
 	false ->
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey0),
@@ -207,7 +207,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, T0) ->
 	case riak_api:get_object(BucketId, PrefixedThumbnail) of
 	    {error, _} -> get_binary_data(BucketId, Prefix, 0, ?MAXIMUM_IMAGE_SIZE_BYTES);
 	    not_found -> get_binary_data(BucketId, Prefix, 0, ?MAXIMUM_IMAGE_SIZE_BYTES);
-	    ThumbnailBinary -> ThumbnailBinary
+	    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
 	end,
     Watermark =
 	case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
@@ -365,11 +365,10 @@ handle_post(Req0, State) ->
 	    case lists:keyfind(error, 1, [Prefix0, ObjectKey1, Md5, DataSizeOk, Width0, Height0]) of
 		{error, Number} -> js_handler:bad_request(Req1, Number);
 		false ->
-		    {RealBucketId, _RealGUID, RealUploadId, RealPrefix} = real_prefix(BucketId, Metadata0),
-		    PrefixedUploadId = utils:prefixed_object_key(RealPrefix, RealUploadId),
+		    {RealBucketId, _RealGUID, _RealUploadId, RealPrefix} = real_prefix(BucketId, Metadata0),
 		    Meta = [{"width", Width1}, {"height", Height1}, {"md5", Md5}],
 		    Options = [{acl, public_read}, {meta, Meta}, {md5, Md5}],
-		    case riak_api:put_object(RealBucketId, PrefixedUploadId, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
+		    case riak_api:put_object(RealBucketId, RealPrefix, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
 			ok ->
 			    Req1 = cowboy_req:reply(200, #{
 				<<"content-type">> => <<"application/json">>
@@ -377,7 +376,7 @@ handle_post(Req0, State) ->
 			    {stop, Req1, []};
 			{error, Reason} ->
 			    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
-					[RealBucketId, PrefixedUploadId, ObjectKey0, Reason]),
+					[RealBucketId, RealPrefix, ObjectKey0, Reason]),
 			    js_handler:too_many(Req0)
 		    end
 	    end;

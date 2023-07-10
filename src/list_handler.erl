@@ -20,7 +20,8 @@
     to_json/2, allowed_methods/2, forbidden/2, is_authorized/2,
     resource_exists/2, previously_existed/2, patch_resource/2,
     validate_post/2, create_pseudo_directory/2, handle_post/2,
-    validate_prefix/2, parse_object_record/2, prefix_lowercase/1]).
+    validate_prefix/2, parse_object_record/2, prefix_lowercase/1,
+    is_locked_for_user/4]).
 
 -export([validate_delete/2, delete_resource/2, delete_completed/2,
          delete_pseudo_directory/6, delete_objects/6]).
@@ -370,7 +371,7 @@ undelete(BucketId, Prefix, ObjectKey) ->
 	not_found -> not_found;
 	Metadata0 ->
 	    LockModifiedTime =  io_lib:format("~p", [erlang:round(utils:timestamp()/1000)]),
-	    Meta = parse_object_record(Metadata0, [{lock_modified_utc, LockModifiedTime}]),
+	    Meta = parse_object_record(Metadata0, [{nlock_modified_utc, LockModifiedTime}]),
 	    IsLocked = proplists:get_value("is-locked", Meta),
 	    Response = riak_api:put_object(BucketId, Prefix, ObjectKey, <<>>,
 					   [{acl, public_read}, {meta, Meta}]),
@@ -486,6 +487,43 @@ update_lock(User, BucketId, Prefix, ObjectKey, IsLocked0) when erlang:is_boolean
 		     {lock_modified_utc, LockModifiedTime1}]
 	    end
     end.
+
+%%
+%% Check whether object with provided BucketId/Prefix/ObjectKey can be modifled 
+%% by user with UserId.
+%%
+is_locked_for_user(BucketId, Prefix, ObjectKey, UserId)
+	when erlang:is_list(BucketId) andalso 
+	    erlang:is_list(Prefix) orelse Prefix =:= undefined andalso erlang:is_list(ObjectKey) 
+	    andalso erlang:is_list(UserId) ->
+
+    %% Check if object is deleted
+    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey),
+    case riak_api:head_object(BucketId, PrefixedObjectKey) of
+	{error, Reason1} ->
+	    lager:error("[list_handler] head_object failed ~p/~p: ~p",
+			[BucketId, PrefixedObjectKey, Reason1]),
+	    {error, Reason1};
+	not_found -> {error, not_found};
+	    ObjMeta ->
+		case proplists:get_value("x-amz-meta-is-deleted", ObjMeta) of
+		    "true" -> {false, ObjMeta};
+		    _ ->
+			PrefixedLockKey = utils:prefixed_object_key(Prefix, ObjectKey ++ ?RIAK_LOCK_SUFFIX),
+			case riak_api:head_object(BucketId, PrefixedLockKey) of
+			    {error, Reason0} ->
+				lager:error("[list_handler] head_object failed ~p/~p: ~p",
+					    [BucketId, PrefixedLockKey, Reason0]),
+				{error, Reason0};
+			    not_found -> {false, ObjMeta};  %% Not locked
+			    LockMeta ->
+				LockUserId = proplists:get_value("x-amz-meta-lock-user-id", LockMeta),
+				CanWrite = LockUserId =/= undefined andalso UserId =/= LockUserId,
+				{CanWrite, ObjMeta}
+			end
+		end
+    end.
+
 
 %%
 %% Receives binary hex prefix value, returns lowercase hex string.
