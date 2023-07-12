@@ -346,6 +346,7 @@ rename_object(BucketId, Prefix0, SrcObjectKey0, DstObjectName0, User, IndexConte
     %% If not, check if source object is locked.
     case ExistingObject0 of
 	undefined ->
+	    %% rename only if no such object with the same name exists
 	    case list_handler:is_locked_for_user(BucketId, Prefix0, SrcObjectKey0, User#user.id) of
 		{error, not_found} -> not_found;
 		{error, Number} -> {error, Number};

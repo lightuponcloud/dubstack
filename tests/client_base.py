@@ -19,6 +19,7 @@ from dvvset import DVVSet
 import boto3
 from botocore.config import Config
 from botocore.utils import fix_s3_host
+from botocore.exceptions import ClientError
 
 env = Env()
 env.read_env('.env')
@@ -308,11 +309,8 @@ class TestClient(unittest.TestCase):
         bucket = self.resource.Bucket(bucketId)
         bucket.Object(objectKey).delete()
 
-    def purge_test_buckets(self):
-        """
-        Deletes all objects from bucket
-        """
-        bucket = self.resource.Bucket(TEST_BUCKET_1)
+    def _drop_bucket_objects(self, bucket_id):
+        bucket = self.resource.Bucket(bucket_id)
         try:
             objects = [i for i in bucket.objects.all()]
         except self.resource.meta.client.exceptions.NoSuchBucket:
@@ -320,13 +318,14 @@ class TestClient(unittest.TestCase):
         for obj in objects:
             obj.delete()
 
-        bucket = self.resource.Bucket(UPLOADS_BUCKET_NAME)
-        try:
-            objects = [i for i in bucket.objects.all()]
-        except self.resource.meta.client.exceptions.NoSuchBucket:
-            objects = []
-        for obj in objects:
-            obj.delete()
+    def purge_test_buckets(self):
+        """
+        Deletes all objects from bucket
+        """
+        self._drop_bucket_objects(TEST_BUCKET_1)
+        self._drop_bucket_objects(TEST_BUCKET_2)
+        self._drop_bucket_objects(TEST_BUCKET_3)
+        self._drop_bucket_objects(UPLOADS_BUCKET_NAME)
 
     def create_bucket(self, name):
         pass
@@ -368,7 +367,11 @@ class TestClient(unittest.TestCase):
             fields = [column[0] for column in cursor.description]
             return {key: value for key, value in zip(fields, row)}
 
-        dbcontent = self.download_object(bucketId, RIAK_DB_VERSION_KEY)
+        try:
+            dbcontent = self.download_object(bucketId, RIAK_DB_VERSION_KEY)
+        except ClientError:
+            return []
+
         fn = tempfile.mktemp()
         with open(fn, "wb") as fd:
             fd.write(dbcontent)

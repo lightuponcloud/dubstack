@@ -111,7 +111,9 @@ to_scale(Req0, State) ->
 			    %% In case image object size is bigger than the limit, return empty response.
 			    {<<>>, Req0, []};
 			false ->
-			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, T0)
+			    ObjExt = filename:extension(ObjectKey0),
+			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
+			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
 		    end
 	    end
     end.
@@ -201,14 +203,15 @@ get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
 	    end
     end.
 
-serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, T0) ->
-    PrefixedThumbnail = utils:prefixed_object_key(Prefix, ?RIAK_THUMBNAIL_KEY),
-    BinaryData =
-	case riak_api:get_object(BucketId, PrefixedThumbnail) of
-	    {error, _} -> get_binary_data(BucketId, Prefix, 0, ?MAXIMUM_IMAGE_SIZE_BYTES);
-	    not_found -> get_binary_data(BucketId, Prefix, 0, ?MAXIMUM_IMAGE_SIZE_BYTES);
-	    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
-	end,
+serve_img(Req0, _BucketId, _Prefix, _CachedKey, _Width, _Height, _CropFlag, <<>>, T0) ->
+    T1 = utils:timestamp(),
+    Req1 = cowboy_req:stream_reply(200, #{
+	<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+    }, Req0),
+    cowboy_req:stream_body(<<>>, fin, Req1),
+    {stop, Req1, []};
+
+serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData, T0) ->
     Watermark =
 	case riak_api:head_object(BucketId, ?WATERMARK_OBJECT_KEY) of
 	    {error, Reason1} ->
@@ -244,36 +247,62 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, T0) ->
 		_ -> ok
 	    end,
 	    T1 = utils:timestamp(),
-	    Req1 = cowboy_req:reply(200, #{
+	    Req1 = cowboy_req:stream_reply(200, #{
 		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
-	    }, Reply0, Req0),
-	    {ok, Req1, []}
+	    }, Req0),
+	    cowboy_req:stream_body(Reply0, fin, Req1),
+	    {stop, Req1, []}
     end.
 
 %%
 %% Returns thumbnail as binary.
 %%
+%% Cached video thumbnails are stored as
+%% ~object/file-GUID/thumbnail
+%%
+scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
+    {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = real_prefix(BucketId, Metadata),
+    CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
+    PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?RIAK_THUMBNAIL_KEY),
+    BinaryData =
+	case riak_api:get_object(BucketId, PrefixedThumbnail) of
+	    {error, _} -> <<>>;
+	    not_found -> <<>>;
+	    ThumbnailBinary -> proplists:get_value(content, ThumbnailBinary)
+	end,
+    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData, T0);
+
+%%
 %% Cached images are stored as
 %% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
 %%
-scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, T0) ->
+scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, false, T0) ->
     {RealBucketId, RealGUID, RealUploadId, RealPrefix0} = real_prefix(BucketId, Metadata),
-    %% First check if cached image exists already.
     PrefixedGUID1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, RealGUID),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
     PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID1, CachedKey),
+
+    %% First check if cached image exists already.
     case riak_api:get_object(RealBucketId, PrefixedCachedKey) of
 	{error, Reason} ->
             %% Miss
 	    lager:error("[img_scale_handler] get_object failed ~p/~p: ~p",
 			[RealBucketId, PrefixedCachedKey, Reason]),
-	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, T0);
+	    BinaryData0 = get_binary_data(RealBucketId, RealPrefix0, 0, ?MAXIMUM_IMAGE_SIZE_BYTES),
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData0, T0);
 	not_found ->
             %% Miss
-	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, T0);
+	    BinaryData1 = get_binary_data(RealBucketId, RealPrefix0, 0, ?MAXIMUM_IMAGE_SIZE_BYTES),
+	    serve_img(Req0, RealBucketId, RealPrefix0, CachedKey, Width, Height, CropFlag, BinaryData1, T0);
 	RiakResponse ->
             %% Return cached image
-	    {proplists:get_value(content, RiakResponse), Req0, []}
+	    BinaryData = proplists:get_value(content, RiakResponse),
+	    T1 = utils:timestamp(),
+	    Req1 = cowboy_req:stream_reply(200, #{
+		<<"elapsed-time">> => io_lib:format("~.2f", [utils:to_float(T1-T0)/1000])
+	    }, Req0),
+	    cowboy_req:stream_body(BinaryData, fin, Req1),
+	    {stop, Req1, []}
     end.
 
 %%

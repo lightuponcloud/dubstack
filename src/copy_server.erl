@@ -199,7 +199,6 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 				    end;
 				true ->
 				    LockUserId = proplists:get_value(src_lock_user_id, CopiedOne),
-io:fwrite("LockUserId: ~p~n User#user.id: ~p~n", [LockUserId, User#user.id]),
 				    case LockUserId =:= User#user.id of
 					false -> ok;  %% don't delete source object ( another user locked object )
 					true ->
@@ -449,11 +448,7 @@ do_copy(SrcBucketId, DstBucketId, PrefixedObjectKey0, DstPrefix0, NewName0, DstI
 				end,
 			    Version = proplists:get_value("version", ObjectMeta0),
 			    UploadTime = utils:to_binary(proplists:get_value("upload-time", ObjectMeta0)),
-			    SrcLockUserId =
-				case proplists:get_value("x-amz-meta-lock-user-id", Metadata0) of
-				    undefined -> undefined;
-				    U -> erlang:list_to_binary(U)
-				end,
+			    SrcLockUserId = proplists:get_value("x-amz-meta-lock-user-id", Metadata0),
 			    %% Update SQLite db
 			    Obj = #object{
 				key = erlang:list_to_binary(ObjectKey0),

@@ -112,6 +112,63 @@ class MoveTest(TestClient):
             {object_key: object_key}, "", hex_dir_name)
         self.assertEqual(response.status_code, 200)
 
+    def test_move_locked_file(self):
+        """
+        Moving locked file:
+        - the one locked by author
+        - the one locked by other user
+        """
+        # 1. Upload a file and create a directory
+        dir_name = generate_random_name()
+        hex_dir_name = encode_to_hex(dir_name)
+        dir_name_prefix = encode_to_hex(dir_name)
+        response = self.client.create_pseudo_directory(TEST_BUCKET_3, dir_name)
+
+        fn = "20180111_165127.jpg"
+        res = self.client.upload(TEST_BUCKET_3, fn)
+        object_key = res['object_key']
+        orig_name = res["orig_name"]
+
+        # lock it and check for "is_locked": True
+        response = self.client.patch(TEST_BUCKET_3, "lock", [object_key])
+        result = response.json()
+        self.assertEqual(result[0]['is_locked'], True)
+        self.assertEqual(response.status_code, 200)
+
+        # move file to directory
+        response = self.client.move(TEST_BUCKET_3, TEST_BUCKET_3,
+            {object_key: object_key}, "", hex_dir_name)
+        self.assertEqual(response.status_code, 200)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_3, "SELECT * FROM items")
+        self.assertEqual(len(result), 2)
+
+        keys = [(i['prefix'], i['key']) for i in result]
+        assert ('', hex_dir_name[:-1]) in keys
+        assert (hex_dir_name, object_key) in keys
+
+        # lock again, after move
+        response = self.client.patch(TEST_BUCKET_3, "lock", [object_key], prefix=hex_dir_name)
+        result = response.json()
+        self.assertEqual(result[0]['is_locked'], True)
+        self.assertEqual(response.status_code, 200)
+
+        # try move with another user ( not author of lock )
+        client = LightClient(BASE_URL, USERNAME_2, PASSWORD_2)
+        response = client.move(TEST_BUCKET_3, TEST_BUCKET_3,
+            {object_key: object_key}, hex_dir_name, "")
+        self.assertEqual(response.status_code, 200)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_3, "SELECT * FROM items")
+        self.assertEqual(len(result), 3)
+
+        keys = [(i['prefix'], i['key']) for i in result]
+        assert ('', hex_dir_name[:-1]) in keys
+        assert (hex_dir_name, object_key) in keys
+        assert ('', object_key) in keys  # file must be copied, not moved, when locked
+
 
 if __name__ == "__main__":
     unittest.main()
