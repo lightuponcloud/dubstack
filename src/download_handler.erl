@@ -216,11 +216,15 @@ stream_chunks(Req0, BucketId, RealPrefix, ContentType, OrigName, Bytes, StartByt
 	    List0 = lists:filtermap(
 		fun(K) ->
 		    ObjectKey = proplists:get_value(key, K),
-		    Tokens = lists:last(string:tokens(ObjectKey, "/")),
-		    [N,_] = string:tokens(Tokens, "_"),
-		    case utils:to_integer(N) of
-			I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey};
-			_ -> false
+		    case utils:ends_with(ObjectKey, erlang:list_to_binary(?RIAK_THUMBNAIL_KEY)) of
+			true -> false;
+			false ->
+			    Tokens = lists:last(string:tokens(ObjectKey, "/")),
+			    [N,_] = string:tokens(Tokens, "_"),
+			    case utils:to_integer(N) of
+				I when I >= PartNumStart, I =< PartNumEnd -> {true, ObjectKey};
+				_ -> false
+			    end
 		    end
 		end, Contents),
 	    List1 = lists:sort(
