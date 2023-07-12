@@ -101,19 +101,23 @@ to_scale(Req0, State) ->
 		    {<<>>, Req0, []};
 		not_found -> {<<>>, Req0, []};
 		Metadata0 ->
-		    TotalBytes =
-			case proplists:get_value("x-amz-meta-bytes", Metadata0) of
-			    undefined -> undefined;
-			    V -> utils:to_integer(V)
-			end,
-		    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
-			true ->
-			    %% In case image object size is bigger than the limit, return empty response.
-			    {<<>>, Req0, []};
+		    ObjExt = filename:extension(ux_string:to_lower(ObjectKey0)),
+		    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
+		    case IsVideo of
+			true -> scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, true, T0);
 			false ->
-			    ObjExt = filename:extension(ObjectKey0),
-			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
-			    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
+			    TotalBytes =
+				case proplists:get_value("x-amz-meta-bytes", Metadata0) of
+				    undefined -> undefined;
+				    V -> utils:to_integer(V)
+				end,
+			    case TotalBytes =:= undefined orelse TotalBytes > ?MAXIMUM_IMAGE_SIZE_BYTES of
+				true ->
+				    %% In case image object size is bigger than the limit, return empty response.
+				    {<<>>, Req0, []};
+				false ->
+				    scale_response(Req0, BucketId, Metadata0, Width, Height, CropFlag, IsVideo, T0)
+			    end
 		    end
 	    end
     end.
@@ -358,8 +362,8 @@ handle_post(Req0, State) ->
 		case ObjectKey0 of
 		    undefined -> {error, 9};
 		    _ ->
-			PrefixedObjectKey = utils:prefixed_object_key(Prefix0, ObjectKey0),
-			case riak_api:head_object(BucketId, erlang:binary_to_list(PrefixedObjectKey)) of
+			PrefixedObjectKey = utils:prefixed_object_key(Prefix0, erlang:binary_to_list(ObjectKey0)),
+			case riak_api:head_object(BucketId, PrefixedObjectKey) of
 			    {error, _} -> {error, 9};
 			    not_found -> {error, 9};
 			    Metadata1 -> {Metadata1, ObjectKey0}

@@ -141,6 +141,50 @@ $.stack = function(options){
 	promise.done(success_callback);
 	promise.fail(error_callback);
     },
+    _upload_thumbnail: function(file, prefix, object_key){
+	if (file.type.indexOf("video/")==0){
+	    // upload thumbnail
+	    var video = $("#id-upload-video");
+	    var thumbnail = $("#id-upload-canvas");
+	    video.find("source").attr("src", URL.createObjectURL(file));
+	    video.get(0).load();
+	    video.on("loadedmetadata", function(e) {
+		duration = video.get(0).duration;
+		thumbnail[0].width = video[0].videoWidth;
+		thumbnail[0].height = video[0].videoHeight;
+		video[0].currentTime = Math.ceil(duration / 2);
+		video.one("timeupdate", function() {
+		    var ctx = thumbnail.get(0).getContext("2d");
+		    ctx.drawImage(video[0], 0, 0, video[0].videoWidth, video[0].videoHeight);
+
+		    var url = thumbnail[0].toDataURL();
+		    const byteCharacters = atob(url.split(',')[1]);
+		    const byteArrays = [];
+		    for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+			const slice = byteCharacters.slice(offset, offset + 512);
+			const byteNumbers = new Array(slice.length);
+			for (let i = 0; i < slice.length; i++) {
+			    byteNumbers[i] = slice.charCodeAt(i);
+			}
+			const byteArray = new Uint8Array(byteNumbers);
+			byteArrays.push(byteArray);
+		    }
+		    const blob = RiakAPI._build_blob(byteArrays);
+		    RiakAPI._get_md5(blob, function(checksum){
+			var form_data = new FormData();
+			form_data.append('files[]', blob, "thumbnail");
+			form_data.append('prefix', prefix);
+			form_data.append('object_key', object_key);
+			form_data.append('md5', checksum);
+			var headers = {'accept': 'application/json'};
+			var post_url=RiakAPI.options.rpc_url.replace('/upload/', '/thumbnail/');
+			RiakAPI.post_json(post_url, form_data, headers, function(data, status, xhr){}, function(msg, xhr, status){}, function(evt){}
+			);
+		    });
+		});
+	    })
+	}
+    },
     _file_upload_on_success: function(data, xhr, dom_id, prefix, file, offset, upload_id, version, etags, wasEmpty){
       if(!data){
 	RiakAPI.options.onFailure(NaN, NaN, status);
@@ -152,6 +196,7 @@ $.stack = function(options){
       };
       if(xhr.status==206){
 	if(file.size-data.end_byte-1==0){ // end of upload
+	    RiakAPI._upload_thumbnail(file, prefix, data['object_key']);
 	    RiakAPI.options.onSuccess(data, xhr.status);
 	} else {
 	    // upload the next chunk
@@ -166,6 +211,7 @@ $.stack = function(options){
 	  RiakAPI._chunked_upload(dom_id, prefix, file, offset, upload_id, guid, version, etags, false);
 	} else {
 	  if(file.size-data.end_byte-1==0){
+	      RiakAPI._upload_thumbnail(file, prefix, data['object_key']);
 	      RiakAPI.options.onSuccess(data, xhr.status);
 	  } else {
 	    // upload the next chunk
@@ -204,6 +250,20 @@ $.stack = function(options){
     _file_upload_on_progress: function(evt, offset, file_size){
 	RiakAPI.options.onProgress(evt, offset, file_size);
     },
+    _build_blob: function(byteArray){ // for browser compatibility
+        var blob;
+	try{
+	    blob = new Blob(byteArray);
+	}catch(e){
+	    window.BlobBuilder = window.BlobBuilder || window.WebKitBlobBuilder || window.MozBlobBuilder || window.MSBlobBuilder;
+	    if(window.BlobBuilder){ // old chrome and ff
+		var bb = new BlobBuilder();
+		bb.append(byteArray);
+		blob = bb.getBlob();
+	    }else{ throw("sorry, blob not supported, browser too old") }
+	}
+	return blob;
+    },
     _chunked_upload: function(dom_id, prefix, file, offset, upload_id, guid, version, etags, isEmpty){
 	/*
 	    dom_id -- DOM object ID
@@ -227,7 +287,7 @@ $.stack = function(options){
 	RiakAPI._get_md5(blob, function(checksum){
 	  var form_data = new FormData();
 	  if(isEmpty==true){
-	    form_data.append('files[]', new Blob([]), file.name);
+	    form_data.append('files[]', RiakAPI._build_blob([]), file.name);
 	  } else {
 	    form_data.append('files[]', blob, file.name);
 	  }

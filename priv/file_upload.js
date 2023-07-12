@@ -855,6 +855,7 @@ function disable_menu_item(menu_item_id){
   $('#id-action-log').attr('disabled', 'disabled');
  }
 }
+
 function enable_menu_item(menu_item_id){
  if(isMobile.any() || $(window).width()<670){$("#shadow").css('z-index', 9).hide();}
  if(menu_item_id=='menu-createdir'){
@@ -1150,7 +1151,8 @@ $(document).ready(function(){
 <div class="file-name_th"><a href="#" id="id-dialog-sort-by-name" data-sorting="asc">Name</a></div> \
 <div class="file-size_th"><a href="#" id="id-dialog-sort-by-size" data-sorting="asc">Size</a></div> \
 <div class="file-modified_th"><a href="#" id="id-dialog-progress">&nbsp;</a></div> \
-<div></div></div><div class="clearfix" id="id-dialog-objects-list"></div></div></div></form>';
+<div></div></div><div class="clearfix" id="id-dialog-objects-list"></div></div></div></form> \
+<video controls id="id-upload-video" style="display:none;"><source type="video/mp4"></video><canvas id="id-upload-canvas" style="display:none;"></canvas>';
  $("#dialog").dialog({
     title: 'Drag Files to the area below or press button to add files',
     autoOpen: false,
