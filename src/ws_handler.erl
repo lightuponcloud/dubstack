@@ -46,7 +46,6 @@ parse_message(<<"CONFIRM ", AtomicId/binary>>, State) ->
 	    end
     end;
 parse_message(<<"Authorization ", Token0/binary>>, State) ->
-io:fwrite("authorization called: ~p~n", [Token0]),
     Token1 = utils:to_list(Token0),
     case login_handler:check_token(Token1) of
 	not_found ->
@@ -60,11 +59,8 @@ io:fwrite("authorization called: ~p~n", [Token0]),
 	    {ok, [{user_id, User0#user.id}, {session_id, Token1}]}
     end;
 parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, State) ->
-io:fwrite("subscribe called: ~p~n", [BucketIdList0]),
     case proplists:get_value(user_id, State) of
-	undefined -> 
-io:fwrite("not logged in~n"),
-{ok, State};  %% not logged in
+	undefined -> {ok, State};  %% not logged in
 	User ->
 	    BucketIdList1 = binary:split(BucketIdList0, <<" ">>, [global]),
 	    BucketIdList2 = [erlang:binary_to_list(B) || B <- BucketIdList1],

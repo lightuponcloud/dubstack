@@ -57,7 +57,7 @@ create_pseudo_directory(Prefix0, Name, User)
 	end,
     Key = utils:hex(Name),
     Timestamp = erlang:round(utils:timestamp()/1000),
-    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, is_locked, ",
+    Res = ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, is_locked, ",
      "bytes, last_modified_utc, author_id, author_name, author_tel) ",
      "VALUES ((SELECT id FROM items WHERE prefix = ", sqlite3_lib:value_to_sql(Prefix1),
      " AND key = ", sqlite3_lib:value_to_sql(Key), "), ",
@@ -66,7 +66,9 @@ create_pseudo_directory(Prefix0, Name, User)
      sqlite3_lib:value_to_sql(false), ", ", sqlite3_lib:value_to_sql(0), ", ",
      sqlite3_lib:value_to_sql(Timestamp), ", ", sqlite3_lib:value_to_sql(User#user.id),
      ", ", sqlite3_lib:value_to_sql(User#user.name), ", ",
-     sqlite3_lib:value_to_sql(User#user.tel), ");"].
+     sqlite3_lib:value_to_sql(User#user.tel), ");"],
+    io:fwrite("create_pseudo_directory SQL: ~p~n", [Res]),
+    Res.
 
 %%
 %% Returns SQL for querying pseudo-directory by its prefix and name.
@@ -97,10 +99,12 @@ delete_pseudo_directory(Prefix0, Name)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    ["DELETE FROM items WHERE (orig_name = \"", Name, "\" AND is_dir = ",
-     sqlite3_lib:value_to_sql(true), 
+    Prefix2 = utils:prefixed_object_key(Prefix0, utils:hex(Name)),
+    Res = ["DELETE FROM items WHERE (orig_name = \"", Name, "\" AND is_dir = ",
+     sqlite3_lib:value_to_sql(true),
      " AND prefix = ", sqlite3_lib:value_to_sql(Prefix1), ") OR prefix LIKE \"",
-     erlang:list_to_binary(lists:flatten([utils:hex(Name), "%"])), "\"", ";"].
+     erlang:list_to_binary(lists:flatten([Prefix2, "%"])) , "\"", ";"],
+    Res.
 
 
 -spec(rename_pseudo_directory(Prefix0 :: string(), SrcKey :: string(), DstName :: binary()) -> ok | list()).
@@ -128,7 +132,7 @@ add_object(Prefix0, Obj)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, ",
+    Res = ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, ",
      "is_locked, bytes, guid, version, last_modified_utc, author_id, "
      "author_name, author_tel, lock_user_id, lock_user_name, lock_user_tel, "
      "lock_modified_utc, md5) VALUES ((SELECT id FROM items WHERE prefix = ",
@@ -142,7 +146,9 @@ add_object(Prefix0, Obj)
      sqlite3_lib:value_to_sql(Obj#object.lock_user_id), ", ", sqlite3_lib:value_to_sql(Obj#object.lock_user_name), ", ",
      sqlite3_lib:value_to_sql(Obj#object.lock_user_tel), ", ",
      sqlite3_lib:value_to_sql(Obj#object.lock_modified_utc), ", ",
-     sqlite3_lib:value_to_sql(Obj#object.md5), ");"].
+     sqlite3_lib:value_to_sql(Obj#object.md5), ");"],
+    io:fwrite("add_object: ~p~n", [Res]),
+    Res.
 
 %%
 %% Get object key if exists
@@ -201,4 +207,6 @@ delete_object(Prefix0, Key)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
+    Res = SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"],
+    io:fwrite("delete_object: ~p~n", [Res]),
+    Res.

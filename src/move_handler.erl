@@ -56,7 +56,6 @@ move(Req0, State) ->
 	    P -> copy_handler:validate_dst_prefix(P)
 	end,
     User = proplists:get_value(user, State),
-
     copy_server:move(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, SrcObjectKeys, User),
 
     Req1 = cowboy_req:reply(200, #{

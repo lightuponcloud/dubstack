@@ -538,13 +538,13 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    ],
 
 	    %% Retrieve existing index object first
-	    List0 = get_index(BucketId, Prefix0),
+	    List1 = get_index(BucketId, Prefix0),
 
 	    IsUncommitted = proplists:get_value(uncommitted, Options, false),
-	    List1 = get_diff_list(BucketId, Prefix0, List0,
+	    List2 = get_diff_list(BucketId, Prefix0, List1,
 				  DeletedObjects2 ++ DeletedObjects3,
 				  ModifiedKeys2, IsUncommitted),
-	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List1), RiakOptions),
+	    Response = riak_api:put_object(BucketId, Prefix0, ?RIAK_INDEX_FILENAME, term_to_binary(List2), RiakOptions),
 	    case Response of
 		{error, Reason2} -> lager:error("[indexing] Can't put object ~p/~p/~p: ~p",
 					       [BucketId, Prefix0, ?RIAK_INDEX_FILENAME, Reason2]);
@@ -552,7 +552,7 @@ update(BucketId, Prefix0, Options, RiakOptions)
 	    end,
 	    %% Remove lock
 	    riak_api:delete_object(BucketId, PrefixedLockFilename),
-	    List1; %% necessary for pseudo_directory_exists()
+	    List2; %% necessary for pseudo_directory_exists()
 	IndexLockMeta ->
 	    %% Check for stale index
 	    DeltaSeconds =
