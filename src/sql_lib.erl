@@ -107,6 +107,12 @@ delete_pseudo_directory(Prefix0, Name)
     Res.
 
 
+%%
+%% This function returns two SQL statements:
+%%
+%% - one for renaming pseudo-directory
+%% - one for renaming nested objects
+%%
 -spec(rename_pseudo_directory(Prefix0 :: string(), SrcKey :: string(), DstName :: binary()) -> ok | list()).
 rename_pseudo_directory(Prefix0, SrcKey, DstName)
     when erlang:is_list(Prefix0) orelse Prefix0 =:= undefined
@@ -120,7 +126,19 @@ rename_pseudo_directory(Prefix0, SrcKey, DstName)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].
+    SQL0 = SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"],
+
+    DstKey = utils:hex(DstName),
+    SrcPrefix = utils:prefixed_object_key(Prefix0, SrcKey),
+    DstPrefix = utils:prefixed_object_key(Prefix0, DstKey),
+
+    SQL1 = ["UPDATE items SET prefix = replace(prefix, \"", erlang:list_to_binary(SrcPrefix),
+     "\",\"",  erlang:list_to_binary(DstPrefix), "\") WHERE prefix LIKE \"", 
+     erlang:list_to_binary(lists:flatten([Prefix1, "%"])), "\";"],
+
+io:fwrite("rename_pseudo_directory SQL0: ~p~n", [SQL0]),
+io:fwrite("rename_pseudo_directory SQL1: ~p~n", [SQL1]),
+    {SQL0, SQL1}.
 
 
 -spec(add_object(Prefix0 :: string() | undefined,

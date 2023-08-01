@@ -9,9 +9,9 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, create_pseudo_directory/4, task_create_pseudo_directory/4,
-	 delete_pseudo_directory/4, lock_object/4, add_object/3, delete_object/3,
-	 rename_object/5, rename_pseudo_directory/4]).
+-export([start_link/0, create_pseudo_directory/4, delete_pseudo_directory/4,
+	 lock_object/4, add_object/3, delete_object/3, rename_object/5,
+	 rename_pseudo_directory/4, task_create_pseudo_directory/4]).
 
 -export([integrity_check/2]).
 
@@ -42,6 +42,12 @@ create_pseudo_directory(BucketId, Prefix, Name, User)
 	    andalso erlang:is_binary(Name) ->
     gen_server:cast(?MODULE, {add_task, BucketId, ?MODULE, task_create_pseudo_directory, [Prefix, Name, User]}).
 
+-spec(rename_pseudo_directory(BucketId :: string(), Prefix :: string(),
+			      SrcKey :: string(), DstName :: binary()) -> ok).
+rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName)
+	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
+	    andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
+    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_pseudo_directory, [Prefix, SrcKey, DstName]}).
 
 %%
 %% Mark directory as deleted in SQLite db
@@ -52,15 +58,6 @@ delete_pseudo_directory(BucketId, Prefix, Name, UserId)
 	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
 	    andalso erlang:is_binary(Name) andalso erlang:is_list(UserId) ->
     gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, delete_pseudo_directory, [Prefix, Name]}).
-
-
--spec(rename_pseudo_directory(BucketId :: string(), Prefix :: string(),
-			      SrcKey :: string(), DstName :: binary()) -> ok).
-rename_pseudo_directory(BucketId, Prefix, SrcKey, DstName)
-	when erlang:is_list(BucketId) andalso erlang:is_list(Prefix) orelse Prefix =:= undefined
-	    andalso erlang:is_list(SrcKey) andalso erlang:is_binary(DstName) ->
-    gen_server:cast(?MODULE, {add_task, BucketId, sql_lib, rename_pseudo_directory, [Prefix, SrcKey, DstName]}).
-
 
 -spec(add_object(BucketId :: string(), Prefix :: string(), Obj :: #object{}) -> ok).
 add_object(BucketId, Prefix, Obj) when erlang:is_list(BucketId) andalso
@@ -182,13 +179,8 @@ task_create_pseudo_directory(Prefix, Name, User, DbName) ->
 	    %% Pseudo-directory is in DB already
 	    [];
 	[{columns, _}, {rows,[]}] ->
-	    %% Create one
-	    case sql_lib:create_pseudo_directory(Prefix, Name, User) of
-		{error, Reason} ->
-		    lager:error("[sqlite_server] Failed composing SQL for ~p ~p: ~p",
-				[Prefix, Name, Reason]);
-		SQL1 -> SQL1
-	    end
+	    %% Return SQL for creating one
+	    sql_lib:create_pseudo_directory(Prefix, Name, User)
     end.
 
 
@@ -242,27 +234,40 @@ update_db(BucketId, BucketQueue0) ->
 		fun(J) ->
 		    Module = element(1, J),
 		    Func = element(2, J),
+		    %% Add db name to arguments of calling function (in order to call multuple sql statements )
 		    Args =
 			case {Module, Func} of
-			    {?MODULE, task_create_pseudo_directory} -> element(3, J) ++ [DbName];  %% add to args
+			    {?MODULE, task_create_pseudo_directory} -> element(3, J) ++ [DbName];
 			    _ -> element(3, J)
 			end,
 		    case erlang:function_exported(Module, Func, length(Args)) of
 			true ->
-			    SQL = apply(Module, Func, Args),
-			    case SQL of
+			    case apply(Module, Func, Args) of
 				[] -> [];
-				_ ->
+				{SQL0, SQL1} ->
+				    case sqlite3:sql_exec(DbName, SQL0) of
+					ok ->
+					    case sqlite3:sql_exec(DbName, SQL1) of
+						ok -> [];
+						{error, Reason1} ->
+						    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL1, Reason1]),
+						    {Module, Func, Args}  %% adding it back to queue
+					    end;
+					{error, Reason0} ->
+					    lager:error("[sqlite_server] SQL: ~p Error: ~p", [SQL0, Reason0]),
+					    {Module, Func, Args}  %% adding it back to queue
+				    end;
+				SQL ->
 				    case sqlite3:sql_exec(DbName, SQL) of
-					{error, Reason} ->
-					    ?ERROR("[sqlite_server] SQL error: ~p", [Reason]),
+					{error, Reason2} ->
+					    lager:error("[sqlite_server] SQL: ~p Error: ", [SQL, Reason2]),
 					    {Module, Func, Args};  %% adding it back to queue
 					_Result -> []
 				    end
 			    end;
 			false ->
-			    ?ERROR("[sqlite_server] not exported: ~p:~p/~p~p",
-				   [Module, Func, length(Args), Args]),
+			    lager:error("[sqlite_server] not exported: ~p:~p/~p~p",
+				        [Module, Func, length(Args), Args]),
 			    []  %% removing from queue
 		    end
 		end, BucketQueue0),
