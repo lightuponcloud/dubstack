@@ -494,6 +494,12 @@ class RenameTest(TestClient):
         self.assertTrue(encoded_random_prefix in [i['prefix'] for i in result])
 
         # rename nested pseudo-dir
+
+        fn = "20180111_165127.jpg"
+        old_file_prefix = "{}{}".format(encoded_random_prefix, encode_to_hex(random_dir_name))
+        res = self.client.upload(TEST_BUCKET_1, fn, prefix=old_file_prefix)
+        object_key = res['object_key']
+
         random_new_name = generate_random_name()
         res = self.client.rename(TEST_BUCKET_1, encode_to_hex(random_dir_name), random_new_name,
                                  prefix=encoded_random_prefix)
@@ -502,7 +508,13 @@ class RenameTest(TestClient):
 
         time.sleep(2)  # time necessary for server to update db
         result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
-        self.assertEqual(len(result), 4)
+        self.assertEqual(len(result), 5)
+
+        keys = [(i['prefix'], i['key']) for i in result]
+        assert (encoded_random_prefix, encode_to_hex(random_new_name)[:-1]) in keys
+        new_file_prefix = old_file_prefix.replace(encode_to_hex(random_dir_name), encode_to_hex(random_new_name))
+        assert (new_file_prefix, object_key) in keys
+
         dir_index = None
         for idx, dct in enumerate(result):
             if dct["orig_name"] == random_new_name:
