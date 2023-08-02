@@ -57,7 +57,7 @@ create_pseudo_directory(Prefix0, Name, User)
 	end,
     Key = utils:hex(Name),
     Timestamp = erlang:round(utils:timestamp()/1000),
-    Res = ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, is_locked, ",
+    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, is_locked, ",
      "bytes, last_modified_utc, author_id, author_name, author_tel) ",
      "VALUES ((SELECT id FROM items WHERE prefix = ", sqlite3_lib:value_to_sql(Prefix1),
      " AND key = ", sqlite3_lib:value_to_sql(Key), "), ",
@@ -66,9 +66,7 @@ create_pseudo_directory(Prefix0, Name, User)
      sqlite3_lib:value_to_sql(false), ", ", sqlite3_lib:value_to_sql(0), ", ",
      sqlite3_lib:value_to_sql(Timestamp), ", ", sqlite3_lib:value_to_sql(User#user.id),
      ", ", sqlite3_lib:value_to_sql(User#user.name), ", ",
-     sqlite3_lib:value_to_sql(User#user.tel), ");"],
-    io:fwrite("create_pseudo_directory SQL: ~p~n", [Res]),
-    Res.
+     sqlite3_lib:value_to_sql(User#user.tel), ");"].
 
 %%
 %% Returns SQL for querying pseudo-directory by its prefix and name.
@@ -135,9 +133,6 @@ rename_pseudo_directory(Prefix0, SrcKey, DstName)
     SQL1 = ["UPDATE items SET prefix = replace(prefix, \"", erlang:list_to_binary(SrcPrefix),
      "\",\"",  erlang:list_to_binary(DstPrefix), "\") WHERE prefix LIKE \"", 
      erlang:list_to_binary(lists:flatten([Prefix1, "%"])), "\";"],
-
-io:fwrite("rename_pseudo_directory SQL0: ~p~n", [SQL0]),
-io:fwrite("rename_pseudo_directory SQL1: ~p~n", [SQL1]),
     {SQL0, SQL1}.
 
 
@@ -150,7 +145,7 @@ add_object(Prefix0, Obj)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    Res = ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, ",
+    ["INSERT OR REPLACE INTO items (id, prefix, key, orig_name, is_dir, ",
      "is_locked, bytes, guid, version, last_modified_utc, author_id, "
      "author_name, author_tel, lock_user_id, lock_user_name, lock_user_tel, "
      "lock_modified_utc, md5) VALUES ((SELECT id FROM items WHERE prefix = ",
@@ -164,9 +159,7 @@ add_object(Prefix0, Obj)
      sqlite3_lib:value_to_sql(Obj#object.lock_user_id), ", ", sqlite3_lib:value_to_sql(Obj#object.lock_user_name), ", ",
      sqlite3_lib:value_to_sql(Obj#object.lock_user_tel), ", ",
      sqlite3_lib:value_to_sql(Obj#object.lock_modified_utc), ", ",
-     sqlite3_lib:value_to_sql(Obj#object.md5), ");"],
-    io:fwrite("add_object: ~p~n", [Res]),
-    Res.
+     sqlite3_lib:value_to_sql(Obj#object.md5), ");"].
 
 %%
 %% Get object key if exists
@@ -225,6 +218,4 @@ delete_object(Prefix0, Key)
 	    undefined -> "";
 	    _ -> Prefix0
 	end,
-    Res = SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"],
-    io:fwrite("delete_object: ~p~n", [Res]),
-    Res.
+    SQL ++ [" AND prefix = ",  sqlite3_lib:value_to_sql(Prefix1), ";"].

@@ -441,7 +441,6 @@ rename(Req0, BucketId, State, IndexContent) ->
 		    {true, Req1, []};
 		{error, Number} -> js_handler:bad_request(Req0, Number);
 		{dir_name, DstDirectoryName0} ->
-io:fwrite("rename_pseudo_directory Prefix: ~p basename(objkey) ~p~n", [Prefix0, filename:basename(SrcObjectKey1)]),
 		    sqlite_server:rename_pseudo_directory(BucketId, Prefix0, filename:basename(SrcObjectKey1),
 			DstDirectoryName0),
 		    Req1 = cowboy_req:set_resp_body(jsx:encode([{dir_name, DstDirectoryName0}]), Req0),
