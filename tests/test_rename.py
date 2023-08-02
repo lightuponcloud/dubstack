@@ -524,6 +524,21 @@ class RenameTest(TestClient):
         self.assertTrue(result[dir_index]["prefix"] == encoded_random_prefix)
         self.assertTrue("{}/".format(result[dir_index]['key']), encode_to_hex(random_new_name))
 
+        # rename root pseudo-dir
+        another_random_new_name = generate_random_name()
+        res = self.client.rename(TEST_BUCKET_1, encoded_random_prefix, another_random_new_name)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()['dir_name'], another_random_new_name)
+
+        time.sleep(2)  # time necessary for server to update db
+        result = self.check_sql(TEST_BUCKET_1, "SELECT * FROM items")
+        self.assertEqual(len(result), 5)
+
+        keys = [(i['prefix'], i['key']) for i in result]
+        assert ('', encode_to_hex(another_random_new_name)[:-1]) in keys
+        assert (encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)[:-1]) in keys
+        assert ("{}{}".format(encode_to_hex(another_random_new_name), encode_to_hex(random_new_name)), object_key)
+
 
 if __name__ == '__main__':
     unittest.main()
