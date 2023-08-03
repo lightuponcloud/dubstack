@@ -121,6 +121,10 @@
 %%
 -define(RIAK_LOCK_SUFFIX, ".lock").
 %%
+%% The object key of thumbnail for image or video.
+%%
+-define(RIAK_THUMBNAIL_KEY, "thumbnail").
+%%
 %% Name of bucket prefix
 %%
 %% Assumption: Riak is configured with the following option
