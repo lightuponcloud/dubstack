@@ -1,3 +1,10 @@
+%%
+%% Removes the following by schedule
+%%
+%% - old CSRF tokens
+%% - old authentication tokens
+%% - deleted objects (TODO)
+%%
 -module(cleaner).
 
 -behavior(gen_server).
