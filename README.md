@@ -10,43 +10,42 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
 
 1. **File Synchronization**
 
-    This is a server side of the file synchronization software.
+    DubStack is a server side of team collagoration software.
     It allows not only file **upload**/**download**, but also file **lock**/**unlock**,
-    **delete**/**undelete**, differential sync and automated conflict resolution.
+    **delete**/**undelete**, **copy**/**move**, differential sync and **automated conflict resolution**.
 
-2. **Simple authentication**
+2. **Gallery, thumbnails, watermarks**
 
-    Login/password and other credentials are stored in Riak CS bucket,
-    called "security" and can be manipulated through web interface.
+    Thumbnails are generated on demand by dedicated gen_server process.
+    It applies watermark on thumbnails, if watermark.png found in bucket.
 
-    You don't have to implement complex AWS ``vN`` signing algorithms.
+    You can view the gallery by the link /riak/gallery/[:bucket_id]
 
-3. **Action log and changelog**
+3. File and directory sharing
+    This feature can be used for selling digital content.
+
+4. **Action log and changelog**
 
     It records history of upload, copy, move, rename and delete operations.
 
-4. **Provides web interface, Android application and synchronization client for Windows**
+5. **Multi-tenancy**
 
-    You can manage objects, users, their groups and tenants using browser or Android App.
+    Objects are stored in "buckets" with names like "the-tenant-group-res"
+    Only users from tenant's group can access that bucket.
 
-5. **Search**
+    Files are shared with external users by providing them temporary tokens.
 
-    It has a simple Solr API implementation, allowing to index contents of uploaded objects.
-    Since Yokozuna was removed from Riak CS, you will have to setup Solr and its schema manually.
-    See [solr_schema.xml](doc/solr_schema.xml) and [solr_setup.txt](doc/solr_setup.txt).
+6. **IOS and Windows apps**
 
-6. **Readable URLs**
+    You can manage objects, users, their groups and tenants using Web UI browser.
+    You can manage objects using IOS App.
 
-    It transliterates UTF8 object names. For example pseudo-directory
-    ``"useful"`` will be encoded as ``"75736566756c/"`` prefix,
-    file name ``"корисний.jpg"`` becomes object key ``"korisnii.jpg"``.
+7. **It can work for tens of years without restarts**
+    Erlang applications are known working for tens of years without intervention.
+    For example in Ericsson telecommunication hardware.
+    This application is written in Erlang. Its processes are restarted automatically in case of errors.
 
-7. **Gallery, thumbnails, watermarks**
 
-    Thumbnails are generated on demand by dedicated gen_server process.
-    If it finds watermark.png in root of any bucket, it applies watermark on thumbnails.
-
-    You can view the gallery by the link /riak/gallery/[:bucket_id]
 
 
 ## Why Riak CS
@@ -54,6 +53,11 @@ This middleware is used to synchronize Riak CS contents with filesystem. Also it
 I used Riak CS as a main storage backend, as it is AWS S3 compatible and very predictable on resource consumption.
 It has recovery tools, scales automatically, it can store files > 5 TB and has multi-datacenter bidirectional replication.
 It was built using the latest academic research in the area of distributed systems.
+
+The list of companies who use Riak CS, -- object storage software, used with DubStack:
+"Yahoo! Japan", Booking.com, UK National Health System, TI Tokyo, Bloomberg, Klarna, 
+Bet365, EE.co.uk, Bleacher Report, Derivco, etc.
+
 
 ## Advantages of DubStack
 

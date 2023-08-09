@@ -219,7 +219,10 @@
 -define(MAXIMUM_TENANT_NAME_LENGTH, 26).
 -define(MAXIMUM_GROUP_NAME_LENGTH, 25).
 
-%% maximum image size to try to scale, in bytes ( 21 MB )
+%%
+%% Maximum image size to try to scale, in bytes ( 21 MB ).
+%% It should be bigger than FILE_UPLOAD_CHUNK_SIZE.
+%%
 -define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
 
 -define(IMAGE_WORKERS, 5). %% The number of imagemagick workers

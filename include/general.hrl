@@ -44,3 +44,5 @@
 }).
 
 -define(DEFAULT_LANGUAGE_TAG, "en").
+
+-define(SCOPE_PG, pubsub).
