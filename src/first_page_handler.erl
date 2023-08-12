@@ -167,7 +167,7 @@ first_page(Req0, Settings, State) ->
 	    Req1 = cowboy_req:reply(404, #{
 		<<"content-type">> => <<"text/html">>
 	    }, unicode:characters_to_binary(Body), Req0),
-	    {stop, Req1, []};
+	    {ok, Req1, []};
 	false ->
 	    Locale = Settings#general_settings.locale,
 	    TenantId1 = erlang:binary_to_list(proplists:get_value(tenant_id, State)),

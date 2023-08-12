@@ -153,7 +153,6 @@ handle_cast({copy, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 
 handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectKeys, User]}, State) ->
     DstIndexContent = indexing:get_index(DstBucketId, DstPrefix0),
-
     Copied0 = lists:map(
 	fun(RequestedKey) ->
 	    ObjectKey = element(1, RequestedKey),
@@ -220,7 +219,12 @@ handle_cast({move, [SrcBucketId, DstBucketId, SrcPrefix0, DstPrefix0, SrcObjectK
 				    delete_pseudo_directory(SrcBucketId, CurrentUniqSrcPrefix,
 					[K ||K <- Copied2, proplists:get_value(src_prefix, K) =:= CurrentUniqSrcPrefix],
 					User#user.id)
-				end, UniqPrefixList)
+				end, UniqPrefixList),
+			    %% Removing moved directory itself, if all objects are copied ok
+			    IndexPrefix = utils:prefixed_object_key(SrcPrefix0, utils:hex(element(1, I))),
+			    delete_pseudo_directory(SrcBucketId, IndexPrefix,
+				[K ||K <- Copied2, proplists:get_value(src_prefix, K) =:= SrcPrefix0],
+				User#user.id)
 		    end
 	    end
 	end, Copied0),
