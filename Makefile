@@ -15,6 +15,7 @@ dep_sqlite3 = git https://github.com/processone/erlang-sqlite3 v1.1.6
 dep_lager = git https://github.com/erlang-lager/lager 3.9.2
 dep_relx = git https://github.com/erlware/relx v4.7.0
 dep_meck = git https://github.com/eproxus/meck.git master
+dep_oauth2 = git https://github.com/kivra/oauth2_client master
 
 APP_VERSION = $(shell cat rel/version)
 

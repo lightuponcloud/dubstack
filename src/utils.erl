@@ -18,7 +18,7 @@
 -export([mime_type/1, slugify_object_key/1, prefixed_object_key/2, alphanumeric/1,
 	 trim_spaces/1, hex/1, unhex/1, unhex_path/1, join_list_with_separator/3,
 	 timestamp/0, format_timestamp/1, firstmatch/2, timestamp_to_datetime/1,
-	 translate/2, dirname/1, read_config/1]).
+	 translate/2, dirname/1, read_config/1, real_prefix/2]).
 
 -include("riak.hrl").
 -include("general.hrl").
@@ -118,6 +118,42 @@ prefixed_object_key(Prefix, ObjectKey0) when erlang:is_list(Prefix), erlang:is_l
 	true -> string:concat(Prefix, ObjectKey1);
 	_ -> string:concat(Prefix ++ "/", ObjectKey1)
     end.
+
+
+%%
+%% Files are stored by the following URLs
+%% ~object/file-GUID/upload-GUID/N_md5, where N is the part number
+%%
+%% This function returns a bucket id and prefix:
+%% {bucket_id, GUID, UploadId, ~object/file-GUID/upload-GUID/}
+%%
+-spec real_prefix(string(), list()) -> {string(), string()}.
+
+real_prefix(BucketId, Metadata) ->
+    GUID = proplists:get_value("x-amz-meta-guid", Metadata),
+    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
+    %% Old GUID, old bucket id and upload id are needed for 
+    %% determining URI of the original object, before it was copied
+    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata),
+    OldBucketId =
+	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata) of
+	    undefined -> BucketId;
+	    B -> B
+	end,
+    OldUploadId =
+	case proplists:get_value("x-amz-meta-copy-from-upload-id", Metadata) of
+	    undefined -> UploadId;
+	    UID -> UID
+	end,
+    case OldGUID =/= undefined andalso OldGUID =/= GUID of
+	true ->
+	    RealPrefix1 = prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
+	    {OldBucketId, OldGUID, OldUploadId, prefixed_object_key(RealPrefix1, OldUploadId)};
+	false ->
+	    PrefixedGUID0 = prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
+	    {BucketId, GUID, UploadId, prefixed_object_key(PrefixedGUID0, UploadId)}
+    end.
+
 
 -spec to_integer(string() | binary() | integer() | float() | undefined) -> integer().
 

@@ -46,7 +46,7 @@ init(Req0, _Opts) ->
 		    List2 = [I || I <- List1, proplists:get_value(is_deleted, I) =/= true],
 		    Locale = Settings#general_settings.locale,
 		    Directories0 = proplists:get_value(dirs, List0),
-		    Directories1 = [I ++ [{name, utils:unhex(proplists:get_value(prefix, I))}]
+		    Directories1 = [I ++ [{name, utils:unhex(utils:to_binary(proplists:get_value(prefix, I)))}]
                                     || I <- Directories0, proplists:get_value(is_deleted, I) =/= true],
 		    {ok, Body} = gallery_dtl:render([
 			{bucket_id, BucketId},

@@ -56,9 +56,11 @@ start(_Type, _Args) ->
 	}}),
     {ok, _} = pg:start(?SCOPE_PG),
     [img:start_link(I) || I <- lists:seq(0, ?IMAGE_WORKERS - 1)],  %% scales images
+    [video_transcoding:start_link(I) || I <- lists:seq(0, ?VIDEO_WORKERS - 1)],  %% transcodes videos
     sqlite_server:start_link(),  %% Puts changes to SQLite DB
     copy_server:start_link(),    %% Performs time-consuming copy/move operations
     cleaner:start_link(),        %% Removes expired tokens
+    application:ensure_all_started(oauth2c),
     middleware_sup:start_link().
 
 stop(_State) -> ok.

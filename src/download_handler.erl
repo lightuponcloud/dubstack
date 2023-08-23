@@ -3,47 +3,12 @@
 %%
 -module(download_handler).
 
--export([init/2, real_prefix/2, validate_range/2]).
+-export([init/2, validate_range/2]).
 
 -include("general.hrl").
 -include("riak.hrl").
 -include("entities.hrl").
 -include("log.hrl").
-
-
-%%
-%% Files are stored by the following URLs
-%% ~object/file-GUID/upload-GUID/N_md5, where N is the part number
-%%
-%% This function returns a bucket id and prefix:
-%% {bucket_id, ~object/file-GUID/upload-GUID/}
-%%
--spec real_prefix(string(), list()) -> {string(), string()}.
-
-real_prefix(BucketId, Metadata0) ->
-    GUID = proplists:get_value("x-amz-meta-guid", Metadata0),
-    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata0),
-    %% Old GUID, old bucket id and upload id are needed for 
-    %% determining URI of the original object, before it was copied
-    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata0),
-    OldBucketId =
-	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata0) of
-	    undefined -> BucketId;
-	    B -> B
-	end,
-    OldUploadId =
-	case proplists:get_value("x-amz-meta-copy-from-upload-id", Metadata0) of
-	    undefined -> UploadId;
-	    UID -> UID
-	end,
-    case OldGUID =/= undefined andalso OldGUID =/= GUID of
-	true ->
-	    RealPrefix = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-	    {OldBucketId, utils:prefixed_object_key(RealPrefix, OldUploadId)};
-	false ->
-	    PrefixedGUID = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-	    {BucketId, utils:prefixed_object_key(PrefixedGUID, UploadId)}
-    end.
 
 %%
 %% Check if visitor has the right to download object.
@@ -97,7 +62,7 @@ validate_request(BucketId, Metadata0) ->
 	    case proplists:get_value("x-amz-meta-guid", Metadata0) of
 		undefined -> not_found;
 		_ ->
-		    {OldBucketId, RealPrefix} = real_prefix(BucketId, Metadata0),
+		    {OldBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata0),
 		    ContentType = proplists:get_value(content_type, Metadata0),
 		    Bytes = proplists:get_value("x-amz-meta-bytes", Metadata0),
 		    OrigName0 = erlang:list_to_binary(proplists:get_value("x-amz-meta-orig-filename", Metadata0)),

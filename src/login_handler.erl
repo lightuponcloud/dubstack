@@ -279,6 +279,10 @@ handle_post(Req0, _State) ->
 			    {true, Req1, []}
 		    end
 	    end;
+	<<"GET">> ->
+	    %{ok, _Headers, Client} = oauth2c:retrieve_access_token(
+	    %	<<"client_credentials">>, ?OAUTH2_TOKEN_URL, ?CONSUMER_KEY, ?CONSUMER_SECRET),
+	    js_handler:bad_request(Req0, 18);
 	_ -> js_handler:bad_request(Req0, 18)
     end.
 

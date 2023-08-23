@@ -38,31 +38,6 @@ allowed_methods(Req, State) ->
 to_json(Req0, State) ->
     {<<>>, Req0, State}.
 
-real_prefix(BucketId, Metadata) ->
-    GUID = proplists:get_value("x-amz-meta-guid", Metadata),
-    UploadId = proplists:get_value("x-amz-meta-upload-id", Metadata),
-    %% Old GUID, old bucket id and upload id are needed for 
-    %% determining URI of the original object, before it was copied
-    OldGUID = proplists:get_value("x-amz-meta-copy-from-guid", Metadata),
-    OldBucketId =
-	case proplists:get_value("x-amz-meta-copy-from-bucket-id", Metadata) of
-	    undefined -> BucketId;
-	    B -> B
-	end,
-    OldUploadId =
-	case proplists:get_value("x-amz-meta-copy-from-upload-id", Metadata) of
-	    undefined -> UploadId;
-	    UID -> UID
-	end,
-    case OldGUID =/= undefined andalso OldGUID =/= GUID of
-	true ->
-	    RealPrefix1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, OldGUID),
-	    {OldBucketId, OldGUID, OldUploadId, utils:prefixed_object_key(RealPrefix1, OldUploadId)};
-	false ->
-	    PrefixedGUID0 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, GUID),
-	    {BucketId, GUID, UploadId, utils:prefixed_object_key(PrefixedGUID0, UploadId)}
-    end.
-
 
 to_scale(Req0, State) ->
     BucketId = proplists:get_value(bucket_id, State),
@@ -160,8 +135,8 @@ receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, Acc) ->
     end.
 
 %%
-%% Download image or first couple of megabytes of video from object storage to pepare preview
-%% In case of image: I assume it cannot be bigger than MAXIMUM_IMAGE_SIZE_BYTES.
+%% Download image from object storage to pepare preview
+%% Assumption: image cannot be bigger than MAXIMUM_IMAGE_SIZE_BYTES.
 %%
 get_binary_data(BucketId, Prefix, StartByte, EndByte) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
@@ -265,7 +240,7 @@ serve_img(Req0, BucketId, Prefix, CachedKey, Width, Height, CropFlag, BinaryData
 %% ~object/file-GUID/thumbnail
 %%
 scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
-    {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = real_prefix(BucketId, Metadata),
+    {RealBucketId, _RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
     PrefixedThumbnail = utils:prefixed_object_key(RealPrefix0, ?RIAK_THUMBNAIL_KEY),
     BinaryData =
@@ -281,7 +256,7 @@ scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, true, T0) ->
 %% ~object/file-GUID/upload-GUID_WxH.ext, where W and H are width and height
 %%
 scale_response(Req0, BucketId, Metadata, Width, Height, CropFlag, false, T0) ->
-    {RealBucketId, RealGUID, RealUploadId, RealPrefix0} = real_prefix(BucketId, Metadata),
+    {RealBucketId, RealGUID, RealUploadId, RealPrefix0} = utils:real_prefix(BucketId, Metadata),
     PrefixedGUID1 = utils:prefixed_object_key(?RIAK_REAL_OBJECT_PREFIX, RealGUID),
     CachedKey = RealUploadId ++ "_" ++ erlang:integer_to_list(Width) ++ "x" ++ erlang:integer_to_list(Height),
     PrefixedCachedKey = utils:prefixed_object_key(PrefixedGUID1, CachedKey),
@@ -398,7 +373,7 @@ handle_post(Req0, State) ->
 	    case lists:keyfind(error, 1, [Prefix0, ObjectKey1, Md5, DataSizeOk, Width0, Height0]) of
 		{error, Number} -> js_handler:bad_request(Req1, Number);
 		false ->
-		    {RealBucketId, _RealGUID, _RealUploadId, RealPrefix} = real_prefix(BucketId, Metadata0),
+		    {RealBucketId, _RealGUID, _RealUploadId, RealPrefix} = utils:real_prefix(BucketId, Metadata0),
 		    Meta = [{"width", Width1}, {"height", Height1}, {"md5", Md5}],
 		    Options = [{acl, public_read}, {meta, Meta}, {md5, Md5}],
 		    case riak_api:put_object(RealBucketId, RealPrefix, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
