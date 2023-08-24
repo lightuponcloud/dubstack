@@ -16,6 +16,7 @@ start(_Type, _Args) ->
 	    {"/riak/list/[:bucket_id]/", list_handler, []},
 	    {"/riak/thumbnail/[:bucket_id]/", img_scale_handler, []},
 	    {"/riak/gallery/[:bucket_id]/", gallery_handler, []},
+	    {"/riak/video/[:bucket_id]/", video_handler, []},
 	    {"/riak/version/[:bucket_id]/", version_handler, []},
 
 	    {"/riak/upload/[:bucket_id]/", upload_handler, []},

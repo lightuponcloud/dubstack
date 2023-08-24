@@ -12,8 +12,14 @@
 -include("log.hrl").
 -include("riak.hrl").
 
+%%
+%% queue -- List of queued video transcoding requests
+%%
 -record(state, {os_pid :: undefined | pos_integer(),
-		num :: pos_integer()}).
+		num :: pos_integer(),
+		queue = [], queue_check_timer = []}).
+
+-define(QUEUE_CHECK_INTERVAL, 5000).  %% every 5 seconds
 
 %%
 %% Starts N servers for video transcoding
@@ -23,18 +29,16 @@ start_link(Number) ->
 	lists:flatten(io_lib:format("video_sup_~p", [Number]))),
     gen_server:start_link({local, Name}, ?MODULE, [Number], []).
 
-
 ffmpeg(BucketId, ObjectKey) ->
     Number = rand:uniform(?VIDEO_WORKERS)-1,
     Name = list_to_atom(
 	lists:flatten(io_lib:format("video_sup_~p", [Number]))),
     gen_server:cast(Name, {ffmpeg, BucketId, ObjectKey}).
 
-
 init([Number]) ->
     process_flag(trap_exit, true),
-    {ok, #state{num = Number}}.
-
+    {ok, Tref0} = timer:send_after(?QUEUE_CHECK_INTERVAL, check_queue),
+    {ok, #state{queue_check_timer = Tref0, num = Number}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -53,56 +57,64 @@ init([Number]) ->
 handle_call(_Request, _From, State) ->
     {noreply, State}.
 
-handle_cast({ffmpeg, BucketId, ObjectKey}, State) ->
-    case download_file(BucketId, ObjectKey) of
-	{error, Reason} ->
-	    ?ERROR("[video_transcoding] can't download file: ~p/~p: ~p", [BucketId, ObjectKey, Reason]),
-	    {noreply, State};
-	{RealPrefix, TempFn} ->
-	    %% Create temporary directory for HLS output
-	    TempDir0 = os:cmd("/bin/mktemp -d"),
-	    TempDir1 = re:replace(TempDir0, "[\r\n]", "", [global, {return, list}]),
-	    FfmpegCmd = io_lib:format("cd ~s;/usr/bin/ffmpeg -i ~s -r 24 -vcodec libx264 -s 640x480 -c copy -f hls -hls_time 2 -hls_list_size 0 -hls_segment_filename %07d.ts ~s",
-		[?HLS_PLAYLIST_OBJECT_KEY, TempDir1, TempFn]),
+handle_cast({ffmpeg, BucketId, ObjectKey}, #state{queue = Queue0} = State) ->
+    %% Adds record for periodic task processor
+    Queue1 =
+	case proplists:is_defined(BucketId, Queue0) of
+	    false ->
+		%% Add to queue
+		BQ0 = [{BucketId, [ObjectKey]}],
+		Queue0 ++ BQ0;
+	    true ->
+		%% Change bucket queue
+		lists:map(
+		    fun(I) ->
+			case element(1, I) of
+			    BucketId ->
+				BQ1 = element(2, I),
+				{BucketId, BQ1 ++ [ObjectKey]};
+			    _ -> I
+			end
+		    end, Queue0)
+	end,
+    {noreply, State#state{queue = Queue1}};
 
-	    os:cmd(lists:flatten(FfmpegCmd)),
-
-	    %% Upload HLS
-	    case file:list_dir_all(TempDir1) of
-		{ok, List} ->
-		    lists:foreach(
-			fun(I) ->
-			    Path = filename:join([TempDir1, I]),
-			    case file:read_file(Path) of
-				{error, enoent} ->
-				    lager:error("[video_transcoding] file disappeared: ~p video: ~p/~p",
-						[I, BucketId, ObjectKey]),
-				    ok;
-				{ok, BinaryData} ->
-				    Options = [{acl, public_read}],
-				    Response = riak_api:put_object(BucketId, RealPrefix, I, BinaryData, Options),
-				    case Response of
-					{error, Reason} ->
-					    lager:error("[video_transcoding] Can't put object ~p/~p: ~p",
-							[BucketId, RealPrefix, Reason]),
-					    {error, Reason};
-					_ -> file:delete(I)
-				    end
-			    end
-			end, List),
-		    file:delete(TempFn),
-		    file:del_dir(TempDir1),
-		    {noreply, State};
-		{error, enoent} ->
-		    ?ERROR("[video_transcoding] can't transcode video ~p/~p: no playlist in ~p",
-			   [BucketId, ObjectKey, TempDir1]),
-		    file:delete(TempFn),
-		    {noreply, State}
-	    end
-
-    end;
 
 handle_cast(_Msg, State) ->  {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling all non call/cast messages. Called by send_after() call.
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_info(check_queue, #state{queue = Queue0} = State) ->
+    %% Go over per-bucket queues of tasks, transcode vides
+    Queue1 =
+	lists:map(
+	    fun(I) ->
+		BucketId = element(1, I),
+		BucketQueue0 = element(2, I),
+		BucketQueue1 =
+		    case length(BucketQueue0) of
+			0 -> [];  %% do nothing, try later
+			_ ->
+			    lists:filter(
+				fun(ObjectKey) ->
+				    case process_video(BucketId, ObjectKey) of
+					{error, _} -> true;
+					_ -> false
+				    end
+				end, BucketQueue0)
+		    end,
+		{BucketId, BucketQueue1}
+	    end, Queue0),
+    {ok, Tref0} = timer:send_after(?QUEUE_CHECK_INTERVAL, check_queue),
+    {noreply, State#state{queue_check_timer = Tref0, queue = Queue1}};
 
 handle_info(Info, State) ->
     ?ERROR("[video_transcoding] got unexpected info: ~p", [Info]),
@@ -134,7 +146,59 @@ terminate(Reason, _State) ->
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+%%
+%% Download video and launch transcoding process
+%%
+process_video(BucketId, ObjectKey) ->
+    case download_file(BucketId, ObjectKey) of
+	{error, Reason} ->
+	    ?ERROR("[video_transcoding] can't download file: ~p/~p: ~p", [BucketId, ObjectKey, Reason]),
+	    {error, Reason};
+	{RealPrefix, TempFn} ->
+	    %% Create temporary directory for HLS output
+	    TempDir0 = os:cmd("/bin/mktemp -d"),
+	    TempDir1 = re:replace(TempDir0, "[\r\n]", "", [global, {return, list}]),
+	    FfmpegCmd = io_lib:format("cd ~s;/usr/bin/ffmpeg -i ~s -r 24 -vcodec libx264 -s 640x480 -c copy -f hls -hls_time 2 -hls_list_size 0 -hls_segment_filename %07d.ts ~s",
+		[TempDir1, TempFn, ?HLS_PLAYLIST_OBJECT_KEY]),
+	    os:cmd(lists:flatten(FfmpegCmd)),
 
+	    %% Upload HLS
+	    case file:list_dir_all(TempDir1) of
+		{ok, List} ->
+		    lists:foreach(
+			fun(I) ->
+			    Path = filename:join([TempDir1, I]),
+			    case file:read_file(Path) of
+				{error, enoent} ->
+				    ?ERROR("[video_transcoding] file disappeared: ~p video: ~p/~p",
+					   [I, BucketId, ObjectKey]),
+				    ok;
+				{ok, BinaryData} ->
+				    Options = [{acl, public_read}],
+				    Response = riak_api:put_object(BucketId, RealPrefix, I, BinaryData, Options),
+				    case Response of
+					{error, Reason} ->
+					    ?ERROR("[video_transcoding] Can't put object ~p/~p: ~p",
+						   [BucketId, RealPrefix, Reason]),
+					    {error, Reason};
+					_ -> file:delete(I)
+				    end
+			    end
+			end, List),
+		    file:delete(TempFn),
+		    file:del_dir(TempDir1),
+		    ok;
+		{error, enoent} ->
+		    ?ERROR("[video_transcoding] can't transcode video ~p/~p: no playlist in ~p",
+			   [BucketId, ObjectKey, TempDir1]),
+		    file:delete(TempFn),
+		    {error, enoent}
+	    end
+    end.
+
+%%
+%% Download object from Riak CS
+%%
 download_file(BucketId, ObjectKey) ->
     case riak_api:head_object(BucketId, ObjectKey) of
 	{error, Reason} ->
@@ -194,7 +258,9 @@ receive_streamed_body(RequestId0, Pid0, BucketId, NextObjectKeys0, OutputFileNam
 	    {error, stream_error}
     end.
 
-
+%%
+%% Goes over chunks of object and saves them on local filesystem
+%%
 save_file(BucketId, RealPrefix, OutputFileName) ->
     MaxKeys = ?FILE_MAXIMUM_SIZE div ?FILE_UPLOAD_CHUNK_SIZE,
     case riak_api:list_objects(BucketId, [{max_keys, MaxKeys}, {prefix, RealPrefix ++ "/"}]) of

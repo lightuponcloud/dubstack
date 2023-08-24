@@ -29,10 +29,10 @@
 
 -define(SQLITE_DB_UPDATE_INTERVAL, 1000).  %% 1 second -- db updated every 1 second, if there were changes
 
+%%
 %% sql_queue -- List of queued SQL statements (those that could not have been executed because of lock )
-%% lock_timers -- list of timers, that are used for retry update of locked DBs
-%%                ( stored in case they need to be cancelled )
--record(state, {sql_queue = [], lock_timers = [], update_db_timer = []}).
+%%
+-record(state, {sql_queue = [], update_db_timer = []}).
 
 
 -spec(create_pseudo_directory(BucketId :: string(), Prefix :: string(),
@@ -305,14 +305,7 @@ update_db(BucketId, BucketQueue0) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, #state{lock_timers = LockTimers} = _State) ->
-    %% Cancel lock timers
-    lists:all(
-	fun(I) ->
-	    LockTimer = proplists:get_value(timer, I),
-	    erlang:cancel_timer(LockTimer)
-	end, LockTimers),
-    ok.
+terminate(_Reason, _State) -> ok.
 
 %%--------------------------------------------------------------------
 %% @private

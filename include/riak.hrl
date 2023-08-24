@@ -155,7 +155,7 @@
 %%
 %% Default: "security"
 %%
--define(SECURITY_BUCKET_NAME, "security").
+-define(SECURITY_BUCKET_NAME, "security2").
 %%
 %% Bucket for temporary upload IDs,
 %% Those IDs point to real objects and are used
@@ -225,7 +225,14 @@
 %%
 -define(MAXIMUM_IMAGE_SIZE_BYTES, 22020096).
 
--define(IMAGE_WORKERS, 5). %% The number of imagemagick workers
+%%
+%% The number of imagemagick workers for scaling images
+%%
+-define(IMAGE_WORKERS, 5).
+%%
+%% The number of ffmpeg gen_server processes for transcoding videos.
+%%
+-define(VIDEO_WORKERS, 2).
 %%
 %% Object name for preventing removal
 %%
@@ -234,6 +241,10 @@
 %% If case watermark with this key is present in bucket, thumbnails will have watermark on them.
 %%
 -define(WATERMARK_OBJECT_KEY, "watermark.png").
+%%
+%%
+%%
+-define(HLS_PLAYLIST_OBJECT_KEY, "playlist.m3u8").
 %%
 %% SQLite db object key. This db stores file tree.
 %%

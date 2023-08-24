@@ -45,7 +45,7 @@
     preload="auto"
     poster="/riak/thumbnail/{{ bucket_id }}?object_key={{ o.object_key }}&prefix={{ hex_prefix }}&w=285&h=285"
     data-setup='{}'>
-  <source src="/riak/download/{{ bucket_id }}{% if hex_prefix %}/{{hex_prefix}}{% endif %}/{{o.object_key}}" type="video/mp4"></source>
+  <source src="/riak/video/{{ bucket_id }}{% if hex_prefix %}/?prefix={{ hex_prefix }}&object_key={{ o.object_key }}{% else %}?object_key={{ o.object_key }}{% endif %}" type="application/x-mpegURL"></source>
   <p class="vjs-no-js">
     To view this video please enable JavaScript, and consider upgrading to a
     web browser that
