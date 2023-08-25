@@ -30,6 +30,49 @@ allowed_methods(Req, State) ->
 to_json(Req0, State) ->
     {<<>>, Req0, State}.
 
+%%
+%% Adds URL prefixes to HLS
+%%
+prefix_chunks([<< Tag:8/binary, Time/binary >>, Name | T], Prefix, Acc) when Tag =:= <<"#EXTINF:">> ->
+    Line = [<< <<"#EXTINF:">>/binary, Time/binary, <<"\n">>/binary, Prefix/binary, Name/binary, <<"\n">>/binary >>],
+    prefix_chunks(T, Prefix, [Line | Acc]);
+prefix_chunks([<<>>|T], Prefix, Acc) ->
+    prefix_chunks(T, Prefix, [<<>> | Acc]);
+prefix_chunks([H|T], Prefix, Acc) ->
+    prefix_chunks(T, Prefix, [<< H/binary, <<"\n">>/binary >> | Acc]);
+prefix_chunks([], _Prefix, Acc) -> Acc.
+
+%%
+%% Returns HLS playlist
+%%
+get_playlist(BucketId, RealPrefix, Prefix, ObjectKey0) ->
+    PrefixedPlaylist = utils:prefixed_object_key(utils:dirname(RealPrefix), ?HLS_PLAYLIST_OBJECT_KEY),
+    BinaryData =
+	case riak_api:get_object(BucketId, PrefixedPlaylist) of
+	    {error, _} -> <<>>;
+	    not_found -> <<>>;
+	    PlaylistBinary -> proplists:get_value(content, PlaylistBinary)
+	end,
+    Lines = binary:split(BinaryData, <<"\n">>, [global]),
+    ObjectKey1 = erlang:list_to_binary(ObjectKey0),
+    HLSPrefix =
+	case Prefix of
+	    undefined -> << "?object_key=", ObjectKey1/binary, "&hls_part=" >>;
+	    _ -> << "?prefix=", Prefix, "&object_key=", ObjectKey1/binary, "&hls_part=" >>
+	end,
+    erlang:list_to_binary(lists:reverse(prefix_chunks(Lines, HLSPrefix, []))).
+
+%%
+%% Downloads HLS part from Riak CS
+%%
+get_hls_part(BucketId, RealPrefix, Name) ->
+    PrefixedPart = utils:prefixed_object_key(utils:dirname(RealPrefix), Name),
+    case riak_api:get_object(BucketId, PrefixedPart) of
+	{error, _} -> <<>>;
+	not_found -> <<>>;
+	Data -> proplists:get_value(content, Data)
+    end.
+
 
 to_response(Req0, State) ->
     T0 = utils:timestamp(),
@@ -40,6 +83,11 @@ to_response(Req0, State) ->
 	case proplists:get_value(<<"object_key">>, ParsedQs) of
 	    undefined -> {error, 8};
 	    ObjectKey1 -> unicode:characters_to_list(ObjectKey1)
+	end,
+    HLSPart =
+	case proplists:get_value(<<"hls_part">>, ParsedQs) of
+	    undefined -> undefined;
+	    Part -> unicode:characters_to_list(Part)
 	end,
     case lists:keyfind(error, 1, [Prefix, ObjectKey0]) of
 	{error, Number} -> js_handler:bad_request(Req0, Number);
@@ -54,12 +102,10 @@ to_response(Req0, State) ->
 		not_found -> {<<>>, Req0, []};
 		Metadata ->
 		    {RealBucketId, _, _, RealPrefix} = utils:real_prefix(BucketId, Metadata),
-		    PrefixedPlaylist = utils:prefixed_object_key(utils:dirname(RealPrefix), ?HLS_PLAYLIST_OBJECT_KEY),
 		    BinaryData =
-			case riak_api:get_object(RealBucketId, PrefixedPlaylist) of
-			    {error, _} -> <<>>;
-			    not_found -> <<>>;
-			    PlaylistBinary ->proplists:get_value(content, PlaylistBinary)
+			case HLSPart of
+			    undefined -> get_playlist(RealBucketId, RealPrefix, Prefix, ObjectKey0);
+			    _ -> get_hls_part(RealBucketId, RealPrefix, HLSPart)
 			end,
 		    T1 = utils:timestamp(),
 		    Req1 = cowboy_req:stream_reply(200, #{
