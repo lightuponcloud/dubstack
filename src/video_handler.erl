@@ -93,7 +93,6 @@ to_response(Req0, State) ->
 	{error, Number} -> js_handler:bad_request(Req0, Number);
 	false ->
 	    PrefixedObjectKey = utils:prefixed_object_key(Prefix, ObjectKey0),
-	    T0 = utils:timestamp(),
 	    case riak_api:head_object(BucketId, PrefixedObjectKey) of
 		{error, Reason} ->
 		    lager:error("[video_handler] head_object failed ~p/~p: ~p",

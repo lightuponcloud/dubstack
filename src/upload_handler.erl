@@ -15,6 +15,7 @@
 -include("riak.hrl").
 -include("entities.hrl").
 -include("action_log.hrl").
+-include("media.hrl").
 -include("log.hrl").
 
 init(Req, Opts) ->
@@ -1132,6 +1133,14 @@ update_index(Req0, OrigName0, RespCode, State0) ->
 				lock_modified_utc = LockedUserTime
 			    },
 			    sqlite_server:add_object(BucketId, Prefix, Obj),
+
+			    %% Start video transcoding
+			    ObjExt = filename:extension(ux_string:to_lower(ObjectKey0)),
+			    IsVideo = lists:member(ObjExt, ?VIDEO_EXTENSIONS),
+			    case IsVideo of
+				true -> video_transcoding:ffmpeg(BucketId, ObjectKey0);
+				false -> ok
+			    end,
 			    upload_response(Req0, OrigName0, IsLocked0, LockModifiedTime0,
 					    LockedUserId0, LockedUserName0, LockedUserTel0,
 					    RespCode, State0)

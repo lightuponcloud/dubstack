@@ -378,10 +378,10 @@ handle_post(Req0, State) ->
 		    Options = [{acl, public_read}, {meta, Meta}, {md5, Md5}],
 		    case riak_api:put_object(RealBucketId, RealPrefix, ?RIAK_THUMBNAIL_KEY, Blob, Options) of
 			ok ->
-			    Req1 = cowboy_req:reply(200, #{
+			    Req2 = cowboy_req:reply(200, #{
 				<<"content-type">> => <<"application/json">>
 			    }, jsx:encode([{md5, Md5}]), Req0),
-			    {stop, Req1, []};
+			    {stop, Req2, []};
 			{error, Reason} ->
 			    lager:error("[img_scale_handler] Can't put object ~p/~p/~p: ~p",
 					[RealBucketId, RealPrefix, ObjectKey0, Reason]),
