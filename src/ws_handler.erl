@@ -61,10 +61,9 @@ parse_message(<<"Authorization ", Token0/binary>>, State) ->
 parse_message(<<"SUBSCRIBE ", BucketIdList0/binary>>, State) ->
     case proplists:get_value(user_id, State) of
 	undefined -> {ok, State};  %% not logged in
-	User ->
+	UserId ->
 	    BucketIdList1 = binary:split(BucketIdList0, <<" ">>, [global]),
 	    BucketIdList2 = [erlang:binary_to_list(B) || B <- BucketIdList1],
-	    UserId = User#user.id,
 	    SessionId = proplists:get_value(session_id, State),
 	    events_server_sup:new_subscriber(UserId, self(), SessionId, BucketIdList2),
 	    {ok, State}
