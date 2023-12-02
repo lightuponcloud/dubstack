@@ -170,7 +170,7 @@ forbidden(Req0, User) ->
 		true -> {false, Req0, [{user, User}, {bucket_id, BucketId}]};
 		undefined -> {false, Req0, [{bucket_id, BucketId}]}
 	    end;
-	false -> js_handler:forbidden(Req0, 7, ok)
+	false -> js_handler:forbidden(Req0, 7, stop)
     end.
 
 %%

@@ -582,7 +582,7 @@ copy_objects(SrcBucketId, DstBucketId, SrcPrefix, DstPrefix, ObjectKey0, NewName
 		    lager:error("[copy_handler] head_object failed ~p/~p: ~p",
 				[DstBucketId, DstActionLog, Reason]),
 		    riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
-						  SrcActionLog, [{acl, public_read}]);
+					 SrcActionLog, [{acl, public_read}]);
 		not_found -> riak_api:copy_object(DstBucketId, DstActionLog, SrcBucketId,
 						  SrcActionLog, [{acl, public_read}]);
 		_ -> ok

@@ -287,7 +287,8 @@ update_db(BucketId, BucketQueue0) ->
 
 	    %% Send notification to bucket subscribers
 	    AtomicId = erlang:binary_to_list(riak_crypto:uuid4()),
-	    Msg = jsx:encode([{version, Version1}, {bucket_id, BucketId}, {timestamp, Timestamp}]),
+	    Msg = jsx:encode([{version, Version1}, {bucket_id, erlang:list_to_binary(BucketId)},
+			      {timestamp, Timestamp}]),
 	    events_server_sup:send_message(BucketId, AtomicId, Msg),
 
 	    lists:flatten(BucketQueue1)

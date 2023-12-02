@@ -194,11 +194,9 @@ handle_cast({message, BucketId, UserId, AtomicId, Msg}, State) ->
 %%
 %% Confirmation on reception of message.
 %%
-handle_cast({confirmation, AtomicId, UserId, SessionId}, State) ->
+handle_cast({confirmation, AtomicId, UserId, _SessionId}, State) ->
     %% Remove from the list of awaited confirmations
     AtomicIds = lists:delete({AtomicId, UserId}, State#state.atomic_ids),
-
-    api_server:mark_delivered(AtomicId, SessionId),
 
     {noreply, State#state{atomic_ids = AtomicIds}};
 
