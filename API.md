@@ -741,3 +741,102 @@ curl -s -X POST "http://127.0.0.1/riak/action-log/?prefix=626c6168" \
 ### Success Response
 
 **Code** : `200 OK`
+
+
+## Subscribe to events in bucket
+
+You can receive events on changes in bucket by the following URL
+
+/riak/websocket
+
+**Auth required** : YES
+
+#### Request Example
+```python
+import _thread as thread
+import argparse
+import json
+import time
+
+import websocket
+
+TOKEN = "<REPLACE WITH TOMEN>"
+
+BUCKET_LIST = ["the-poetry-naukovtsi-res"]
+
+def on_message(ws, message):
+    data = json.loads(json.loads(message))
+    the_id = data.get("id")
+    message = data.get("message")
+
+    print("Message: {}".format(message))
+
+    # Send confirmation that message has been received
+    # Otherwise server will repeat the same message.
+    ws.send("CONFIRM {}".format(the_id))
+
+
+def on_error(ws, error):
+    print(error)
+
+
+def on_close(*args, **kwargs):
+    print("### closed ###")
+
+
+def on_open(ws):
+    def run(*args):
+        while True:
+            time.sleep(1)
+        ws.close()
+        print("thread terminating...")
+
+    # First message should be Authorization
+    ws.send("Authorization {}".format(TOKEN))
+
+    # Next message subscribes us to changes in bucket
+    ws.send("SUBSCRIBE {}".format(" ".join(BUCKET_LIST)))
+    thread.start_new_thread(run, ())
+
+
+def create_parser():
+    """
+    The command line arguments parser
+    :return: the parameters pass on the command line
+    """
+    parser = argparse.ArgumentParser(
+        description="Utility to connect to websocket server"
+    )
+    parser.add_argument(
+        "-i", type=str, help="IP/Hostname. For example: -i 127.0.0.1", required=True
+    )
+    parser.add_argument(
+        "-p", type=int, help="Port. For example: -p 8082", required=True
+    )
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    parser = create_parser()
+    host = parser.i
+    port = parser.p
+    protocol = "ws"
+
+    if port == 443:
+        protocol = "wss"
+
+    websocket.enableTrace(True)
+    ws = websocket.WebSocketApp(
+        "{}://{}:{}/riak/websocket".format(protocol, host, port),
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
+    )
+    ws.on_open = on_open
+    ws.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+```
