@@ -31,8 +31,8 @@ start_link() ->
 
 
 init([]) ->
-    {ok, Tref0} = timer:send_interval(?TOKENS_CLEANUP_INTERVAL, tokens_cleanup),
-    {ok, Tref1} = timer:send_interval(?CSRF_TOKENS_CLEANUP_INTERVAL, csrf_tokens_cleanup),
+    {ok, {interval, Tref0}} = timer:send_interval(?TOKENS_CLEANUP_INTERVAL, tokens_cleanup),
+    {ok, {interval, Tref1}} = timer:send_interval(?CSRF_TOKENS_CLEANUP_INTERVAL, csrf_tokens_cleanup),
     {ok, #state{timers=[Tref0, Tref1]}}.
 
 %%--------------------------------------------------------------------
