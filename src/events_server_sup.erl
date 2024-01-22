@@ -163,7 +163,7 @@ handle_call(_Other, _, State) ->
 %% Sends messages to connected websocket sessions asyncronously.
 %%
 handle_cast({message, BucketId, UserId, AtomicId, Msg}, State) ->
-    ?INFO("[events_server_sup] to: ~s sending: ~p", [BucketId, UserId, Msg]),
+    ?INFO("[events_server_sup] bucket: ~p user: ~p message: ~p", [BucketId, UserId, Msg]),
     %% Subscribers = [subscriber_entry(), ..]
     Subscribers = [S || S <- State#state.subscribers, lists:member(BucketId, element(4, S))],
     ?INFO("[events_server_sup] Subscribers: ~p~n, user id: ~p~nbucket id: ~p~nresult: ~p",
@@ -255,10 +255,17 @@ send_msg(Pid, Msg) ->
     ?INFO("[events_server_sup] Sending message: ~p", [Msg]),
     Pid ! {events_server_sup, utils:to_binary(Msg)}.
 
+%%
+%% Add subscriber, if it do not exist yet
+%%
 add_subscriber(UserId, Pid, SessionId, BucketIdList, State) ->
-    Subscribers = State#state.subscribers ++ [{UserId, Pid, SessionId, BucketIdList}],
-    ?INFO("[events_server_sup] Subscribers: ~p", [Subscribers]),
-    State#state{subscribers = Subscribers}.
+    Subscribers0 = [S || S <- State#state.subscribers,
+		    element(1, S) =/= UserId andalso
+		    element(2, S) =/= Pid andalso
+		    element(3, S) =/= SessionId],
+    Subscribers1 = Subscribers0 ++ [{UserId, Pid, SessionId, BucketIdList}],
+    ?INFO("[events_server_sup] Subscribers: ~p", [Subscribers1]),
+    State#state{subscribers = Subscribers1}.
 
 %%
 %% Terminates user sessions on the same device and removes stale session

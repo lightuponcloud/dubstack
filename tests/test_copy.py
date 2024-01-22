@@ -5,6 +5,7 @@ import time
 from client_base import (
     BASE_URL,
     TEST_BUCKET_1,
+    TEST_BUCKET_3,
     USERNAME_1,
     PASSWORD_1,
     USERNAME_2,
